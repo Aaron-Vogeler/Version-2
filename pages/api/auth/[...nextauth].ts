@@ -7,6 +7,19 @@ import NextAuth, { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { createClient } from '@supabase/supabase-js';
 
+// Validate required environment variables
+if (!process.env.NEXTAUTH_SECRET) {
+  throw new Error('NEXTAUTH_SECRET must be set');
+}
+
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+  throw new Error('NEXT_PUBLIC_SUPABASE_URL must be set');
+}
+
+if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+  throw new Error('NEXT_PUBLIC_SUPABASE_ANON_KEY must be set');
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -17,6 +30,7 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
+          console.error('Missing email or password in credentials');
           return null;
         }
 
@@ -33,7 +47,13 @@ export const authOptions: NextAuthOptions = {
             password: credentials.password,
           });
 
-          if (error || !data.user) {
+          if (error) {
+            console.error('Supabase auth error:', error.message);
+            return null;
+          }
+
+          if (!data.user) {
+            console.error('No user returned from Supabase');
             return null;
           }
 
@@ -51,6 +71,7 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   secret: process.env.NEXTAUTH_SECRET,
+  debug: process.env.NODE_ENV === 'development',
   session: {
     strategy: 'jwt',
     maxAge: 30 * 24 * 60 * 60, // 30 days
