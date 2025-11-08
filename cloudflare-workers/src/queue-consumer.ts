@@ -82,6 +82,8 @@ function mapEventToCallUpdate(event: NormalizedEvent): Partial<CallRecord> | nul
         started_at: payload.start_time || occurred_at,
         goal: client_state?.goal || null,
         goal_status: client_state?.goal ? 'pending' : null,
+        assistant_id: client_state?.assistant_id || payload.assistant_id || null,
+        assistant_name: client_state?.assistant_name || payload.assistant_name || null,
         transcript_status: 'none',
       };
 
@@ -123,6 +125,16 @@ function mapEventToCallUpdate(event: NormalizedEvent): Partial<CallRecord> | nul
     case 'call.transcription.completed':
       return {
         transcript_status: 'completed',
+        transcript: payload.transcript_text || null,
+        transcript_url: payload.transcript_url || null,
+      };
+
+    case 'call.machine_detection.ended':
+      // Handle AI detection completion
+      return {
+        metadata: {
+          machine_detection: payload.result,
+        },
       };
 
     default:
