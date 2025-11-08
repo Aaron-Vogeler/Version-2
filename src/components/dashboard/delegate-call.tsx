@@ -27,8 +27,8 @@ export function DelegateCall() {
     setMessage('');
 
     try {
-      // Trigger the webhook
-      const response = await fetch('https://telnyx-webhook.aaronmvogeler.workers.dev', {
+      // Call secure API proxy (authenticated)
+      const response = await fetch('/api/delegate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -39,8 +39,14 @@ export function DelegateCall() {
         }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        throw new Error(`Webhook failed: ${response.status} ${response.statusText}`);
+        // Handle specific error messages from API
+        if (response.status === 401) {
+          throw new Error('Please sign in to delegate calls');
+        }
+        throw new Error(data.error || `Request failed: ${response.status}`);
       }
 
       setStatus('success');

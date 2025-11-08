@@ -40,19 +40,14 @@ export default function DashboardPage() {
   }, []);
 
   const checkAuth = async () => {
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session) {
-      router.push('/login');
-      return;
-    }
-
-    // Fetch user profile
+    // Check NextAuth session
     const response = await fetch('/api/me');
     if (response.ok) {
       const data = await response.json();
       setUser(data.user);
+    } else {
+      // Not authenticated, redirect to sign in
+      window.location.href = '/api/auth/signin';
     }
   };
 
@@ -186,10 +181,9 @@ export default function DashboardPage() {
     loadDashboardData();
   };
 
-  const handleLogout = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push('/login');
+  const handleLogout = () => {
+    // Redirect to NextAuth signout
+    window.location.href = '/api/auth/signout';
   };
 
   if (loading) {
