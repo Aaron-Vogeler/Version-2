@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { Phone, Send, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export function DelegateCall() {
@@ -85,23 +85,33 @@ export function DelegateCall() {
               <Label htmlFor="goal">
                 Goal <span className="text-destructive">*</span>
               </Label>
-              <Select value={goal} onValueChange={setGoal} required>
-                <SelectTrigger id="goal">
-                  <SelectValue placeholder="Select a goal" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sales">Sales</SelectItem>
-                  <SelectItem value="support">Support</SelectItem>
-                  <SelectItem value="survey">Survey</SelectItem>
-                  <SelectItem value="appointment">Appointment</SelectItem>
-                  <SelectItem value="followup">Follow-up</SelectItem>
-                  <SelectItem value="reminder">Reminder</SelectItem>
-                  <SelectItem value="verification">Verification</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                The purpose of this call
-              </p>
+              <Textarea
+                id="goal"
+                placeholder="Describe the goal for this call..."
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                maxLength={250}
+                required
+                className="resize-none min-h-[100px]"
+                style={{
+                  height: 'auto',
+                  minHeight: '100px',
+                  maxHeight: '300px'
+                }}
+                onInput={(e) => {
+                  const target = e.target as HTMLTextAreaElement;
+                  target.style.height = 'auto';
+                  target.style.height = Math.min(target.scrollHeight, 300) + 'px';
+                }}
+              />
+              <div className="flex justify-between">
+                <p className="text-xs text-muted-foreground">
+                  Describe the purpose and desired outcome of this call
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {goal.length}/250
+                </p>
+              </div>
             </div>
 
             {/* Number To Call Field */}
@@ -170,10 +180,10 @@ export function DelegateCall() {
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
           <ol className="list-decimal list-inside space-y-1">
-            <li>Select the goal for this call (e.g., Sales, Support)</li>
+            <li>Describe the goal for this call (up to 250 characters)</li>
             <li>Enter the phone number to call in E.164 format</li>
             <li>Click &quot;Delegate Call&quot; to initiate the outbound call</li>
-            <li>The AI assistant will handle the call based on the goal</li>
+            <li>The AI assistant will handle the call based on your goal</li>
             <li>View call results in the &quot;Billing&quot; or &quot;All Calls&quot; tab</li>
           </ol>
         </CardContent>
