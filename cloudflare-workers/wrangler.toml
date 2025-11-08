@@ -1,0 +1,35 @@
+name = "telnyx-webhook-worker"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Worker for webhook receiver
+[env.production]
+name = "telnyx-webhook-worker"
+routes = [
+  { pattern = "yourdomain.com/telnyx/webhook", zone_name = "yourdomain.com" }
+]
+
+# Environment variables (set via wrangler secret put)
+# SUPABASE_URL, SUPABASE_SERVICE_KEY, TELNYX_SIGNING_SECRET
+
+# Queue binding for event processing
+[[queues.producers]]
+queue = "telnyx-events-queue"
+binding = "TELNYX_EVENTS"
+
+[[queues.consumers]]
+queue = "telnyx-events-queue"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "telnyx-events-dlq"
+
+# Scheduled worker for CDR backfill (runs every 30 minutes)
+[triggers]
+crons = ["*/30 * * * *"]
+
+# KV namespace for idempotency and caching (optional)
+[[kv_namespaces]]
+binding = "IDEMPOTENCY"
+id = "your-kv-namespace-id"
+preview_id = "your-preview-kv-namespace-id"

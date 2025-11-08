@@ -1,0 +1,198 @@
+{
+  "info": {
+    "name": "Telnyx CRM Dashboard",
+    "description": "API tests for Telnyx CRM Dashboard",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Call Initiated Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "telnyx-signature",
+                "value": "t=1234567890,v1=test_signature",
+                "description": "Replace with valid signature in production"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": {\n    \"event_type\": \"call.initiated\",\n    \"id\": \"evt_test_001\",\n    \"occurred_at\": \"2024-01-15T12:00:00.000Z\",\n    \"payload\": {\n      \"call_control_id\": \"call_test_001\",\n      \"call_leg_id\": \"leg_test_001\",\n      \"call_session_id\": \"session_test_001\",\n      \"direction\": \"outgoing\",\n      \"from\": \"+14155551234\",\n      \"to\": \"+14155555678\",\n      \"state\": \"parked\",\n      \"start_time\": \"2024-01-15T12:00:00.000Z\",\n      \"custom_headers\": {\n        \"X-Tenant\": \"00000000-0000-0000-0000-000000000001\"\n      },\n      \"client_state\": \"{\\\"tenant_id\\\":\\\"00000000-0000-0000-0000-000000000001\\\",\\\"goal\\\":\\\"sales\\\"}\"\n    },\n    \"record_type\": \"event\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{worker_url}}/telnyx/webhook",
+              "host": ["{{worker_url}}"],
+              "path": ["telnyx", "webhook"]
+            }
+          }
+        },
+        {
+          "name": "Call Answered Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": {\n    \"event_type\": \"call.answered\",\n    \"id\": \"evt_test_002\",\n    \"occurred_at\": \"2024-01-15T12:00:05.000Z\",\n    \"payload\": {\n      \"call_control_id\": \"call_test_001\",\n      \"answer_time\": \"2024-01-15T12:00:05.000Z\",\n      \"custom_headers\": {\n        \"X-Tenant\": \"00000000-0000-0000-0000-000000000001\"\n      }\n    },\n    \"record_type\": \"event\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{worker_url}}/telnyx/webhook",
+              "host": ["{{worker_url}}"],
+              "path": ["telnyx", "webhook"]
+            }
+          }
+        },
+        {
+          "name": "Call Hangup Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": {\n    \"event_type\": \"call.hangup\",\n    \"id\": \"evt_test_003\",\n    \"occurred_at\": \"2024-01-15T12:05:00.000Z\",\n    \"payload\": {\n      \"call_control_id\": \"call_test_001\",\n      \"start_time\": \"2024-01-15T12:00:00.000Z\",\n      \"answer_time\": \"2024-01-15T12:00:05.000Z\",\n      \"end_time\": \"2024-01-15T12:05:00.000Z\",\n      \"hangup_cause\": \"normal_clearing\",\n      \"hangup_source\": \"caller\",\n      \"custom_headers\": {\n        \"X-Tenant\": \"00000000-0000-0000-0000-000000000001\"\n      }\n    },\n    \"record_type\": \"event\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{worker_url}}/telnyx/webhook",
+              "host": ["{{worker_url}}"],
+              "path": ["telnyx", "webhook"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "API",
+      "item": [
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "me"]
+            }
+          }
+        },
+        {
+          "name": "Get Calls",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/calls?limit=20&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["api", "calls"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "status",
+                  "value": "completed",
+                  "disabled": true
+                },
+                {
+                  "key": "search",
+                  "value": "+1415",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/stats?days=30",
+              "host": ["{{base_url}}"],
+              "path": ["api", "stats"],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "30"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Call Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/calls/call_test_001/events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "calls", "call_test_001", "events"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "worker_url",
+      "value": "https://your-worker.workers.dev",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "your-jwt-token-here",
+      "type": "string"
+    }
+  ]
+}
