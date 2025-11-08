@@ -1,51 +1,32 @@
 'use client';
 
 /**
- * Enhanced Dashboard Page with AI Assistant Analytics
- * Features: Filtering, Call Details, Goal Analytics, Assistant Performance, Billing
+ * Dashboard Page with Call Delegation and Analytics
  */
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { StatCard } from '@/components/dashboard/stat-card';
-import { CallsChart } from '@/components/dashboard/calls-chart';
-import { CallsTable } from '@/components/dashboard/calls-table';
 import { FilterBar, CallFilters } from '@/components/dashboard/filter-bar';
 import { CallDetailModal } from '@/components/dashboard/call-detail-modal';
-import { GoalAnalytics } from '@/components/dashboard/goal-analytics';
-import { AssistantPerformance } from '@/components/dashboard/assistant-performance';
 import { BillingUsage } from '@/components/dashboard/billing-usage';
+import { DelegateCall } from '@/components/dashboard/delegate-call';
+import { CallsTable } from '@/components/dashboard/calls-table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Phone, TrendingUp, Clock, DollarSign, Target, LogOut, Bot, BarChart3 } from 'lucide-react';
-import { formatDuration, formatCurrency } from '@/lib/utils';
+import { Phone, DollarSign, LogOut, BarChart3, Send } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
-
-interface DashboardStats {
-  totalCalls: number;
-  answerRate: number;
-  avgTalkTime: number;
-  totalCost: number;
-  goalSuccessRate: number;
-  callsByDay: Record<string, number>;
-}
 
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [calls, setCalls] = useState<Call[]>([]);
   const [filteredCalls, setFilteredCalls] = useState<Call[]>([]);
   const [user, setUser] = useState<any>(null);
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [showCallDetail, setShowCallDetail] = useState(false);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
-
-  // Analytics data
-  const [goalAnalytics, setGoalAnalytics] = useState<any>(null);
-  const [assistantMetrics, setAssistantMetrics] = useState<any[]>([]);
   const [billingData, setBillingData] = useState<any>(null);
 
   // Live status tracking
@@ -79,13 +60,6 @@ export default function DashboardPage() {
     try {
       setLoading(true);
 
-      // Fetch stats
-      const statsRes = await fetch('/api/stats?days=30');
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
-      }
-
       // Fetch recent calls
       const callsRes = await fetch('/api/calls?limit=100');
       if (callsRes.ok) {
@@ -109,20 +83,6 @@ export default function DashboardPage() {
 
   const loadAnalytics = async () => {
     try {
-      // Load goal analytics
-      const goalsRes = await fetch('/api/analytics/goals?days=30');
-      if (goalsRes.ok) {
-        const goalsData = await goalsRes.json();
-        setGoalAnalytics(goalsData);
-      }
-
-      // Load assistant metrics
-      const assistantsRes = await fetch('/api/analytics/assistants?days=30');
-      if (assistantsRes.ok) {
-        const assistantsData = await assistantsRes.json();
-        setAssistantMetrics(assistantsData.metrics || []);
-      }
-
       // Load billing data
       const billingRes = await fetch('/api/analytics/billing?days=30');
       if (billingRes.ok) {
@@ -246,7 +206,7 @@ export default function DashboardPage() {
       <header className="border-b bg-white dark:bg-gray-800">
         <div className="container mx-auto flex items-center justify-between px-4 py-4">
           <div>
-            <h1 className="text-2xl font-bold">AI Call Analytics Dashboard</h1>
+            <h1 className="text-2xl font-bold">AI Call Dashboard</h1>
             {user && (
               <p className="text-sm text-muted-foreground">
                 Welcome back, {user.full_name || user.email}
@@ -271,19 +231,11 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
-        <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="overview">
-              <Phone className="mr-2 h-4 w-4" />
-              Overview
-            </TabsTrigger>
-            <TabsTrigger value="goals">
-              <Target className="mr-2 h-4 w-4" />
-              Goal Analytics
-            </TabsTrigger>
-            <TabsTrigger value="assistants">
-              <Bot className="mr-2 h-4 w-4" />
-              Assistants
+        <Tabs defaultValue="delegate" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="delegate">
+              <Send className="mr-2 h-4 w-4" />
+              Delegate A Call
             </TabsTrigger>
             <TabsTrigger value="billing">
               <DollarSign className="mr-2 h-4 w-4" />
@@ -295,60 +247,9 @@ export default function DashboardPage() {
             </TabsTrigger>
           </TabsList>
 
-          {/* Overview Tab */}
-          <TabsContent value="overview" className="space-y-6">
-            {/* KPI Cards */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-              <StatCard
-                title="Total Calls"
-                value={stats?.totalCalls || 0}
-                icon={Phone}
-                description="Last 30 days"
-              />
-              <StatCard
-                title="Answer Rate"
-                value={`${(stats?.answerRate || 0).toFixed(1)}%`}
-                icon={TrendingUp}
-                description="Calls answered"
-              />
-              <StatCard
-                title="Avg Talk Time"
-                value={formatDuration(Math.round(stats?.avgTalkTime || 0))}
-                icon={Clock}
-                description="Per answered call"
-              />
-              <StatCard
-                title="Total Cost"
-                value={formatCurrency(stats?.totalCost || 0)}
-                icon={DollarSign}
-                description="Last 30 days"
-              />
-              <StatCard
-                title="Goal Success"
-                value={`${(stats?.goalSuccessRate || 0).toFixed(1)}%`}
-                icon={Target}
-                description="Goals achieved"
-              />
-            </div>
-
-            {/* Chart */}
-            <CallsChart callsByDay={stats?.callsByDay || {}} days={7} />
-
-            {/* Recent Calls */}
-            <div>
-              <h3 className="text-lg font-semibold mb-4">Recent Calls</h3>
-              <CallsTable calls={calls.slice(0, 10)} onViewDetails={handleViewCallDetails} />
-            </div>
-          </TabsContent>
-
-          {/* Goal Analytics Tab */}
-          <TabsContent value="goals">
-            {goalAnalytics && <GoalAnalytics data={goalAnalytics} />}
-          </TabsContent>
-
-          {/* Assistant Performance Tab */}
-          <TabsContent value="assistants">
-            {assistantMetrics.length > 0 && <AssistantPerformance metrics={assistantMetrics} />}
+          {/* Delegate A Call Tab */}
+          <TabsContent value="delegate">
+            <DelegateCall />
           </TabsContent>
 
           {/* Billing & Usage Tab */}
