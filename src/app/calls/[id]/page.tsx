@@ -19,14 +19,18 @@ import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } fro
 export default function CallDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const callId = params.id as string;
+  const callId = params?.id as string | undefined;
 
   const [call, setCall] = useState<Call | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!callId) return;
+    if (!callId) {
+      setError('No call ID provided');
+      setLoading(false);
+      return;
+    }
 
     const loadCall = async () => {
       try {
