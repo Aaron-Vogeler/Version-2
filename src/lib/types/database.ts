@@ -50,6 +50,8 @@ export interface Database {
           assistant_name: string | null;
           transcript: string | null;
           transcript_url: string | null;
+          live_transcript: string | null;
+          transcription_url: string | null;
           user_feedback: boolean | null;
           feedback_comment: string | null;
           feedback_at: string | null;

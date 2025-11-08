@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } from '@/lib/utils';
 import { Call, CallEvent } from '@/lib/types/database';
+import { LiveTranscript } from './live-transcript';
 
 interface CallDetailModalProps {
   call: Call | null;
@@ -316,40 +317,30 @@ export function CallDetailModal({ call, open, onOpenChange, onFeedbackSubmit }: 
 
           {/* Transcript Tab */}
           <TabsContent value="transcript" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Call Transcript
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {call.transcript ? (
-                  <div className="prose prose-sm max-w-none">
-                    <pre className="whitespace-pre-wrap font-sans text-sm">
-                      {call.transcript}
-                    </pre>
-                  </div>
-                ) : call.transcript_status === 'completed' && call.transcript_url ? (
-                  <div className="text-center py-4">
+            <LiveTranscript
+              callId={call.id}
+              initialTranscript={call.transcript}
+              initialLiveTranscript={call.live_transcript}
+              status={call.status}
+            />
+
+            {/* Link to external transcript if available */}
+            {(call.transcript_url || call.transcription_url) && (
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="text-center">
                     <a
-                      href={call.transcript_url}
+                      href={call.transcript_url || call.transcription_url || '#'}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-primary hover:underline"
+                      className="text-primary hover:underline text-sm"
                     >
-                      View Full Transcript
+                      View Full Transcript (External)
                     </a>
                   </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    {call.transcript_status === 'processing'
-                      ? 'Transcript is being processed...'
-                      : 'No transcript available'}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* Timeline Tab */}
