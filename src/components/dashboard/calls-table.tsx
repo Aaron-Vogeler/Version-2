@@ -74,7 +74,7 @@ export function CallsTable({ calls, onViewDetails }: CallsTableProps) {
               </TableRow>
             ) : (
               calls.map((call) => (
-                <TableRow key={call.id}>
+                <TableRow key={call.id} data-call-id={call.id}>
                   <TableCell>{getDirectionIcon(call.direction)}</TableCell>
                   <TableCell className="font-mono text-sm">
                     {formatPhoneNumber(call.from_e164)}

@@ -13,6 +13,7 @@ import { CallDetailModal } from '@/components/dashboard/call-detail-modal';
 import { BillingUsage } from '@/components/dashboard/billing-usage';
 import { DelegateCall } from '@/components/dashboard/delegate-call';
 import { CallsTable } from '@/components/dashboard/calls-table';
+import { RealTimeCallsTable } from '@/components/dashboard/real-time-calls-table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Phone, DollarSign, LogOut, BarChart3, Send } from 'lucide-react';
@@ -23,6 +24,14 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [calls, setCalls] = useState<Call[]>([]);
   const [filteredCalls, setFilteredCalls] = useState<Call[]>([]);
+  const [currentFilters, setCurrentFilters] = useState<CallFilters>({
+    search: '',
+    status: 'all',
+    goal: 'all',
+    assistantId: 'all',
+    dateFrom: '',
+    dateTo: '',
+  });
   const [user, setUser] = useState<any>(null);
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [showCallDetail, setShowCallDetail] = useState(false);
@@ -127,6 +136,9 @@ export default function DashboardPage() {
   };
 
   const handleFiltersChange = useCallback((filters: CallFilters) => {
+    // Save current filters
+    setCurrentFilters(filters);
+
     let filtered = [...calls];
 
     // Apply search filter
@@ -170,6 +182,11 @@ export default function DashboardPage() {
 
     setFilteredCalls(filtered);
   }, [calls]);
+
+  // Re-apply filters when calls change (from real-time updates)
+  useEffect(() => {
+    handleFiltersChange(currentFilters);
+  }, [calls, handleFiltersChange, currentFilters]);
 
   const handleViewCallDetails = (call: Call) => {
     setSelectedCall(call);
@@ -260,7 +277,15 @@ export default function DashboardPage() {
                 {filteredCalls.length} Call{filteredCalls.length !== 1 ? 's' : ''}
               </h3>
             </div>
-            <CallsTable calls={filteredCalls} onViewDetails={handleViewCallDetails} />
+            <RealTimeCallsTable
+              displayCalls={filteredCalls}
+              onViewDetails={handleViewCallDetails}
+              onCallsUpdate={(updatedCalls) => {
+                // Update the unfiltered calls state
+                setCalls(updatedCalls);
+                // FilteredCalls will be updated automatically via useCallback dependency
+              }}
+            />
           </TabsContent>
         </Tabs>
       </main>
