@@ -46,8 +46,8 @@ export default function DashboardPage() {
       const data = await response.json();
       setUser(data.user);
     } else {
-      // Not authenticated, redirect to sign in
-      window.location.href = '/api/auth/signin';
+      // Not authenticated, redirect to login page
+      window.location.href = '/login';
     }
   };
 
@@ -181,9 +181,10 @@ export default function DashboardPage() {
     loadDashboardData();
   };
 
-  const handleLogout = () => {
-    // Redirect to NextAuth signout
-    window.location.href = '/api/auth/signout';
+  const handleLogout = async () => {
+    // Sign out and redirect to login
+    await fetch('/api/auth/signout', { method: 'POST' });
+    window.location.href = '/login';
   };
 
   if (loading) {

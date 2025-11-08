@@ -1,42 +1,81 @@
 /**
  * NextAuth configuration
- * Handles GitHub OAuth authentication
+ * Handles email/password authentication with Supabase
  */
 
 import NextAuth, { NextAuthOptions } from 'next-auth';
-import GitHubProvider from 'next-auth/providers/github';
+import CredentialsProvider from 'next-auth/providers/credentials';
+import { createClient } from '@supabase/supabase-js';
 
 export const authOptions: NextAuthOptions = {
   providers: [
-    GitHubProvider({
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    CredentialsProvider({
+      name: 'credentials',
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" }
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) {
+          return null;
+        }
+
+        try {
+          // Create Supabase client for authentication
+          const supabase = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+          );
+
+          // Authenticate with Supabase
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: credentials.email,
+            password: credentials.password,
+          });
+
+          if (error || !data.user) {
+            return null;
+          }
+
+          // Return user object for NextAuth session
+          return {
+            id: data.user.id,
+            email: data.user.email!,
+            name: data.user.user_metadata?.name || data.user.email,
+          };
+        } catch (error) {
+          console.error('Authentication error:', error);
+          return null;
+        }
+      }
     }),
   ],
   secret: process.env.NEXTAUTH_SECRET,
   session: {
     strategy: 'jwt',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   pages: {
-    signIn: '/api/auth/signin',
-    signOut: '/api/auth/signout',
-    error: '/api/auth/error',
+    signIn: '/login',
+    signOut: '/login',
+    error: '/login',
   },
   callbacks: {
-    async jwt({ token, account, profile }) {
-      // Persist the OAuth access_token to the token right after signin
-      if (account) {
-        token.accessToken = account.access_token;
-      }
-      if (profile) {
-        token.login = (profile as any).login;
+    async jwt({ token, user }) {
+      // Add user info to token on sign in
+      if (user) {
+        token.id = user.id;
+        token.email = user.email;
+        token.name = user.name;
       }
       return token;
     },
     async session({ session, token }) {
-      // Send properties to the client
+      // Add user info to session
       if (token && session.user) {
-        (session.user as any).login = token.login;
+        (session.user as any).id = token.id;
+        session.user.email = token.email as string;
+        session.user.name = token.name as string;
       }
       return session;
     },

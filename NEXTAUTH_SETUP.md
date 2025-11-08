@@ -1,6 +1,6 @@
 # NextAuth Setup Guide
 
-This application uses NextAuth with GitHub OAuth for secure authentication.
+This application uses NextAuth with email/password authentication via Supabase for secure authentication.
 
 ## Quick Start
 
@@ -12,17 +12,14 @@ npm install
 pnpm install
 ```
 
-### 2. Create GitHub OAuth App
+### 2. Setup Supabase Authentication
 
-1. Go to GitHub Settings → Developer settings → OAuth Apps
-2. Click "New OAuth App"
-3. Fill in the details:
-   - **Application name**: Telnyx CRM Dashboard
-   - **Homepage URL**: `http://localhost:3000` (for development)
-   - **Authorization callback URL**: `http://localhost:3000/api/auth/callback/github`
-4. Click "Register application"
-5. **Copy the Client ID** - you'll need this
-6. Click "Generate a new client secret" and **copy the secret** - you'll need this too
+Your Supabase project should already be configured with email/password authentication enabled. If not:
+
+1. Go to your Supabase project dashboard
+2. Navigate to Authentication → Providers
+3. Enable "Email" provider if not already enabled
+4. Users can be created via Supabase dashboard or the signup page
 
 ### 3. Generate NextAuth Secret
 
@@ -45,11 +42,14 @@ cp .env.example .env.local
 Edit `.env.local` and add your values:
 
 ```env
+# Supabase Configuration
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
 # NextAuth Configuration
 NEXTAUTH_URL=http://localhost:3000
 NEXTAUTH_SECRET=<your-generated-secret-from-step-3>
-GITHUB_CLIENT_ID=<your-github-client-id-from-step-2>
-GITHUB_CLIENT_SECRET=<your-github-client-secret-from-step-2>
 ```
 
 ### 5. Run the Application
@@ -72,10 +72,10 @@ Visit http://localhost:3000/api/me
 
 ### Test 2: Sign In
 
-1. Visit http://localhost:3000/api/auth/signin
-2. Click "Sign in with GitHub"
-3. Authorize the application (if first time)
-4. You should be redirected back to the app
+1. Visit http://localhost:3000/login
+2. Enter your email and password (create a user in Supabase first if needed)
+3. Click "Sign in"
+4. You should be redirected to the dashboard
 
 ### Test 3: Protected API Route
 
@@ -106,23 +106,18 @@ curl -X POST http://localhost:3000/api/delegate \
 
 ## Production Deployment (Vercel)
 
-### 1. Update GitHub OAuth App
-
-Add your production URLs:
-- **Homepage URL**: `https://your-app.vercel.app`
-- **Authorization callback URL**: `https://your-app.vercel.app/api/auth/callback/github`
-
-### 2. Set Environment Variables in Vercel
+### 1. Set Environment Variables in Vercel
 
 Go to your Vercel project → Settings → Environment Variables
 
 Add these variables:
 
 ```
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 NEXTAUTH_URL=https://your-app.vercel.app
 NEXTAUTH_SECRET=<same-secret-from-local>
-GITHUB_CLIENT_ID=<same-client-id-from-local>
-GITHUB_CLIENT_SECRET=<same-client-secret-from-local>
 ```
 
 **Important:** Use the same NEXTAUTH_SECRET for all environments to maintain session compatibility.
@@ -135,10 +130,10 @@ vercel --prod
 
 Or push to your connected Git repository for automatic deployment.
 
-### 4. Test Production
+### 2. Test Production
 
 Visit your production URL and verify:
-- Sign in with GitHub works
+- Email/password login works
 - Dashboard requires authentication
 - Delegate calls work when authenticated
 - Sign out works
@@ -209,11 +204,12 @@ The Next.js API route (`/api/delegate.ts`) already includes logic to send this t
 
 ## Troubleshooting
 
-### Issue: "Invalid callback URL"
+### Issue: "Invalid email or password"
 
-**Solution**: Make sure your GitHub OAuth app callback URL matches exactly:
-- Local: `http://localhost:3000/api/auth/callback/github`
-- Production: `https://your-app.vercel.app/api/auth/callback/github`
+**Solution**:
+- Make sure the user exists in Supabase (check Authentication → Users)
+- Verify email and password are correct
+- Check that Supabase email provider is enabled
 
 ### Issue: "NEXTAUTH_SECRET not set"
 
@@ -244,10 +240,11 @@ The Next.js API route (`/api/delegate.ts`) already includes logic to send this t
 
 - ✅ All API routes use server-side session checking
 - ✅ No CORS issues - worker is called server-to-server
-- ✅ GitHub OAuth tokens are never exposed to the client
-- ✅ Session uses secure JWT tokens
+- ✅ Email/password authentication via Supabase with secure session management
+- ✅ Session uses secure JWT tokens with NextAuth
 - ✅ Optional worker authentication with bearer token
 - ✅ NEXTAUTH_SECRET should be kept secret and rotated periodically
+- ✅ Passwords are securely hashed and managed by Supabase
 
 ## Architecture
 
@@ -292,23 +289,24 @@ src/
 
 | Variable | Required | Description | Example |
 |----------|----------|-------------|---------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Your Supabase project URL | `https://xxx.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anonymous key | `eyJhb...` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase service role key | `eyJhb...` |
 | `NEXTAUTH_URL` | Yes | Your app URL | `http://localhost:3000` |
 | `NEXTAUTH_SECRET` | Yes | Random secret (32+ chars) | `generated-with-openssl` |
-| `GITHUB_CLIENT_ID` | Yes | GitHub OAuth Client ID | `abc123...` |
-| `GITHUB_CLIENT_SECRET` | Yes | GitHub OAuth Client Secret | `xyz789...` |
 | `WORKER_TOKEN` | No | Optional worker auth token | `generated-with-openssl` |
 
 ## Quick Checklist
 
-- [ ] GitHub OAuth App created
-- [ ] Client ID and Secret copied
+- [ ] Supabase project created with email authentication enabled
+- [ ] At least one test user created in Supabase
 - [ ] NEXTAUTH_SECRET generated
-- [ ] .env.local created and populated
+- [ ] .env.local created and populated with Supabase credentials
 - [ ] `npm install` completed
 - [ ] `npm run dev` running
-- [ ] Can sign in with GitHub
+- [ ] Can sign in with email/password at /login
 - [ ] /api/me returns user data when logged in
-- [ ] Dashboard redirects to signin when not logged in
+- [ ] Dashboard redirects to /login when not authenticated
 - [ ] Delegate call works when authenticated
 - [ ] Sign out works
 - [ ] Production environment variables set in Vercel
