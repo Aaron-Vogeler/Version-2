@@ -112,20 +112,60 @@ export default function DashboardPage() {
           table: 'calls',
         },
         (payload) => {
-          console.log('Call update received:', payload);
+          console.log('Dashboard call update received:', payload);
 
-          // Update live status
-          if (payload.new && typeof payload.new === 'object' && 'id' in payload.new && 'status' in payload.new) {
-            const call = payload.new as Call;
+          if (payload.eventType === 'INSERT') {
+            // New call created - add to the beginning of the list
+            const newCall = payload.new as Call;
+
+            setCalls(prev => {
+              // Check if call already exists to avoid duplicates
+              if (prev.some(c => c.id === newCall.id)) {
+                return prev;
+              }
+              return [newCall, ...prev];
+            });
+
+            // Update live status
             setLiveCallStatuses(prev => ({
               ...prev,
-              [call.id]: call.status,
+              [newCall.id]: newCall.status,
             }));
-          }
 
-          // Reload data on changes
-          loadDashboardData();
-          loadAnalytics();
+            // Reload analytics for updated stats
+            loadAnalytics();
+          } else if (payload.eventType === 'UPDATE') {
+            // Existing call updated - update in place
+            const updatedCall = payload.new as Call;
+
+            setCalls(prev =>
+              prev.map(call => call.id === updatedCall.id ? updatedCall : call)
+            );
+
+            // Update live status
+            setLiveCallStatuses(prev => ({
+              ...prev,
+              [updatedCall.id]: updatedCall.status,
+            }));
+
+            // Reload analytics for updated stats
+            loadAnalytics();
+          } else if (payload.eventType === 'DELETE') {
+            // Call deleted - remove from list
+            const deletedCall = payload.old as Call;
+
+            setCalls(prev => prev.filter(call => call.id !== deletedCall.id));
+
+            // Remove from live status
+            setLiveCallStatuses(prev => {
+              const updated = { ...prev };
+              delete updated[deletedCall.id];
+              return updated;
+            });
+
+            // Reload analytics for updated stats
+            loadAnalytics();
+          }
         }
       )
       .subscribe();

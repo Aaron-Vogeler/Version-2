@@ -1,11 +1,12 @@
 'use client';
 
 /**
- * Real-Time Calls Table with Live Polling
- * Polls /api/calls every second and merges new calls smoothly
+ * Real-Time Calls Table with Supabase Realtime
+ * Uses WebSockets to receive live database changes without polling
  */
 
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import { Call } from '@/lib/types/database';
 import { CallsTable } from './calls-table';
 import { Button } from '@/components/ui/button';
@@ -26,14 +27,14 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<string>('connecting');
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const callIdsRef = useRef<Set<string>>(new Set(displayCalls.map(c => c.id)));
   const newCallIdsRef = useRef<Set<string>>(new Set());
+  const supabase = createClient();
 
-  const pollCalls = useCallback(async () => {
-    if (!isLive) return;
-
+  // Load initial data once
+  const loadInitialData = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
@@ -47,68 +48,98 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
       const data = await response.json();
       const fetchedCalls: Call[] = data.calls || [];
 
-      // Find truly new calls (not in our existing set)
-      const newCalls: Call[] = [];
-      const currentCallIds = new Set(callIdsRef.current);
-
-      fetchedCalls.forEach((call) => {
-        if (!currentCallIds.has(call.id)) {
-          newCalls.push(call);
-          newCallIdsRef.current.add(call.id);
-        }
-      });
-
-      if (newCalls.length > 0) {
-        // Merge new calls at the top
-        const merged = [...newCalls, ...allCalls];
-
-        // Update our internal state
-        setAllCalls(merged);
-
-        // Update ref with all current IDs
-        callIdsRef.current = new Set(merged.map(c => c.id));
-
-        // Notify parent of all updated calls
-        onCallsUpdate(merged);
-
-        setNewCallsCount((prev) => prev + newCalls.length);
-
-        // Clear the "new" indicator after 5 seconds
-        setTimeout(() => {
-          newCallIdsRef.current = new Set();
-        }, 5000);
-      }
-
+      setAllCalls(fetchedCalls);
+      callIdsRef.current = new Set(fetchedCalls.map(c => c.id));
+      onCallsUpdate(fetchedCalls);
       setLastUpdated(new Date());
     } catch (err: any) {
-      console.error('Polling error:', err);
-      setError(err.message || 'Failed to fetch updates');
+      console.error('Error loading initial data:', err);
+      setError(err.message || 'Failed to load calls');
     } finally {
       setIsLoading(false);
     }
-  }, [isLive, allCalls, onCallsUpdate]);
+  }, [onCallsUpdate]);
 
-  // Set up polling interval
+  // Set up Supabase Realtime subscription
   useEffect(() => {
-    if (isLive) {
-      // Poll immediately
-      pollCalls();
+    if (!isLive) return;
 
-      // Then poll every second
-      intervalRef.current = setInterval(pollCalls, 1000);
+    // Load initial data
+    loadInitialData();
 
-      return () => {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
+    console.log('Setting up Supabase Realtime subscription...');
+
+    // Subscribe to all changes on calls table
+    const channel = supabase
+      .channel('realtime-calls-table')
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'calls',
+        },
+        (payload) => {
+          console.log('Received realtime update:', payload);
+
+          setLastUpdated(new Date());
+
+          if (payload.eventType === 'INSERT') {
+            // New call created
+            const newCall = payload.new as Call;
+
+            if (!callIdsRef.current.has(newCall.id)) {
+              setAllCalls((prev) => {
+                const updated = [newCall, ...prev];
+                callIdsRef.current.add(newCall.id);
+                onCallsUpdate(updated);
+                return updated;
+              });
+
+              // Mark as new for animation
+              newCallIdsRef.current.add(newCall.id);
+              setNewCallsCount((prev) => prev + 1);
+
+              // Clear the "new" indicator after 5 seconds
+              setTimeout(() => {
+                newCallIdsRef.current.delete(newCall.id);
+              }, 5000);
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            // Existing call updated
+            const updatedCall = payload.new as Call;
+
+            setAllCalls((prev) => {
+              const updated = prev.map((call) =>
+                call.id === updatedCall.id ? updatedCall : call
+              );
+              onCallsUpdate(updated);
+              return updated;
+            });
+          } else if (payload.eventType === 'DELETE') {
+            // Call deleted
+            const deletedCall = payload.old as Call;
+
+            setAllCalls((prev) => {
+              const updated = prev.filter((call) => call.id !== deletedCall.id);
+              callIdsRef.current.delete(deletedCall.id);
+              onCallsUpdate(updated);
+              return updated;
+            });
+          }
         }
-      };
-    } else {
-      // Clear interval when paused
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    }
-  }, [isLive, pollCalls]);
+      )
+      .subscribe((status) => {
+        console.log('Realtime subscription status:', status);
+        setConnectionStatus(status);
+      });
+
+    // Cleanup subscription on unmount or when paused
+    return () => {
+      console.log('Cleaning up Realtime subscription');
+      supabase.removeChannel(channel);
+    };
+  }, [isLive, supabase, onCallsUpdate, loadInitialData]);
 
   const toggleLive = () => {
     setIsLive((prev) => !prev);
@@ -119,7 +150,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
 
   const handleRefresh = () => {
     setNewCallsCount(0);
-    pollCalls();
+    loadInitialData();
   };
 
   return (
@@ -131,11 +162,25 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
             <div className="flex items-center gap-4">
               {/* Live Indicator */}
               <div className="flex items-center gap-2">
-                {isLive ? (
+                {isLive && connectionStatus === 'SUBSCRIBED' ? (
                   <>
                     <div className="h-3 w-3 rounded-full bg-green-500 animate-pulse" />
                     <span className="text-sm font-medium text-green-600 dark:text-green-400">
-                      Live Updates Active
+                      Realtime Connected
+                    </span>
+                  </>
+                ) : isLive && connectionStatus === 'CHANNEL_ERROR' ? (
+                  <>
+                    <div className="h-3 w-3 rounded-full bg-red-500" />
+                    <span className="text-sm font-medium text-red-600 dark:text-red-400">
+                      Connection Error
+                    </span>
+                  </>
+                ) : isLive ? (
+                  <>
+                    <div className="h-3 w-3 rounded-full bg-yellow-500 animate-pulse" />
+                    <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
+                      Connecting...
                     </span>
                   </>
                 ) : (
@@ -173,6 +218,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
                 size="sm"
                 onClick={handleRefresh}
                 disabled={isLoading}
+                title="Reload all calls"
               >
                 <RefreshCw className="h-4 w-4" />
               </Button>
