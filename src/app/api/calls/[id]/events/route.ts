@@ -12,33 +12,21 @@ export async function GET(
   try {
     const supabase = createClient();
 
-    // Get current user and tenant
+    // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
 
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get user's tenant_id
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
-    }
-
-    const tenantId = profile.tenant_id;
     const callId = params.id;
 
-    // Verify call belongs to tenant
+    // Verify call belongs to user
     const { data: call } = await supabase
       .from('calls')
       .select('id')
       .eq('id', callId)
-      .eq('tenant_id', tenantId)
+      .eq('user_id', user.id)
       .single();
 
     if (!call) {
@@ -50,7 +38,7 @@ export async function GET(
       .from('call_events')
       .select('*')
       .eq('call_id', callId)
-      .eq('tenant_id', tenantId)
+      .eq('user_id', user.id)
       .order('occurred_at', { ascending: true });
 
     if (error) {

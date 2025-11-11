@@ -9,25 +9,12 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = createClient();
 
-    // Get current user and tenant
+    // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
 
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    // Get user's tenant_id
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
-    }
-
-    const tenantId = profile.tenant_id;
 
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
@@ -36,17 +23,19 @@ export async function GET(request: NextRequest) {
     fromDate.setDate(fromDate.getDate() - days);
 
     // Fetch all calls with assistant_id in date range
-    const { data: calls, error } = await supabase
+    const { data, error } = await supabase
       .from('calls')
       .select('*')
-      .eq('tenant_id', tenantId)
+      .eq('user_id', user.id)
       .not('assistant_id', 'is', null)
       .gte('started_at', fromDate.toISOString());
 
-    if (error) {
+    if (error || !data) {
       console.error('Assistant analytics query error:', error);
       return NextResponse.json({ error: 'Failed to fetch assistant analytics' }, { status: 500 });
     }
+
+    const calls = data;
 
     // Calculate metrics per assistant
     const assistantMetricsMap: Record<string, {

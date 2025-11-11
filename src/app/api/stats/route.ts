@@ -1,5 +1,5 @@
 /**
- * API route for dashboard statistics (tenant-scoped)
+ * API route for dashboard statistics (user-scoped)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -9,25 +9,12 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = createClient();
 
-    // Get current user and tenant
+    // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
 
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    // Get user's tenant_id
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
-    }
-
-    const tenantId = profile.tenant_id;
 
     // Parse date range (default to last 30 days)
     const searchParams = request.nextUrl.searchParams;
@@ -35,17 +22,19 @@ export async function GET(request: NextRequest) {
     const fromDate = new Date();
     fromDate.setDate(fromDate.getDate() - days);
 
-    // Fetch all calls in date range for tenant
-    const { data: calls, error } = await supabase
+    // Fetch all calls in date range for user
+    const { data, error } = await supabase
       .from('calls')
       .select('*')
-      .eq('tenant_id', tenantId)
+      .eq('user_id', user.id)
       .gte('started_at', fromDate.toISOString());
 
-    if (error) {
+    if (error || !data) {
       console.error('Stats query error:', error);
       return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 });
     }
+
+    const calls = data;
 
     // Calculate statistics
     const totalCalls = calls.length;
