@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import type { Call } from '@/lib/types/database';
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch billing data' }, { status: 500 });
     }
 
-    const calls = data;
+    const calls = data as Call[];
 
     // Calculate current period totals
     const totalCalls = calls.length;

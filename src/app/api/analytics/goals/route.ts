@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import type { Call } from '@/lib/types/database';
 
 export async function GET(request: NextRequest) {
   try {
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch goals' }, { status: 500 });
     }
 
-    const calls = data;
+    const calls = data as Call[];
 
     // Calculate goal trends by date
     const goalTrendsByDate: Record<string, { achieved: number; failed: number; pending: number }> = {};
@@ -71,6 +72,8 @@ export async function GET(request: NextRequest) {
 
     calls.forEach((call) => {
       const goal = call.goal;
+      if (!goal) return; // Skip calls without a goal
+
       if (!goalsByTypeMap[goal]) {
         goalsByTypeMap[goal] = { total: 0, achieved: 0, durations: [] };
       }

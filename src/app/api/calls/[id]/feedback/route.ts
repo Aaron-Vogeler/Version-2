@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import type { Database } from '@/lib/types/database';
 
 export async function POST(
   request: NextRequest,
@@ -38,6 +39,7 @@ export async function POST(
     // Update call with feedback
     const { error: updateError } = await supabase
       .from('calls')
+      // @ts-expect-error - Supabase type inference issue
       .update({
         user_feedback: feedback,
         feedback_comment: comment,

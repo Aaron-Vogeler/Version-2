@@ -31,6 +31,7 @@ export interface Database {
         Row: {
           id: string;
           tenant_id: string;
+          user_id: string;  // Direct link to auth.users
           direction: 'inbound' | 'outbound';
           from_e164: string;
           to_e164: string;
@@ -67,6 +68,7 @@ export interface Database {
         Row: {
           id: string;
           tenant_id: string;
+          user_id: string;  // Direct link to auth.users
           name: string;
           description: string | null;
           voice_id: string | null;
@@ -132,6 +134,7 @@ export interface Database {
           id: string;
           call_id: string;
           tenant_id: string;
+          user_id: string;  // Direct link to auth.users
           type: string;
           occurred_at: string;
           payload: any;
