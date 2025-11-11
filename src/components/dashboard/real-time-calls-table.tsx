@@ -9,10 +9,6 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Call } from '@/lib/types/database';
 import { CallsTable } from './calls-table';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Play, Pause, RefreshCw } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
 
 interface RealTimeCallsTableProps {
   displayCalls: Call[]; // The filtered calls to display
@@ -154,105 +150,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
   };
 
   return (
-    <div className="space-y-4">
-      {/* Live Controls */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              {/* Live Indicator */}
-              <div className="flex items-center gap-2">
-                {isLive && connectionStatus === 'SUBSCRIBED' ? (
-                  <>
-                    <div className="h-3 w-3 rounded-full bg-green-500 animate-pulse" />
-                    <span className="text-sm font-medium text-green-600 dark:text-green-400">
-                      Realtime Connected
-                    </span>
-                  </>
-                ) : isLive && connectionStatus === 'CHANNEL_ERROR' ? (
-                  <>
-                    <div className="h-3 w-3 rounded-full bg-red-500" />
-                    <span className="text-sm font-medium text-red-600 dark:text-red-400">
-                      Connection Error
-                    </span>
-                  </>
-                ) : isLive ? (
-                  <>
-                    <div className="h-3 w-3 rounded-full bg-yellow-500 animate-pulse" />
-                    <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
-                      Connecting...
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <div className="h-3 w-3 rounded-full bg-gray-400" />
-                    <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
-                      Updates Paused
-                    </span>
-                  </>
-                )}
-              </div>
-
-              {/* New Calls Badge */}
-              {newCallsCount > 0 && (
-                <Badge variant="success" className="animate-pulse">
-                  +{newCallsCount} new call{newCallsCount !== 1 ? 's' : ''}
-                </Badge>
-              )}
-
-              {/* Loading Indicator */}
-              {isLoading && (
-                <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Last Updated */}
-              <span className="text-xs text-muted-foreground">
-                Updated {lastUpdated.toLocaleTimeString()}
-              </span>
-
-              {/* Refresh Button */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleRefresh}
-                disabled={isLoading}
-                title="Reload all calls"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-
-              {/* Pause/Resume Toggle */}
-              <Button
-                variant={isLive ? 'default' : 'outline'}
-                size="sm"
-                onClick={toggleLive}
-              >
-                {isLive ? (
-                  <>
-                    <Pause className="h-4 w-4 mr-2" />
-                    Pause
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    Resume
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-
-          {/* Error Display */}
-          {error && (
-            <div className="mt-4 text-sm text-destructive">
-              Error: {error}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
+    <div>
       {/* Calls Table - Display the filtered calls passed from parent */}
       <div className="real-time-calls-container">
         <style jsx global>{`
