@@ -1,56 +1,90 @@
 /**
  * API route for billing and usage analytics
+ * Uses NextAuth for auth + Supabase service-role on the server
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/../pages/api/auth/[...nextauth]';
+import { createClient } from '@supabase/supabase-js';
 import type { Call } from '@/lib/types/database';
+
+// --- Supabase admin client (service role, server-only) ---
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !serviceRoleKey) {
+  throw new Error(
+    'Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars'
+  );
+}
+
+const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
+});
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createClient();
+    // 1) Get current user from NextAuth (NOT Supabase cookies)
+    const session = await getServerSession(authOptions);
 
-    // Get current user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-    if (userError || !user) {
+    if (!session?.user || !(session.user as any).id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Parse query parameters
+    const userId = (session.user as any).id as string;
+
+    // 2) Parse query parameters
     const searchParams = request.nextUrl.searchParams;
-    const days = parseInt(searchParams.get('days') || '30');
+    const days = parseInt(searchParams.get('days') || '30', 10);
+
     const fromDate = new Date();
     fromDate.setDate(fromDate.getDate() - days);
 
-    // Fetch all calls in date range
-    const { data, error } = await supabase
+    // 3) Fetch all calls for this user in date range
+    const { data, error } = await supabaseAdmin
       .from('calls')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .gte('started_at', fromDate.toISOString());
 
     if (error || !data) {
       console.error('Billing analytics query error:', error);
-      return NextResponse.json({ error: 'Failed to fetch billing data' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Failed to fetch billing data' },
+        { status: 500 }
+      );
     }
 
     const calls = data as Call[];
 
-    // Calculate current period totals
+    // 4) Calculate current period totals
     const totalCalls = calls.length;
-    const totalMinutes = calls.reduce((sum, c) => sum + ((c.billable_sec || 0) / 60), 0);
-    const totalCost = calls.reduce((sum, c) => sum + (Number(c.cost_usd) || 0), 0);
+    const totalMinutes = calls.reduce(
+      (sum, c) => sum + ((c.billable_sec || 0) / 60),
+      0
+    );
+    const totalCost = calls.reduce(
+      (sum, c) => sum + (Number(c.cost_usd) || 0),
+      0
+    );
 
-    // Breakdown by goal
+    // Breakdown by goal & direction
     const breakdownByGoal: Record<string, number> = {};
     const breakdownByDirection: Record<string, number> = {};
 
     calls.forEach((call) => {
       if (call.goal) {
-        breakdownByGoal[call.goal] = (breakdownByGoal[call.goal] || 0) + (Number(call.cost_usd) || 0);
+        breakdownByGoal[call.goal] =
+          (breakdownByGoal[call.goal] || 0) + (Number(call.cost_usd) || 0);
       }
-      breakdownByDirection[call.direction] = (breakdownByDirection[call.direction] || 0) + (Number(call.cost_usd) || 0);
+      breakdownByDirection[call.direction] =
+        (breakdownByDirection[call.direction] || 0) +
+        (Number(call.cost_usd) || 0);
     });
 
     // Historical costs by day
@@ -78,7 +112,10 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => a.date.localeCompare(b.date));
 
     // Cost by assistant
-    const costByAssistantMap: Record<string, { calls: number; minutes: number; cost: number }> = {};
+    const costByAssistantMap: Record<
+      string,
+      { calls: number; minutes: number; cost: number }
+    > = {};
 
     calls.forEach((call) => {
       if (call.assistant_id) {
@@ -92,10 +129,12 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    const costByAssistant = Object.entries(costByAssistantMap).map(([assistantName, data]) => ({
-      assistantName,
-      ...data,
-    }));
+    const costByAssistant = Object.entries(costByAssistantMap).map(
+      ([assistantName, data]) => ({
+        assistantName,
+        ...data,
+      })
+    );
 
     return NextResponse.json({
       currentPeriod: {
@@ -112,6 +151,9 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('API /analytics/billing error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
