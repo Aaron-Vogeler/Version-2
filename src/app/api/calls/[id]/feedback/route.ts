@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import type { Database } from '@/lib/types/database';
 
 export async function POST(
   request: NextRequest,
@@ -12,34 +13,23 @@ export async function POST(
   try {
     const supabase = createClient();
 
-    // Get current user and tenant
+    // Get current user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
 
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get user's tenant_id
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
-    }
-
     const callId = params.id;
     const body = await request.json();
     const { feedback, comment } = body;
 
-    // Verify call belongs to tenant
+    // Verify call belongs to user
     const { data: call } = await supabase
       .from('calls')
       .select('id')
       .eq('id', callId)
-      .eq('tenant_id', profile.tenant_id)
+      .eq('user_id', user.id)
       .single();
 
     if (!call) {
@@ -49,12 +39,14 @@ export async function POST(
     // Update call with feedback
     const { error: updateError } = await supabase
       .from('calls')
+      // @ts-expect-error - Supabase type inference issue
       .update({
         user_feedback: feedback,
         feedback_comment: comment,
         feedback_at: new Date().toISOString(),
       })
-      .eq('id', callId);
+      .eq('id', callId)
+      .eq('user_id', user.id);
 
     if (updateError) {
       console.error('Feedback update error:', updateError);
