@@ -30,7 +30,7 @@ export interface Database {
       calls: {
         Row: {
           id: string;
-          tenant_id: string;
+          user_id: string;
           direction: 'inbound' | 'outbound';
           from_e164: string;
           to_e164: string;
