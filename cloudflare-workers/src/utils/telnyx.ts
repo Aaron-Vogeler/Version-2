@@ -112,3 +112,94 @@ export function calculateCallCost(billableSec: number): number {
   const billableMin = billableSec / 60;
   return Number((billableMin * RATE_PER_MINUTE).toFixed(4));
 }
+
+/**
+ * Initiate an outbound call via Telnyx API
+ * Returns the call_control_id for tracking
+ */
+export async function initiateOutboundCall(
+  env: Env,
+  options: {
+    to_number: string; // E.164 format, e.g., "+14155551234"
+    from_number?: string; // E.164 format (uses default if not provided)
+    goal?: string; // User's goal for the call
+    user_id: string; // Authenticated user ID
+    tenant_id: string; // Tenant ID for scoping
+  }
+): Promise<{
+  success: boolean;
+  call_control_id?: string;
+  error?: string;
+}> {
+  const { to_number, from_number, goal, user_id, tenant_id } = options;
+
+  // Get the from number from env or use a default
+  const callFromNumber = from_number || process.env.TELNYX_FROM_NUMBER || '+18664001234';
+
+  try {
+    // Build client_state for passing context through Telnyx events
+    const clientState = {
+      user_id,
+      tenant_id,
+      goal: goal || null,
+      initiated_at: new Date().toISOString(),
+    };
+
+    // Make Telnyx API call
+    const response = await fetch('https://api.telnyx.com/v2/calls', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.TELNYX_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: to_number,
+        from: callFromNumber,
+        connection_id: process.env.TELNYX_CONNECTION_ID || env.TELNYX_CONNECTION_ID,
+        client_state: JSON.stringify(clientState),
+        // Optional: Custom headers for additional tracking
+        custom_headers: [
+          {
+            name: 'X-User-ID',
+            value: user_id,
+          },
+          {
+            name: 'X-Tenant-ID',
+            value: tenant_id,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Telnyx API error:', errorData);
+      return {
+        success: false,
+        error: errorData.errors?.[0]?.detail || 'Failed to initiate call',
+      };
+    }
+
+    const data: any = await response.json();
+    const callControlId = data.data?.id;
+
+    if (!callControlId) {
+      return {
+        success: false,
+        error: 'No call_control_id returned from Telnyx',
+      };
+    }
+
+    console.log(`Initiated call ${callControlId} for user ${user_id}`);
+    return {
+      success: true,
+      call_control_id: callControlId,
+    };
+  } catch (error: any) {
+    console.error('Error initiating outbound call:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to initiate call',
+    };
+  }
+}
