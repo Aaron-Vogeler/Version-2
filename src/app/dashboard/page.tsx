@@ -267,12 +267,17 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-4">
             {/* Live Call Indicator */}
-            {Object.keys(liveCallStatuses).length > 0 && (
-              <Badge variant="success" className="animate-pulse">
-                <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
-                {Object.keys(liveCallStatuses).length} Active
-              </Badge>
-            )}
+            {(() => {
+              const activeCallCount = Object.entries(liveCallStatuses).filter(
+                ([_, status]) => status !== 'completed'
+              ).length;
+              return activeCallCount > 0 && (
+                <Badge variant="success" className="animate-pulse">
+                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
+                  {activeCallCount} Active
+                </Badge>
+              );
+            })()}
             <Button variant="outline" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
               Logout
