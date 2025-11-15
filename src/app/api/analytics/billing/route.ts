@@ -3,6 +3,8 @@
  * Uses NextAuth for auth + Supabase service-role on the server
  */
 
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/../pages/api/auth/[...nextauth]';
@@ -65,7 +67,7 @@ export async function GET(request: NextRequest) {
     // 4) Calculate current period totals
     const totalCalls = calls.length;
     const totalMinutes = calls.reduce(
-      (sum, c) => sum + ((c.billable_sec || 0) / 60),
+      (sum, c) => sum + (c.billable_sec || 0) / 60,
       0
     );
     const totalCost = calls.reduce(
@@ -102,7 +104,7 @@ export async function GET(request: NextRequest) {
         const date = new Date(call.started_at).toISOString().split('T')[0];
         if (costsByDate[date]) {
           costsByDate[date].cost += Number(call.cost_usd) || 0;
-          costsByDate[date].calls++;
+          costsByDate[date].calls += 1;
         }
       }
     });
@@ -123,7 +125,7 @@ export async function GET(request: NextRequest) {
         if (!costByAssistantMap[name]) {
           costByAssistantMap[name] = { calls: 0, minutes: 0, cost: 0 };
         }
-        costByAssistantMap[name].calls++;
+        costByAssistantMap[name].calls += 1;
         costByAssistantMap[name].minutes += (call.billable_sec || 0) / 60;
         costByAssistantMap[name].cost += Number(call.cost_usd) || 0;
       }
