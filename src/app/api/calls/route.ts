@@ -3,9 +3,11 @@
  * Uses NextAuth for auth + Supabase service-role on the server
  */
 
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../../../pages/api/auth/[...nextauth]';
+import { authOptions } from '@/../pages/api/auth/[...nextauth]';
 import { createClient } from '@supabase/supabase-js';
 
 // --- Supabase admin client (service role, server-only) ---
@@ -58,6 +60,7 @@ export async function GET(request: NextRequest) {
     if (to) query = query.lte('started_at', to);
     if (status) query = query.eq('status', status);
     if (search) {
+      // search in phone numbers
       query = query.or(
         `from_e164.ilike.%${search}%,to_e164.ilike.%${search}%`
       );
@@ -76,7 +79,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       calls,
       pagination: {
-        total: count,
+        total: count ?? 0,
         limit,
         offset,
       },
