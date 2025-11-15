@@ -233,11 +233,6 @@ export default function DashboardPage() {
     setShowCallDetail(true);
   };
 
-  const handleFeedbackSubmit = (callId: string, feedback: boolean, comment: string) => {
-    // Refresh calls to show updated feedback
-    loadDashboardData();
-  };
-
   const handleLogout = async () => {
     // Sign out and redirect to login
     await fetch('/api/auth/signout', { method: 'POST' });
@@ -340,7 +335,6 @@ export default function DashboardPage() {
         call={selectedCall}
         open={showCallDetail}
         onOpenChange={setShowCallDetail}
-        onFeedbackSubmit={handleFeedbackSubmit}
       />
     </div>
   );
