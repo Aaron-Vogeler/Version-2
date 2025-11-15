@@ -60,6 +60,7 @@ export interface NormalizedEvent {
 export interface CallRecord {
   id: string;
   tenant_id: string;
+  user_id: string; // Authenticated user ID from NextAuth
   direction: 'inbound' | 'outbound';
   from_e164: string;
   to_e164: string;

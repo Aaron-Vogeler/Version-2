@@ -31,6 +31,13 @@ export default async function handler(
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
     }
 
+    // Extract user ID from NextAuth session
+    // session.user.id is set in the jwt callback of [...nextauth].ts
+    const userId = (session.user as any).id;
+    if (!userId) {
+      return res.status(401).json({ error: 'User ID not found in session' });
+    }
+
     // Forward request to Cloudflare Worker
     const workerUrl = 'https://telnyx-webhook.aaronmvogeler.workers.dev/start-call';
 
@@ -49,11 +56,8 @@ export default async function handler(
       body: JSON.stringify({
         goal,
         to_number,
-        // Include user info from session if needed
-        user: {
-          email: session.user.email,
-          name: session.user.name,
-        },
+        // IMPORTANT: Send the authenticated user's ID to the Worker
+        user_id: userId,
       }),
     });
 

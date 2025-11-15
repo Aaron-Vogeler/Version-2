@@ -5,6 +5,7 @@
 
 import type { Env, NormalizedEvent } from './types';
 import { handleWebhook } from './webhook-handler';
+import { handleStartCall } from './start-call-handler';
 import { processEventBatch } from './queue-consumer';
 import { runScheduledJob } from './scheduled-job';
 
@@ -15,7 +16,12 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // Webhook endpoint
+    // Start call endpoint (from Next.js)
+    if (url.pathname === '/start-call') {
+      return handleStartCall(request, env);
+    }
+
+    // Webhook endpoint (from Telnyx)
     if (url.pathname === '/telnyx/webhook') {
       return handleWebhook(request, env);
     }

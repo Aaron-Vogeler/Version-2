@@ -34,6 +34,10 @@ async function processEvent(event: NormalizedEvent, env: Env): Promise<void> {
 
   console.log(`Processing ${event_type} for call ${call_control_id}`);
 
+  // Extract user_id from client_state if available
+  // client_state is set during initiateOutboundCall
+  const user_id = client_state?.user_id || tenant_id;
+
   // Insert call event record
   const callEvent: CallEventRecord = {
     id: event_id,
@@ -53,6 +57,7 @@ async function processEvent(event: NormalizedEvent, env: Env): Promise<void> {
     await upsertCall(env, {
       id: call_control_id,
       tenant_id,
+      user_id, // IMPORTANT: Pass the authenticated user_id
       ...callUpdate,
     });
 
