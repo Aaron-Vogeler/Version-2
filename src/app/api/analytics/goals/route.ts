@@ -2,6 +2,8 @@
  * API route for goal analytics
  */
 
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import type { Call } from '@/lib/types/database';
@@ -10,20 +12,20 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = createClient();
 
-    // Get current user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
 
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
-    const days = parseInt(searchParams.get('days') || '30');
+    const days = parseInt(searchParams.get('days') || '30', 10);
     const fromDate = new Date();
     fromDate.setDate(fromDate.getDate() - days);
 
-    // Fetch all calls with goals in date range
     const { data, error } = await supabase
       .from('calls')
       .select('*')
@@ -33,13 +35,19 @@ export async function GET(request: NextRequest) {
 
     if (error || !data) {
       console.error('Goals query error:', error);
-      return NextResponse.json({ error: 'Failed to fetch goals' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Failed to fetch goals' },
+        { status: 500 },
+      );
     }
 
     const calls = data as Call[];
 
-    // Calculate goal trends by date
-    const goalTrendsByDate: Record<string, { achieved: number; failed: number; pending: number }> = {};
+    // Initialize per-day buckets
+    const goalTrendsByDate: Record<
+      string,
+      { achieved: number; failed: number; pending: number }
+    > = {};
 
     for (let i = 0; i < days; i++) {
       const date = new Date();
@@ -49,17 +57,16 @@ export async function GET(request: NextRequest) {
     }
 
     calls.forEach((call) => {
-      if (call.started_at) {
-        const date = new Date(call.started_at).toISOString().split('T')[0];
-        if (goalTrendsByDate[date]) {
-          if (call.goal_status === 'achieved') {
-            goalTrendsByDate[date].achieved++;
-          } else if (call.goal_status === 'failed') {
-            goalTrendsByDate[date].failed++;
-          } else {
-            goalTrendsByDate[date].pending++;
-          }
-        }
+      if (!call.started_at) return;
+      const date = new Date(call.started_at).toISOString().split('T')[0];
+      if (!goalTrendsByDate[date]) return;
+
+      if (call.goal_status === 'achieved') {
+        goalTrendsByDate[date].achieved += 1;
+      } else if (call.goal_status === 'failed') {
+        goalTrendsByDate[date].failed += 1;
+      } else {
+        goalTrendsByDate[date].pending += 1;
       }
     });
 
@@ -67,36 +74,44 @@ export async function GET(request: NextRequest) {
       .map(([date, counts]) => ({ date, ...counts }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    // Calculate goals by type
-    const goalsByTypeMap: Record<string, { total: number; achieved: number; durations: number[] }> = {};
+    // Aggregate by goal type
+    const goalsByTypeMap: Record<
+      string,
+      { total: number; achieved: number; durations: number[] }
+    > = {};
 
     calls.forEach((call) => {
       const goal = call.goal;
-      if (!goal) return; // Skip calls without a goal
+      if (!goal) return;
 
       if (!goalsByTypeMap[goal]) {
         goalsByTypeMap[goal] = { total: 0, achieved: 0, durations: [] };
       }
-      goalsByTypeMap[goal].total++;
+      goalsByTypeMap[goal].total += 1;
+
       if (call.goal_status === 'achieved') {
-        goalsByTypeMap[goal].achieved++;
+        goalsByTypeMap[goal].achieved += 1;
         if (call.duration_sec) {
           goalsByTypeMap[goal].durations.push(call.duration_sec);
         }
       }
     });
 
-    const goalsByType = Object.entries(goalsByTypeMap).map(([goal, data]) => ({
-      goal,
-      total: data.total,
-      achieved: data.achieved,
-      successRate: data.total > 0 ? (data.achieved / data.total) * 100 : 0,
-      avgTimeToGoal: data.durations.length > 0
-        ? data.durations.reduce((a, b) => a + b, 0) / data.durations.length
-        : 0,
-    }));
+    const goalsByType = Object.entries(goalsByTypeMap).map(
+      ([goal, data]) => ({
+        goal,
+        total: data.total,
+        achieved: data.achieved,
+        successRate:
+          data.total > 0 ? (data.achieved / data.total) * 100 : 0,
+        avgTimeToGoal:
+          data.durations.length > 0
+            ? data.durations.reduce((a, b) => a + b, 0) /
+              data.durations.length
+            : 0,
+      }),
+    );
 
-    // Top performing goals
     const topPerformingGoals = [...goalsByType]
       .sort((a, b) => b.successRate - a.successRate)
       .slice(0, 5)
@@ -113,6 +128,9 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('API /analytics/goals error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 },
+    );
   }
 }
