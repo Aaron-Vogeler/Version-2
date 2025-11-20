@@ -520,25 +520,37 @@ export default {
       const userId = clientStateData.user_id || env.DEFAULT_USER_ID || null;
       const goal = clientStateData.goal || null;
 
+      // Extract phone numbers (required for database)
+      const fromNumber = payload.from || payload.from_number;
+      const toNumber = payload.to || payload.to_number;
+
       // FIXED: Skip upsert for monitor calls (they have invalid user_id 'admin_listener')
-      if (userId && !isMonitorCall) {
+      // Also skip if we don't have required fields (from_e164, to_e164)
+      if (userId && !isMonitorCall && fromNumber && toNumber) {
         await upsertCall({
           id: callId,
           user_id: userId,
           direction: normalizeDirection(payload.direction),
-          from_e164: payload.from || payload.from_number,
-          to_e164: payload.to || payload.to_number,
+          from_e164: fromNumber,
+          to_e164: toNumber,
           status: "initiated",
           goal: goal,
           created_at: occurredAt,
           updated_at: occurredAt,
           started_at: payload.start_time || occurredAt,
         });
-      } else if (!userId && !isMonitorCall) {
-        console.warn(
-          "Webhook has no user_id and DEFAULT_USER_ID not set – skipping Supabase upsert for",
-          callId
-        );
+      } else if (!isMonitorCall) {
+        // Log why we're skipping
+        const reasons = [];
+        if (!userId) reasons.push('no user_id');
+        if (!fromNumber) reasons.push('no from_number');
+        if (!toNumber) reasons.push('no to_number');
+
+        if (reasons.length > 0) {
+          console.warn(
+            `Skipping baseline upsert for ${callId}: ${reasons.join(', ')}`
+          );
+        }
       }
       // Monitor calls intentionally skip upsert
 
