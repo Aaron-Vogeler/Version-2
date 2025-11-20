@@ -177,9 +177,14 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         user_id: 'admin_listener', // Helps backend identify us
       };
 
+      addDebug(`📋 Client state object: ${JSON.stringify(clientState, null, 2)}`);
+
+      // Telnyx SDK expects clientState as a JSON STRING, not an object
+      const clientStateString = JSON.stringify(clientState);
+
       const callParams = {
         destinationNumber: monitorNumber,
-        clientState: clientState,
+        clientState: clientStateString, // Must be a string!
         audio: true,
         customHeaders: [
           {
@@ -189,7 +194,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         ],
       };
 
-      addDebug(`📋 Call parameters: ${JSON.stringify(callParams, null, 2)}`);
+      addDebug(`📋 Stringified clientState: ${clientStateString}`);
       addDebug('Initiating WebRTC call via newCall()...');
 
       // Initiate the WebRTC call with the monitor number
