@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Headphones, Mic, MicOff, Phone, Loader2 } from 'lucide-react';
-import TelnyxRTC from '@telnyx/webrtc';
+import { TelnyxRTC } from '@telnyx/webrtc';
 
 interface ListenInBrowserProps {
   callId: string;
