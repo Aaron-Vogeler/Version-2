@@ -1,18 +1,41 @@
-name = "telnyx-webhook-worker"
+name = "telnyx-webhook"
 main = "src/index.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2025-11-08" # match dashboard date, safe
 
-# Worker for webhook receiver
+# =========================
+# Plaintext runtime vars
+# =========================
+[vars]
+FROM_NUMBER = "+12062079439"
+MONITOR_NUMBER = "+12767735173"
+CALL_CONTROL_APP_ID = "2824172743010813129"
+SUPABASE_URL = "https://somhqsewvkwobgvrocyb.supabase.co"
+DEFAULT_USER_ID = "3f5c8773-6343-4579-a77b-7dd7f57799b9"
+
+# Optional / not used by Option-1 monitor approach, ok to leave
+STREAMING_WS_URL = "wss://telnyx-webhook.aaronmvogeler.workers.dev/telnyx-stream"
+MAKE_WEBHOOK_URL = "https://hook.us1.make.com/6jtqrgjmw1q1aolmnfeiqaxx86x1il7o"
+ASSISTANT_ID = "assistant-4ea9739c-9823-4100-9f38-ec3a8f17be9f"
+
+# =========================
+# Production environment
+# =========================
 [env.production]
-name = "telnyx-webhook-worker"
-routes = [
-  { pattern = "yourdomain.com/telnyx/webhook", zone_name = "yourdomain.com" }
-]
+name = "telnyx-webhook"
 
-# Environment variables (set via wrangler secret put)
-# SUPABASE_URL, SUPABASE_SERVICE_KEY, TELNYX_SIGNING_SECRET
+# Remove placeholder routes unless you REALLY use a custom domain
+# routes = [
+#   { pattern = "yourdomain.com/telnyx/webhook", zone_name = "yourdomain.com" }
+# ]
 
-# Queue binding for event processing
+# If you want prod-specific overrides, put them here:
+# [env.production.vars]
+# MONITOR_NUMBER = "+12767735173"
+
+# =========================
+# Queues / KV / Triggers
+# (only keep if your code uses them)
+# =========================
 [[queues.producers]]
 queue = "telnyx-events-queue"
 binding = "TELNYX_EVENTS"
@@ -24,11 +47,9 @@ max_batch_timeout = 5
 max_retries = 3
 dead_letter_queue = "telnyx-events-dlq"
 
-# Scheduled worker for CDR backfill (runs every 30 minutes)
 [triggers]
 crons = ["*/30 * * * *"]
 
-# KV namespace for idempotency and caching (optional)
 [[kv_namespaces]]
 binding = "IDEMPOTENCY"
 id = "your-kv-namespace-id"
