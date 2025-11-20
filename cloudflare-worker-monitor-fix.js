@@ -667,13 +667,47 @@ export default {
         }
       }
 
-      // CALL RINGING
+      // CALL INITIATED / RINGING
       if (eventType === "call.initiated" || eventType === "call.ringing") {
-        ctx.waitUntil(
-          updateCall(callId, {
-            status: "ringing",
-          })
-        );
+        // 🔥 AUTO-ANSWER MONITOR CALLS 🔥
+        if (isMonitorCall && callControlId && eventType === "call.initiated") {
+          console.log("🎧 Monitor call initiated, auto-answering...");
+
+          ctx.waitUntil(
+            (async () => {
+              try {
+                const answerResp = await fetch(
+                  `https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`,
+                  {
+                    method: "POST",
+                    headers: telnyxHeaders,
+                  }
+                );
+
+                if (answerResp.ok) {
+                  console.log("✅ Monitor call auto-answered successfully");
+                } else {
+                  const errorText = await answerResp.text().catch(() => "Unable to read error");
+                  console.error(
+                    `❌ Failed to auto-answer monitor call [${answerResp.status}]:`,
+                    errorText
+                  );
+                }
+              } catch (error) {
+                console.error("❌ Exception while auto-answering monitor call:", error);
+              }
+            })()
+          );
+        }
+
+        // Update call status to ringing (for non-monitor calls)
+        if (!isMonitorCall) {
+          ctx.waitUntil(
+            updateCall(callId, {
+              status: "ringing",
+            })
+          );
+        }
       }
 
       // CALL HANGUP
