@@ -31,6 +31,20 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
   const audioContextRef = useRef<AudioContext | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Helper to safely stringify objects with circular references
+  const safeStringify = (obj: any, indent?: number): string => {
+    const seen = new WeakSet();
+    return JSON.stringify(obj, (key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) {
+          return '[Circular Reference]';
+        }
+        seen.add(value);
+      }
+      return value;
+    }, indent);
+  };
+
   // Helper to add debug messages
   const addDebug = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -83,15 +97,15 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         });
 
         client.on('telnyx.error', (error: any) => {
-          const errorDetails = JSON.stringify(error, null, 2);
+          const errorDetails = safeStringify(error, 2);
           addDebug(`❌ Telnyx error event: ${errorDetails}`);
           console.error('Telnyx error:', error);
-          setErrorMessage(`Connection error: ${error.message || JSON.stringify(error)}`);
+          setErrorMessage(`Connection error: ${error.message || safeStringify(error)}`);
           setConnectionState('error');
         });
 
         client.on('telnyx.notification', (notification: any) => {
-          addDebug(`📢 Notification: ${JSON.stringify(notification)}`);
+          addDebug(`📢 Notification: ${safeStringify(notification)}`);
           console.log('Telnyx notification:', notification);
         });
 
@@ -232,7 +246,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       });
 
       newCall.on('telnyx.call.error', (error: any) => {
-        const errorDetails = JSON.stringify(error, null, 2);
+        const errorDetails = safeStringify(error, 2);
         addDebug(`❌ Call error event: ${errorDetails}`);
         console.error('Call error:', error);
         setErrorMessage(`Call error: ${error.message || errorDetails}`);
@@ -240,7 +254,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       });
 
       newCall.on('telnyx.error', (error: any) => {
-        const errorDetails = JSON.stringify(error, null, 2);
+        const errorDetails = safeStringify(error, 2);
         addDebug(`❌ Telnyx error during call: ${errorDetails}`);
         console.error('Call negotiation error:', error);
         setErrorMessage(`Connection error: ${error.message || errorDetails}`);
