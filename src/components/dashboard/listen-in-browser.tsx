@@ -23,12 +23,11 @@ type ConnectionState = 'idle' | 'connecting' | 'listening' | 'error' | 'disconne
 
 export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true); // Start muted by default for monitoring
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const telnyxClientRef = useRef<any>(null);
   const currentCallRef = useRef<any>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Helper to safely stringify objects with circular references
@@ -72,7 +71,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
     }
 
     setConnectionState('disconnected');
-    setIsMuted(false);
+    setIsMuted(true);
   };
 
   // Initialize Telnyx client on component mount
@@ -84,6 +83,8 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         // Validate required environment variables
         const sipUser = process.env.NEXT_PUBLIC_TELNYX_SIP_USER;
         const sipPassword = process.env.NEXT_PUBLIC_TELNYX_SIP_PASSWORD;
+        
+        // Monitor number is needed for the call destination
         const monitorNumber = process.env.NEXT_PUBLIC_MONITOR_NUMBER;
 
         addDebug(`ENV Check - SIP User: ${sipUser ? '✓ SET' : '✗ MISSING'}`);
@@ -98,7 +99,10 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
           const errorMsg = `Missing required environment variables: ${missing.join(', ')}`;
           addDebug(`❌ ${errorMsg}`);
-          throw new Error(errorMsg);
+          // Don't throw here to allow UI to render error state gracefully
+          setErrorMessage(errorMsg);
+          setConnectionState('error');
+          return;
         }
 
         addDebug('Creating TelnyxRTC client with SIP credentials...');
@@ -127,7 +131,8 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         });
 
         client.on('telnyx.notification', (notification: any) => {
-          addDebug(`📢 Notification: ${safeStringify(notification)}`);
+          // Filter out noisy notifications if needed
+          // addDebug(`📢 Notification: ${safeStringify(notification)}`);
           console.log('Telnyx notification:', notification);
 
           // Handle call state updates
@@ -144,8 +149,12 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
                 setConnectionState('listening');
 
                 // Get the remote audio stream from the call object
-                const remoteStream = currentCallRef.current.remoteStream ||
-                                    currentCallRef.current.getRemoteStream?.();
+                // Try multiple ways to access the stream as SDK versions vary
+                let remoteStream = call.remoteStream;
+                
+                if (!remoteStream && typeof call.getRemoteStream === 'function') {
+                  remoteStream = call.getRemoteStream();
+                }
 
                 if (remoteStream && remoteAudioRef.current) {
                   addDebug('🔊 Remote audio stream received, playing...');
@@ -165,25 +174,17 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
               }
             }
           }
-
-          // Handle call errors
-          if (notification.type === 'callUpdate' && notification.call?.error) {
-            if (currentCallRef.current && notification.call.id === currentCallRef.current.id) {
-              const error = notification.call.error;
-              addDebug(`❌ Call error: ${safeStringify(error)}`);
-              setErrorMessage(`Call error: ${error.message || safeStringify(error)}`);
-              setConnectionState('error');
-            }
-          }
         });
 
+        // Connect the client
+        client.connect();
         telnyxClientRef.current = client;
-        addDebug('✅ Client initialization complete');
+        
       } catch (error: any) {
         const errorDetails = `${error.message || 'Unknown error'}\nStack: ${error.stack || 'No stack trace'}`;
         addDebug(`❌ Init failed: ${errorDetails}`);
         console.error('Failed to initialize Telnyx client:', error);
-        setErrorMessage(`Initialization Error: ${error.message || 'Failed to initialize WebRTC client'}\n\n${error.stack || ''}`);
+        setErrorMessage(`Initialization Error: ${error.message || 'Failed to initialize WebRTC client'}`);
         setConnectionState('error');
       }
     };
@@ -232,7 +233,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       setConnectionState('connecting');
       setErrorMessage(null);
 
-      // Request microphone permission
+      // Request microphone permission (required by browser for WebRTC even if listening only)
       try {
         addDebug('Requesting microphone permission...');
         await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -253,7 +254,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       addDebug(`🎯 Target call ID: ${callId}`);
 
       // Create client state with target_call_id for the Cloudflare Worker
-      // CRITICAL: This exact format is required by the backend
+      // CRITICAL: This exact format is required by the backend to route the call
       const clientState = {
         target_call_id: callId,
         user_id: 'admin_listener', // Helps backend identify us
@@ -261,22 +262,16 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
       addDebug(`📋 Client state object: ${JSON.stringify(clientState, null, 2)}`);
 
-      // Telnyx SDK expects clientState as a JSON STRING, not an object
+      // Telnyx SDK expects clientState as a JSON STRING
       const clientStateString = JSON.stringify(clientState);
 
       const callParams = {
         destinationNumber: monitorNumber,
-        clientState: clientStateString, // Must be a string!
+        clientState: clientStateString, 
         audio: true,
-        customHeaders: [
-          {
-            name: 'X-Target-Call-ID',
-            value: callId,
-          },
-        ],
+        video: false,
       };
 
-      addDebug(`📋 Stringified clientState: ${clientStateString}`);
       addDebug('Initiating WebRTC call via newCall()...');
 
       // Initiate the WebRTC call with the monitor number
@@ -289,19 +284,25 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
       addDebug('✅ Call object created');
       addDebug(`Call ID: ${newCall.id}`);
-      addDebug(`Call state: ${newCall.state || newCall._state}`);
 
       // Store the call reference
-      // Events will be handled via client.on('telnyx.notification')
       currentCallRef.current = newCall;
 
-      addDebug('Call initiated, waiting for state changes via notifications...');
+      // Ensure mute is set initially for monitoring
+      setIsMuted(true);
+      try {
+         newCall.mute();
+      } catch (e) {
+         // Mute might fail if call isn't ready, handled later too
+      }
+
+      addDebug('Call initiated, waiting for state changes...');
     } catch (error: any) {
       const errorDetails = `${error.message || 'Unknown error'}\nStack: ${error.stack || 'No stack'}`;
       addDebug(`❌ Listen session failed: ${errorDetails}`);
       console.error('Failed to initiate listen session:', error);
       setErrorMessage(
-        `Failed to start listen session:\n${error.message || 'Unknown error'}\n\n${error.stack || ''}`
+        `Failed to start listen session:\n${error.message || 'Unknown error'}`
       );
       setConnectionState('error');
     }
@@ -314,9 +315,11 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       if (isMuted) {
         currentCallRef.current.unmute();
         setIsMuted(false);
+        addDebug('🎤 Microphone unmuted');
       } else {
         currentCallRef.current.mute();
         setIsMuted(true);
+        addDebug('Sx Microphone muted');
       }
     } catch (error: any) {
       console.error('Error toggling mute:', error);
@@ -446,6 +449,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
               variant="outline"
               size="icon"
               title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+              className={isMuted ? 'text-muted-foreground' : 'text-destructive'}
             >
               {isMuted ? (
                 <MicOff className="h-4 w-4" />
