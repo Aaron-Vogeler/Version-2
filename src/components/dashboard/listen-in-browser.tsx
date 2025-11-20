@@ -53,6 +53,28 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
     setDebugInfo(prev => [...prev, debugMsg].slice(-20)); // Keep last 20 messages
   };
 
+  // Disconnect handler - defined before useEffect so notification handler can access it
+  const handleDisconnect = () => {
+    addDebug('Disconnecting...');
+
+    if (currentCallRef.current) {
+      try {
+        currentCallRef.current.hangup();
+        currentCallRef.current = null;
+      } catch (e) {
+        console.warn('Error hanging up:', e);
+      }
+    }
+
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.pause();
+      remoteAudioRef.current.srcObject = null;
+    }
+
+    setConnectionState('disconnected');
+    setIsMuted(false);
+  };
+
   // Initialize Telnyx client on component mount
   useEffect(() => {
     const initializeTelnyxClient = async () => {
@@ -107,6 +129,52 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         client.on('telnyx.notification', (notification: any) => {
           addDebug(`📢 Notification: ${safeStringify(notification)}`);
           console.log('Telnyx notification:', notification);
+
+          // Handle call state updates
+          if (notification.type === 'callUpdate' && notification.call) {
+            const call = notification.call;
+
+            // Check if this notification is for our current call
+            if (currentCallRef.current && call.id === currentCallRef.current.id) {
+              addDebug(`📞 Call state changed: ${call.prevState} → ${call.state}`);
+
+              // Handle different call states
+              if (call.state === 'active') {
+                addDebug('✅ CALL ACTIVE - Audio stream connected!');
+                setConnectionState('listening');
+
+                // Get the remote audio stream from the call object
+                const remoteStream = currentCallRef.current.remoteStream ||
+                                    currentCallRef.current.getRemoteStream?.();
+
+                if (remoteStream && remoteAudioRef.current) {
+                  addDebug('🔊 Remote audio stream received, playing...');
+                  remoteAudioRef.current.srcObject = remoteStream;
+                  remoteAudioRef.current.play().catch(err => {
+                    addDebug(`⚠️ Audio play failed: ${err.message}`);
+                  });
+                } else {
+                  addDebug('⚠️ No remote stream available yet');
+                }
+              } else if (call.state === 'hangup' || call.state === 'destroy') {
+                addDebug('📴 Call ended');
+                handleDisconnect();
+              } else if (call.state === 'purge') {
+                addDebug('🗑️ Call purged');
+                handleDisconnect();
+              }
+            }
+          }
+
+          // Handle call errors
+          if (notification.type === 'callUpdate' && notification.call?.error) {
+            if (currentCallRef.current && notification.call.id === currentCallRef.current.id) {
+              const error = notification.call.error;
+              addDebug(`❌ Call error: ${safeStringify(error)}`);
+              setErrorMessage(`Call error: ${error.message || safeStringify(error)}`);
+              setConnectionState('error');
+            }
+          }
         });
 
         telnyxClientRef.current = client;
@@ -219,57 +287,15 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         throw new Error('Failed to create WebRTC call - newCall() returned null/undefined');
       }
 
-      addDebug('✅ Call object created, inspecting...');
-      addDebug(`Call object type: ${typeof newCall}`);
-      addDebug(`Call object constructor: ${newCall.constructor?.name || 'unknown'}`);
-      addDebug(`Has .on method: ${typeof newCall.on === 'function'}`);
-      addDebug(`Has .addEventListener method: ${typeof newCall.addEventListener === 'function'}`);
-      addDebug(`Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(newCall)).join(', ')}`);
+      addDebug('✅ Call object created');
+      addDebug(`Call ID: ${newCall.id}`);
+      addDebug(`Call state: ${newCall.state || newCall._state}`);
 
+      // Store the call reference
+      // Events will be handled via client.on('telnyx.notification')
       currentCallRef.current = newCall;
 
-      addDebug('Setting up event listeners...');
-
-      // Set up call event listeners
-      newCall.on('telnyx.call.active', () => {
-        addDebug('✅ CALL ACTIVE - Audio stream connected!');
-        console.log('Call active - listening to audio stream');
-        setConnectionState('listening');
-
-        // Get the remote audio stream
-        const remoteStream = newCall.getRemoteStream?.();
-        if (remoteStream && remoteAudioRef.current) {
-          addDebug('🔊 Remote audio stream received, playing...');
-          remoteAudioRef.current.srcObject = remoteStream;
-          remoteAudioRef.current.play();
-        } else {
-          addDebug('⚠️ No remote stream available yet');
-        }
-      });
-
-      newCall.on('telnyx.call.hangup', () => {
-        addDebug('📴 Call hangup event received');
-        console.log('Call ended');
-        handleDisconnect();
-      });
-
-      newCall.on('telnyx.call.error', (error: any) => {
-        const errorDetails = safeStringify(error, 2);
-        addDebug(`❌ Call error event: ${errorDetails}`);
-        console.error('Call error:', error);
-        setErrorMessage(`Call error: ${error.message || errorDetails}`);
-        setConnectionState('error');
-      });
-
-      newCall.on('telnyx.error', (error: any) => {
-        const errorDetails = safeStringify(error, 2);
-        addDebug(`❌ Telnyx error during call: ${errorDetails}`);
-        console.error('Call negotiation error:', error);
-        setErrorMessage(`Connection error: ${error.message || errorDetails}`);
-        setConnectionState('error');
-      });
-
-      addDebug('Event listeners configured, waiting for connection...');
+      addDebug('Call initiated, waiting for state changes via notifications...');
     } catch (error: any) {
       const errorDetails = `${error.message || 'Unknown error'}\nStack: ${error.stack || 'No stack'}`;
       addDebug(`❌ Listen session failed: ${errorDetails}`);
@@ -279,25 +305,6 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       );
       setConnectionState('error');
     }
-  };
-
-  const handleDisconnect = () => {
-    if (currentCallRef.current) {
-      try {
-        currentCallRef.current.hangup();
-        currentCallRef.current = null;
-      } catch (e) {
-        console.warn('Error hanging up:', e);
-      }
-    }
-
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.pause();
-      remoteAudioRef.current.srcObject = null;
-    }
-
-    setConnectionState('disconnected');
-    setIsMuted(false);
   };
 
   const handleMuteToggle = () => {
