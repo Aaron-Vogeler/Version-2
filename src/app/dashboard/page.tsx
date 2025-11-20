@@ -41,10 +41,14 @@ export default function DashboardPage() {
   // Live status tracking
   const [liveCallStatuses, setLiveCallStatuses] = useState<Record<string, string>>({});
 
+  // Analytics throttling - prevent excessive API calls
+  const [lastAnalyticsRefresh, setLastAnalyticsRefresh] = useState<number>(0);
+  const ANALYTICS_REFRESH_COOLDOWN = 30000; // 30 seconds
+
   useEffect(() => {
     checkAuth();
     loadDashboardData();
-    loadAnalytics();
+    loadAnalytics(true); // Force initial load
     setupRealtimeSubscription();
   }, []);
 
@@ -85,8 +89,19 @@ export default function DashboardPage() {
     }
   };
 
-  const loadAnalytics = async () => {
+  const loadAnalytics = async (force = false) => {
+    const now = Date.now();
+
+    // Throttle: skip if refreshed recently (unless forced)
+    if (!force && now - lastAnalyticsRefresh < ANALYTICS_REFRESH_COOLDOWN) {
+      console.log('Analytics refresh throttled - last refresh was', Math.round((now - lastAnalyticsRefresh) / 1000), 'seconds ago');
+      return;
+    }
+
     try {
+      console.log('Refreshing analytics...');
+      setLastAnalyticsRefresh(now);
+
       // Load billing data
       const billingRes = await fetch('/api/analytics/billing?days=30');
       if (billingRes.ok) {
@@ -132,7 +147,7 @@ export default function DashboardPage() {
               [newCall.id]: newCall.status,
             }));
 
-            // Reload analytics for updated stats
+            // Reload analytics for new call (throttled to 30s)
             loadAnalytics();
           } else if (payload.eventType === 'UPDATE') {
             // Existing call updated - update in place
@@ -148,8 +163,11 @@ export default function DashboardPage() {
               [updatedCall.id]: updatedCall.status,
             }));
 
-            // Reload analytics for updated stats
-            loadAnalytics();
+            // Only refresh analytics if call reached terminal state (completed/failed)
+            // Skip for in-progress updates (transcript, duration, etc.) to reduce API load
+            if (updatedCall.status === 'completed' || updatedCall.status === 'failed') {
+              loadAnalytics(); // Throttled to 30s
+            }
           } else if (payload.eventType === 'DELETE') {
             // Call deleted - remove from list
             const deletedCall = payload.old as Call;
@@ -163,7 +181,7 @@ export default function DashboardPage() {
               return updated;
             });
 
-            // Reload analytics for updated stats
+            // Reload analytics for deleted call (throttled to 30s)
             loadAnalytics();
           }
         }
