@@ -33,14 +33,32 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
   useEffect(() => {
     const initializeTelnyxClient = async () => {
       try {
-        // Create a new Telnyx RTC client instance
+        // Fetch authentication token from backend
+        const tokenResponse = await fetch('/api/telnyx/token', {
+          method: 'POST',
+        });
+
+        if (!tokenResponse.ok) {
+          const errorData = await tokenResponse.json().catch(() => ({}));
+          throw new Error(
+            errorData.error || 'Failed to fetch Telnyx token'
+          );
+        }
+
+        const { token } = await tokenResponse.json();
+
+        if (!token) {
+          throw new Error('No token received from server');
+        }
+
+        // Create a new Telnyx RTC client instance with authentication
         const client = new TelnyxRTC({
-          // Connection will be established when initiating a call
+          login_token: token,
         });
 
         // Set up event listeners
         client.on('telnyx.ready', () => {
-          console.log('Telnyx WebRTC client ready');
+          console.log('Telnyx WebRTC client ready and authenticated');
         });
 
         client.on('telnyx.error', (error: any) => {
@@ -56,7 +74,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         telnyxClientRef.current = client;
       } catch (error: any) {
         console.error('Failed to initialize Telnyx client:', error);
-        setErrorMessage('Failed to initialize WebRTC client');
+        setErrorMessage(error.message || 'Failed to initialize WebRTC client');
         setConnectionState('error');
       }
     };
@@ -99,6 +117,12 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         // Continue anyway - we can still listen without microphone
       }
 
+      // Get the monitor number from environment
+      const monitorNumber = process.env.NEXT_PUBLIC_MONITOR_NUMBER;
+      if (!monitorNumber) {
+        throw new Error('NEXT_PUBLIC_MONITOR_NUMBER not configured');
+      }
+
       // Create client state with target_call_id
       const clientState = {
         target_call_id: callId,
@@ -106,15 +130,16 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         timestamp: new Date().toISOString(),
       };
 
-      // Initiate the WebRTC call with clientState
-      // The Telnyx WebRTC SDK will send this to the backend
-      const newCall = await telnyxClientRef.current.newCall({
-        // Connection ID or destination - the Cloudflare Worker will handle routing
-        // based on target_call_id in clientState
+      // Initiate the WebRTC call with the monitor number
+      // The Cloudflare Worker listens on this number and routes based on target_call_id
+      const newCall = telnyxClientRef.current.newCall({
+        // Destination number that Cloudflare Worker listens for
+        destinationNumber: monitorNumber,
+        // Client state to identify the target call
         clientState: JSON.stringify(clientState),
         // Enable audio
         audio: true,
-        // Optional: Custom headers
+        // Custom headers for additional context
         customHeaders: [
           {
             name: 'X-Target-Call-ID',
