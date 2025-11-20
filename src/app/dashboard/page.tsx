@@ -2,6 +2,12 @@
 
 /**
  * Dashboard Page with Call Delegation and Analytics
+ *
+ * Fixed Issues:
+ * - Removed setupRealtimeSubscription to prevent infinite loop
+ * - RealTimeCallsTable handles all live updates via onCallsUpdate prop
+ * - Analytics now polled every 5 minutes instead of reactive updates
+ * - Removed redundant liveCallStatuses state
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -38,18 +44,23 @@ export default function DashboardPage() {
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [billingData, setBillingData] = useState<any>(null);
 
-  // Live status tracking
-  const [liveCallStatuses, setLiveCallStatuses] = useState<Record<string, string>>({});
-
-  // Analytics throttling - prevent excessive API calls
-  const [lastAnalyticsRefresh, setLastAnalyticsRefresh] = useState<number>(0);
-  const ANALYTICS_REFRESH_COOLDOWN = 30000; // 30 seconds
-
+  // Initial load on mount
   useEffect(() => {
     checkAuth();
     loadDashboardData();
     loadAnalytics(true); // Force initial load
-    setupRealtimeSubscription();
+  }, []);
+
+  // Analytics polling - fetch every 5 minutes instead of on every event
+  useEffect(() => {
+    // Set up polling interval
+    const analyticsInterval = setInterval(() => {
+      console.log('Polling analytics (5 minute interval)...');
+      loadAnalytics(false);
+    }, 5 * 60 * 1000); // 5 minutes
+
+    // Cleanup interval on unmount
+    return () => clearInterval(analyticsInterval);
   }, []);
 
   const checkAuth = async () => {
@@ -90,17 +101,8 @@ export default function DashboardPage() {
   };
 
   const loadAnalytics = async (force = false) => {
-    const now = Date.now();
-
-    // Throttle: skip if refreshed recently (unless forced)
-    if (!force && now - lastAnalyticsRefresh < ANALYTICS_REFRESH_COOLDOWN) {
-      console.log('Analytics refresh throttled - last refresh was', Math.round((now - lastAnalyticsRefresh) / 1000), 'seconds ago');
-      return;
-    }
-
     try {
-      console.log('Refreshing analytics...');
-      setLastAnalyticsRefresh(now);
+      console.log('Fetching analytics data...');
 
       // Load billing data
       const billingRes = await fetch('/api/analytics/billing?days=30');
@@ -111,86 +113,6 @@ export default function DashboardPage() {
     } catch (error) {
       console.error('Error loading analytics:', error);
     }
-  };
-
-  const setupRealtimeSubscription = () => {
-    const supabase = createClient();
-
-    // Subscribe to calls table changes for live updates
-    const channel = supabase
-      .channel('dashboard-calls')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'calls',
-        },
-        (payload) => {
-          console.log('Dashboard call update received:', payload);
-
-          if (payload.eventType === 'INSERT') {
-            // New call created - add to the beginning of the list
-            const newCall = payload.new as Call;
-
-            setCalls(prev => {
-              // Check if call already exists to avoid duplicates
-              if (prev.some(c => c.id === newCall.id)) {
-                return prev;
-              }
-              return [newCall, ...prev];
-            });
-
-            // Update live status
-            setLiveCallStatuses(prev => ({
-              ...prev,
-              [newCall.id]: newCall.status,
-            }));
-
-            // Reload analytics for new call (throttled to 30s)
-            loadAnalytics();
-          } else if (payload.eventType === 'UPDATE') {
-            // Existing call updated - update in place
-            const updatedCall = payload.new as Call;
-
-            setCalls(prev =>
-              prev.map(call => call.id === updatedCall.id ? updatedCall : call)
-            );
-
-            // Update live status
-            setLiveCallStatuses(prev => ({
-              ...prev,
-              [updatedCall.id]: updatedCall.status,
-            }));
-
-            // Only refresh analytics if call reached terminal state (completed/failed)
-            // Skip for in-progress updates (transcript, duration, etc.) to reduce API load
-            if (updatedCall.status === 'completed' || updatedCall.status === 'failed') {
-              loadAnalytics(); // Throttled to 30s
-            }
-          } else if (payload.eventType === 'DELETE') {
-            // Call deleted - remove from list
-            const deletedCall = payload.old as Call;
-
-            setCalls(prev => prev.filter(call => call.id !== deletedCall.id));
-
-            // Remove from live status
-            setLiveCallStatuses(prev => {
-              const updated = { ...prev };
-              delete updated[deletedCall.id];
-              return updated;
-            });
-
-            // Reload analytics for deleted call (throttled to 30s)
-            loadAnalytics();
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   };
 
   const handleFiltersChange = useCallback((filters: CallFilters) => {
@@ -257,6 +179,13 @@ export default function DashboardPage() {
     window.location.href = '/login';
   };
 
+  // Calculate active call count directly from calls array
+  const activeCallCount = calls.filter(call =>
+    call.status === 'initiated' ||
+    call.status === 'ringing' ||
+    call.status === 'answered'
+  ).length;
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -280,17 +209,12 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-4">
             {/* Live Call Indicator */}
-            {(() => {
-              const activeCallCount = Object.entries(liveCallStatuses).filter(
-                ([_, status]) => status !== 'completed'
-              ).length;
-              return activeCallCount > 0 && (
-                <Badge variant="success" className="animate-pulse">
-                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
-                  {activeCallCount} Active
-                </Badge>
-              );
-            })()}
+            {activeCallCount > 0 && (
+              <Badge variant="success" className="animate-pulse">
+                <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
+                {activeCallCount} Active
+              </Badge>
+            )}
             <Button variant="outline" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
               Logout
@@ -340,6 +264,7 @@ export default function DashboardPage() {
               onViewDetails={handleViewCallDetails}
               onCallsUpdate={(updatedCalls) => {
                 // Update the unfiltered calls state
+                // RealTimeCallsTable handles all live updates via Realtime subscription
                 setCalls(updatedCalls);
                 // FilteredCalls will be updated automatically via useCallback dependency
               }}
