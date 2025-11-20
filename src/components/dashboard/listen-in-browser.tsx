@@ -40,9 +40,10 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
         if (!tokenResponse.ok) {
           const errorData = await tokenResponse.json().catch(() => ({}));
-          throw new Error(
-            errorData.error || 'Failed to fetch Telnyx token'
-          );
+          const errorMsg = errorData.detail
+            ? `${errorData.error}: ${errorData.detail}`
+            : errorData.error || 'Failed to fetch Telnyx token';
+          throw new Error(errorMsg);
         }
 
         const { token } = await tokenResponse.json();
