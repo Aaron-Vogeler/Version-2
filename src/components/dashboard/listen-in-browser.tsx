@@ -111,15 +111,16 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       const newCall = await telnyxClientRef.current.newCall({
         // Connection ID or destination - the Cloudflare Worker will handle routing
         // based on target_call_id in clientState
-        clientState: clientState,
+        clientState: JSON.stringify(clientState),
         // Enable audio
-        audio: {
-          auto: true,
-        },
+        audio: true,
         // Optional: Custom headers
-        customHeaders: {
-          'X-Target-Call-ID': callId,
-        },
+        customHeaders: [
+          {
+            name: 'X-Target-Call-ID',
+            value: callId,
+          },
+        ],
       });
 
       if (!newCall) {
