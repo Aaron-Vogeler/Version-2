@@ -3,6 +3,7 @@
 /**
  * Listen in Browser Component
  * Enables real-time audio monitoring of calls via WebRTC
+ * Uses direct SIP credentials for authentication
  * Sends target_call_id in clientState to Cloudflare Worker
  */
 
@@ -33,32 +34,32 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
   useEffect(() => {
     const initializeTelnyxClient = async () => {
       try {
-        // Fetch authentication token from backend
-        const tokenResponse = await fetch('/api/telnyx/token', {
-          method: 'POST',
-        });
+        // Validate required environment variables
+        const sipUser = process.env.NEXT_PUBLIC_TELNYX_SIP_USER;
+        const sipPassword = process.env.NEXT_PUBLIC_TELNYX_SIP_PASSWORD;
+        const monitorNumber = process.env.NEXT_PUBLIC_MONITOR_NUMBER;
 
-        if (!tokenResponse.ok) {
-          const errorData = await tokenResponse.json().catch(() => ({}));
+        if (!sipUser || !sipPassword || !monitorNumber) {
+          const missing = [];
+          if (!sipUser) missing.push('NEXT_PUBLIC_TELNYX_SIP_USER');
+          if (!sipPassword) missing.push('NEXT_PUBLIC_TELNYX_SIP_PASSWORD');
+          if (!monitorNumber) missing.push('NEXT_PUBLIC_MONITOR_NUMBER');
+
           throw new Error(
-            errorData.error || 'Failed to fetch Telnyx token'
+            `Missing required environment variables: ${missing.join(', ')}`
           );
         }
 
-        const { token } = await tokenResponse.json();
-
-        if (!token) {
-          throw new Error('No token received from server');
-        }
-
-        // Create a new Telnyx RTC client instance with authentication
+        // Create a new Telnyx RTC client instance with SIP credentials
         const client = new TelnyxRTC({
-          login_token: token,
+          login: sipUser,
+          password: sipPassword,
+          ringtoneFile: 'https://cdn.telnyx.com/audio/ring.mp3',
         });
 
         // Set up event listeners
         client.on('telnyx.ready', () => {
-          console.log('Telnyx WebRTC client ready and authenticated');
+          console.log('Telnyx WebRTC client ready and authenticated with SIP credentials');
         });
 
         client.on('telnyx.error', (error: any) => {
@@ -89,6 +90,16 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         } catch (e) {
           console.warn('Error hanging up during cleanup:', e);
         }
+        currentCallRef.current = null;
+      }
+
+      if (telnyxClientRef.current) {
+        try {
+          telnyxClientRef.current.disconnect();
+        } catch (e) {
+          console.warn('Error disconnecting client during cleanup:', e);
+        }
+        telnyxClientRef.current = null;
       }
     };
   }, []);
@@ -123,11 +134,11 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         throw new Error('NEXT_PUBLIC_MONITOR_NUMBER not configured');
       }
 
-      // Create client state with target_call_id
+      // Create client state with target_call_id for the Cloudflare Worker
+      // CRITICAL: This exact format is required by the backend
       const clientState = {
         target_call_id: callId,
-        monitoring: true,
-        timestamp: new Date().toISOString(),
+        user_id: 'admin_listener', // Helps backend identify us
       };
 
       // Initiate the WebRTC call with the monitor number
@@ -136,7 +147,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         // Destination number that Cloudflare Worker listens for
         destinationNumber: monitorNumber,
         // Client state to identify the target call
-        clientState: JSON.stringify(clientState),
+        clientState: clientState,
         // Enable audio
         audio: true,
         // Custom headers for additional context
@@ -334,7 +345,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
         {/* Info text */}
         <p className="text-xs text-muted-foreground">
-          Connects to the target call via WebRTC. Audio streams in real-time to your browser.
+          Connects to the target call via WebRTC using SIP credentials. Audio streams in real-time to your browser.
           {connectionState === 'listening' && ' Mic is available for two-way audio.'}
         </p>
       </CardContent>
