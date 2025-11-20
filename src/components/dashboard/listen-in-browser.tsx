@@ -219,8 +219,16 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         throw new Error('Failed to create WebRTC call - newCall() returned null/undefined');
       }
 
-      addDebug('✅ Call object created, setting up event listeners...');
+      addDebug('✅ Call object created, inspecting...');
+      addDebug(`Call object type: ${typeof newCall}`);
+      addDebug(`Call object constructor: ${newCall.constructor?.name || 'unknown'}`);
+      addDebug(`Has .on method: ${typeof newCall.on === 'function'}`);
+      addDebug(`Has .addEventListener method: ${typeof newCall.addEventListener === 'function'}`);
+      addDebug(`Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(newCall)).join(', ')}`);
+
       currentCallRef.current = newCall;
+
+      addDebug('Setting up event listeners...');
 
       // Set up call event listeners
       newCall.on('telnyx.call.active', () => {
