@@ -56,6 +56,9 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
           login_token: token,
         });
 
+        // Open the websocket connection so calls can be placed
+        client.connect();
+
         // Set up event listeners
         client.on('telnyx.ready', () => {
           console.log('Telnyx WebRTC client ready and authenticated');
