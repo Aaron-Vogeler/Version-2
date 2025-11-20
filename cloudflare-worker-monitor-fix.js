@@ -47,6 +47,20 @@ export default {
       return normalized === "inbound" ? "inbound" : "outbound";
     };
 
+    /**
+     * Normalize phone number for comparison
+     * Removes all formatting characters (hyphens, spaces, parentheses)
+     * Keeps only digits and leading + sign
+     * Examples:
+     *   +1-206-207-9439 → +12062079439
+     *   +1 (206) 207-9439 → +12062079439
+     *   12062079439 → 12062079439
+     */
+    const normalizePhoneNumber = (phoneNumber) => {
+      if (!phoneNumber) return null;
+      return phoneNumber.toString().replace(/[^\d+]/g, '');
+    };
+
     const getUserIdFromJWT = (request) => {
       const authHeader = request.headers.get("Authorization") || "";
       const match = authHeader.match(/^Bearer\s+([A-Za-z0-9\-._~+/]+=*)$/i);
@@ -503,9 +517,13 @@ export default {
       const monitorNumber = env.MONITOR_NUMBER;
 
       // Detect if this is the "Monitor" leg (the call from the browser)
+      // Normalize phone numbers before comparison to handle formatting differences
+      const normalizedMonitorNumber = normalizePhoneNumber(monitorNumber);
+      const normalizedPayloadTo = normalizePhoneNumber(payload.to || payload.to_number);
+
       const isMonitorCall =
-        !!monitorNumber &&
-        (payload.to === monitorNumber || payload.to_number === monitorNumber);
+        !!normalizedMonitorNumber &&
+        normalizedPayloadTo === normalizedMonitorNumber;
 
       console.log("📞 Webhook received:", {
         type: eventType,
@@ -514,6 +532,17 @@ export default {
         to: payload.to || payload.to_number,
         from: payload.from || payload.from_number,
         isMonitorCall,
+      });
+
+      // 🔍 DETAILED MONITOR DETECTION DEBUG
+      console.log("🔍 Monitor Detection Debug:", {
+        monitorNumberEnv: monitorNumber,
+        normalizedMonitorNumber,
+        payloadTo: payload.to,
+        payloadToNumber: payload.to_number,
+        normalizedPayloadTo,
+        isMonitorCall,
+        comparisonResult: normalizedPayloadTo === normalizedMonitorNumber,
       });
 
       const clientStateData = decodeClientState(payload.client_state);
