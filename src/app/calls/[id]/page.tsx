@@ -12,6 +12,7 @@ import { Call } from '@/lib/types/database';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { LiveTranscript } from '@/components/dashboard/live-transcript';
+import { ListenInBrowser } from '@/components/dashboard/listen-in-browser';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } from '@/lib/utils';
@@ -199,8 +200,12 @@ export default function CallDetailPage() {
           )}
         </div>
 
-        {/* Right Column - Live Transcript */}
-        <div className="lg:col-span-2">
+        {/* Right Column - Listen in Browser & Live Transcript */}
+        <div className="lg:col-span-2 space-y-4">
+          <ListenInBrowser
+            callId={call.id}
+            isCallOngoing={call.status !== 'completed'}
+          />
           <LiveTranscript
             callId={call.id}
             initialTranscript={call.transcript}
