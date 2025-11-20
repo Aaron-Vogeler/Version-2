@@ -30,6 +30,7 @@ import {
 import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } from '@/lib/utils';
 import { Call } from '@/lib/types/database';
 import { LiveTranscript } from './live-transcript';
+import { ListenInBrowser } from './listen-in-browser';
 
 interface CallDetailModalProps {
   call: Call | null;
@@ -232,6 +233,10 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
 
           {/* Transcript & Recording Tab */}
           <TabsContent value="transcript" className="space-y-4">
+            <ListenInBrowser
+              callId={call.id}
+              isCallOngoing={call.status !== 'completed'}
+            />
             <LiveTranscript
               callId={call.id}
               initialTranscript={call.transcript}
