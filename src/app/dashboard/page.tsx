@@ -18,7 +18,10 @@ import { CallsTable } from '@/components/dashboard/calls-table';
 import { RealTimeCallsTable } from '@/components/dashboard/real-time-calls-table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
 
 export default function DashboardPage() {
@@ -40,13 +43,47 @@ export default function DashboardPage() {
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [billingData, setBillingData] = useState<any>(null);
   const [endingCalls, setEndingCalls] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [colorTheme, setColorTheme] = useState('blue');
+  const [phoneScheme, setPhoneScheme] = useState('modern');
 
   // Initial load on mount
   useEffect(() => {
     checkAuth();
     loadDashboardData();
     loadAnalytics(true); // Force initial load
+    loadSettings();
   }, []);
+
+  // Load settings from localStorage
+  const loadSettings = () => {
+    const savedColorTheme = localStorage.getItem('colorTheme');
+    const savedPhoneScheme = localStorage.getItem('phoneScheme');
+
+    if (savedColorTheme) setColorTheme(savedColorTheme);
+    if (savedPhoneScheme) setPhoneScheme(savedPhoneScheme);
+  };
+
+  // Save settings to localStorage when they change
+  useEffect(() => {
+    localStorage.setItem('colorTheme', colorTheme);
+    applyColorTheme(colorTheme);
+  }, [colorTheme]);
+
+  useEffect(() => {
+    localStorage.setItem('phoneScheme', phoneScheme);
+  }, [phoneScheme]);
+
+  // Apply color theme to document
+  const applyColorTheme = (theme: string) => {
+    const root = document.documentElement;
+
+    // Remove existing theme classes
+    root.classList.remove('theme-blue', 'theme-green', 'theme-purple', 'theme-beige', 'theme-red');
+
+    // Add new theme class
+    root.classList.add(`theme-${theme}`);
+  };
 
   // Analytics polling - fetch every 5 minutes instead of on every event
   useEffect(() => {
@@ -266,9 +303,9 @@ export default function DashboardPage() {
                   <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
                   {activeCallCount} Active
                 </Badge>
-                <Button 
-                  variant="destructive" 
-                  size="sm" 
+                <Button
+                  variant="destructive"
+                  size="sm"
                   onClick={handleEndActiveCalls}
                   disabled={endingCalls}
                 >
@@ -277,6 +314,14 @@ export default function DashboardPage() {
                 </Button>
               </>
             )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowSettings(true)}
+              title="Settings"
+            >
+              <Settings className="h-5 w-5" />
+            </Button>
             <Button variant="outline" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
               Logout
@@ -336,6 +381,78 @@ export default function DashboardPage() {
         open={showCallDetail}
         onOpenChange={setShowCallDetail}
       />
+
+      {/* Settings Dialog */}
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Settings</DialogTitle>
+            <DialogDescription>
+              Customize your dashboard appearance and phone settings.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            {/* Color Theme Selection */}
+            <div className="space-y-2">
+              <Label htmlFor="color-theme">Color Theme</Label>
+              <Select value={colorTheme} onValueChange={setColorTheme}>
+                <SelectTrigger id="color-theme">
+                  <SelectValue placeholder="Select color theme" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="blue">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-blue-500" />
+                      <span>Blue</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="green">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-green-500" />
+                      <span>Green</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="purple">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-purple-500" />
+                      <span>Purple</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="beige">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-amber-200" />
+                      <span>Beige</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="red">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-red-500" />
+                      <span>Red</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Phone Scheme/Template Selection */}
+            <div className="space-y-2">
+              <Label htmlFor="phone-scheme">Phone Template</Label>
+              <Select value={phoneScheme} onValueChange={setPhoneScheme}>
+                <SelectTrigger id="phone-scheme">
+                  <SelectValue placeholder="Select phone template" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="modern">Modern</SelectItem>
+                  <SelectItem value="classic">Classic</SelectItem>
+                  <SelectItem value="minimal">Minimal</SelectItem>
+                  <SelectItem value="professional">Professional</SelectItem>
+                  <SelectItem value="compact">Compact</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
