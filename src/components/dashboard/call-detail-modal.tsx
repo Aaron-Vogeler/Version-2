@@ -5,7 +5,6 @@
  * Shows comprehensive call information including transcript and audio playback
  */
 
-import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -24,8 +23,6 @@ import {
   Target,
   CheckCircle2,
   XCircle,
-  Play,
-  Pause,
 } from 'lucide-react';
 import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } from '@/lib/utils';
 import { Call } from '@/lib/types/database';
@@ -39,37 +36,6 @@ interface CallDetailModalProps {
 }
 
 export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalProps) {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
-
-  const handlePlayPause = () => {
-    if (!call?.recording_url) return;
-
-    if (!audioElement) {
-      const audio = new Audio(call.recording_url);
-      audio.addEventListener('ended', () => setIsPlaying(false));
-      setAudioElement(audio);
-      audio.play();
-      setIsPlaying(true);
-    } else {
-      if (isPlaying) {
-        audioElement.pause();
-      } else {
-        audioElement.play();
-      }
-      setIsPlaying(!isPlaying);
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (audioElement) {
-        audioElement.pause();
-        audioElement.remove();
-      }
-    };
-  }, [audioElement]);
-
   if (!call) return null;
 
   return (
@@ -266,26 +232,27 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
             {call.recording_url && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-sm font-medium">Recording</CardTitle>
+                  <CardTitle className="text-sm font-medium">Call Recording</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <Button
-                    onClick={handlePlayPause}
-                    variant="outline"
+                <CardContent className="space-y-4">
+                  <audio
+                    controls
                     className="w-full"
+                    src={call.recording_url}
+                    preload="metadata"
                   >
-                    {isPlaying ? (
-                      <>
-                        <Pause className="mr-2 h-4 w-4" />
-                        Pause Recording
-                      </>
-                    ) : (
-                      <>
-                        <Play className="mr-2 h-4 w-4" />
-                        Play Recording
-                      </>
-                    )}
-                  </Button>
+                    Your browser does not support the audio element.
+                  </audio>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Recording available</span>
+                    <a
+                      href={call.recording_url}
+                      download
+                      className="text-primary hover:underline"
+                    >
+                      Download
+                    </a>
+                  </div>
                 </CardContent>
               </Card>
             )}
