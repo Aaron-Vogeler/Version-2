@@ -454,9 +454,11 @@ export default {
 
         if (callSessionId) {
           const timestamp = now();
+          const callControlId = data?.data?.call_control_id;
 
           await upsertCall({
             id: callSessionId,
+            call_control_id: callControlId, // Store for hangup operations
             user_id: userId,
             direction: "outbound",
             from_e164: env.FROM_NUMBER,
@@ -558,6 +560,7 @@ export default {
       if (userId && !isMonitorCall && fromNumber && toNumber) {
         await upsertCall({
           id: callId,
+          call_control_id: callControlId, // Always store for hangup operations
           user_id: userId,
           direction: normalizeDirection(payload.direction),
           from_e164: fromNumber,
@@ -653,6 +656,7 @@ export default {
 
           ctx.waitUntil(
             updateCall(callId, {
+              call_control_id: callControlId, // Ensure it's stored
               status: "answered",
               answered_at: now(),
             })
@@ -733,6 +737,7 @@ export default {
         if (!isMonitorCall) {
           ctx.waitUntil(
             updateCall(callId, {
+              call_control_id: callControlId, // Ensure it's stored
               status: "ringing",
             })
           );
@@ -762,6 +767,7 @@ export default {
 
         ctx.waitUntil(
           updateCall(callId, {
+            call_control_id: callControlId, // Ensure it's stored
             status: "completed",
             ended_at: endedAt,
             duration_sec: durationSeconds,
