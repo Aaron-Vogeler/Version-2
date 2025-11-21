@@ -5,7 +5,7 @@
  * Subscribes to Supabase Realtime for live transcript updates
  */
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -28,7 +28,9 @@ export function LiveTranscript({
   const [isLive, setIsLive] = useState(status === 'answered' || status === 'initiated' || status === 'ringing');
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
-  const supabase = createClient();
+
+  // Create supabase client only once
+  const supabase = useMemo(() => createClient(), []);
 
   // Auto-scroll to bottom when transcript updates
   useEffect(() => {
@@ -78,7 +80,7 @@ export function LiveTranscript({
       console.log('Cleaning up realtime subscription');
       supabase.removeChannel(channel);
     };
-  }, [callId, supabase]);
+  }, [callId]);
 
   // Determine what to display
   const displayTranscript = liveTranscript || initialTranscript;

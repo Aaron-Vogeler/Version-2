@@ -112,6 +112,11 @@ export default function DashboardPage() {
     }
   };
 
+  // Handle calls update from RealTimeCallsTable
+  const handleCallsUpdate = useCallback((updatedCalls: Call[]) => {
+    setCalls(updatedCalls);
+  }, []);
+
   const handleFiltersChange = useCallback((filters: CallFilters) => {
     // Save current filters
     setCurrentFilters(filters);
@@ -302,12 +307,7 @@ export default function DashboardPage() {
             <RealTimeCallsTable
               displayCalls={filteredCalls}
               onViewDetails={handleViewCallDetails}
-              onCallsUpdate={(updatedCalls) => {
-                // Update the unfiltered calls state
-                // RealTimeCallsTable handles all live updates via Realtime subscription
-                setCalls(updatedCalls);
-                // FilteredCalls will be updated automatically via useCallback dependency
-              }}
+              onCallsUpdate={handleCallsUpdate}
             />
           </TabsContent>
         </Tabs>

@@ -5,7 +5,7 @@
  * Uses WebSockets to receive live database changes without polling
  */
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Call } from '@/lib/types/database';
 import { CallsTable } from './calls-table';
@@ -27,7 +27,15 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
 
   const callIdsRef = useRef<Set<string>>(new Set(displayCalls.map(c => c.id)));
   const newCallIdsRef = useRef<Set<string>>(new Set());
-  const supabase = createClient();
+  const onCallsUpdateRef = useRef(onCallsUpdate);
+
+  // Create supabase client only once
+  const supabase = useMemo(() => createClient(), []);
+
+  // Keep ref updated with latest callback
+  useEffect(() => {
+    onCallsUpdateRef.current = onCallsUpdate;
+  }, [onCallsUpdate]);
 
   // Load initial data once
   const loadInitialData = useCallback(async () => {
@@ -46,7 +54,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
 
       setAllCalls(fetchedCalls);
       callIdsRef.current = new Set(fetchedCalls.map(c => c.id));
-      onCallsUpdate(fetchedCalls);
+      onCallsUpdateRef.current(fetchedCalls);
       setLastUpdated(new Date());
     } catch (err: any) {
       console.error('Error loading initial data:', err);
@@ -54,7 +62,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
     } finally {
       setIsLoading(false);
     }
-  }, [onCallsUpdate]);
+  }, []);
 
   // Set up Supabase Realtime subscription
   useEffect(() => {
@@ -88,7 +96,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
               setAllCalls((prev) => {
                 const updated = [newCall, ...prev];
                 callIdsRef.current.add(newCall.id);
-                onCallsUpdate(updated);
+                onCallsUpdateRef.current(updated);
                 return updated;
               });
 
@@ -109,7 +117,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
               const updated = prev.map((call) =>
                 call.id === updatedCall.id ? updatedCall : call
               );
-              onCallsUpdate(updated);
+              onCallsUpdateRef.current(updated);
               return updated;
             });
           } else if (payload.eventType === 'DELETE') {
@@ -119,7 +127,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
             setAllCalls((prev) => {
               const updated = prev.filter((call) => call.id !== deletedCall.id);
               callIdsRef.current.delete(deletedCall.id);
-              onCallsUpdate(updated);
+              onCallsUpdateRef.current(updated);
               return updated;
             });
           }
@@ -135,7 +143,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
       console.log('Cleaning up Realtime subscription');
       supabase.removeChannel(channel);
     };
-  }, [isLive, supabase, onCallsUpdate, loadInitialData]);
+  }, [isLive, loadInitialData]);
 
   const toggleLive = () => {
     setIsLive((prev) => !prev);
