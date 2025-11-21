@@ -2,12 +2,8 @@
 
 /**
  * Dashboard Page with Call Delegation and Analytics
- *
- * Fixed Issues:
- * - Removed setupRealtimeSubscription to prevent infinite loop
- * - RealTimeCallsTable handles all live updates via onCallsUpdate prop
- * - Analytics now polled every 5 minutes instead of reactive updates
- * - Removed redundant liveCallStatuses state
+ * * Updates:
+ * - Added "End Call" button functionality for active calls
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -22,7 +18,7 @@ import { CallsTable } from '@/components/dashboard/calls-table';
 import { RealTimeCallsTable } from '@/components/dashboard/real-time-calls-table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Phone, DollarSign, LogOut, BarChart3, Send } from 'lucide-react';
+import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
 
 export default function DashboardPage() {
@@ -43,6 +39,7 @@ export default function DashboardPage() {
   const [showCallDetail, setShowCallDetail] = useState(false);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [billingData, setBillingData] = useState<any>(null);
+  const [endingCalls, setEndingCalls] = useState(false);
 
   // Initial load on mount
   useEffect(() => {
@@ -179,6 +176,38 @@ export default function DashboardPage() {
     window.location.href = '/login';
   };
 
+  const handleEndActiveCalls = async () => {
+    // Identify active calls
+    const activeCalls = calls.filter(call =>
+      ['initiated', 'ringing', 'answered'].includes(call.status)
+    );
+
+    if (activeCalls.length === 0) return;
+
+    // Confirm if there are multiple
+    if (activeCalls.length > 1) {
+      const confirmed = window.confirm(`Are you sure you want to end ${activeCalls.length} active calls?`);
+      if (!confirmed) return;
+    }
+
+    setEndingCalls(true);
+
+    try {
+      // End all active calls in parallel
+      await Promise.all(activeCalls.map(call => 
+        fetch('/api/calls/hangup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ call_control_id: call.id }),
+        })
+      ));
+    } catch (error) {
+      console.error('Error ending calls:', error);
+    } finally {
+      setEndingCalls(false);
+    }
+  };
+
   // Calculate active call count directly from calls array
   const activeCallCount = calls.filter(call =>
     call.status === 'initiated' ||
@@ -208,12 +237,23 @@ export default function DashboardPage() {
             )}
           </div>
           <div className="flex items-center gap-4">
-            {/* Live Call Indicator */}
+            {/* Live Call Indicator & End Button */}
             {activeCallCount > 0 && (
-              <Badge variant="success" className="animate-pulse">
-                <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
-                {activeCallCount} Active
-              </Badge>
+              <>
+                <Badge variant="success" className="animate-pulse">
+                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
+                  {activeCallCount} Active
+                </Badge>
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={handleEndActiveCalls}
+                  disabled={endingCalls}
+                >
+                  <PhoneOff className="mr-2 h-4 w-4" />
+                  {endingCalls ? 'Ending...' : activeCallCount > 1 ? 'End All Calls' : 'End Call'}
+                </Button>
+              </>
             )}
             <Button variant="outline" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
