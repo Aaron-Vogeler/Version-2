@@ -56,6 +56,7 @@ async function processEvent(event: NormalizedEvent, env: Env): Promise<void> {
   if (callUpdate) {
     await upsertCall(env, {
       id: call_control_id,
+      call_control_id, // Always store the current call_control_id for hangup operations
       tenant_id,
       user_id, // IMPORTANT: Pass the authenticated user_id
       ...callUpdate,

@@ -30,6 +30,7 @@ export interface Database {
       calls: {
         Row: {
           id: string;
+          call_control_id: string | null;  // Telnyx call control ID for active call operations
           tenant_id: string;
           user_id: string;  // Direct link to auth.users
           direction: 'inbound' | 'outbound';

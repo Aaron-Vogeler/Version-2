@@ -199,13 +199,30 @@ export default function DashboardPage() {
 
     try {
       // End all active calls in parallel
-      await Promise.all(activeCalls.map(call => 
-        fetch('/api/calls/hangup', {
+      // Use call_control_id if available, fallback to id for backwards compatibility
+      const results = await Promise.all(activeCalls.map(async (call) => {
+        const controlId = call.call_control_id || call.id;
+
+        const response = await fetch('/api/calls/hangup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ call_control_id: call.id }),
-        })
-      ));
+          body: JSON.stringify({ call_control_id: controlId }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+          console.error(`Failed to end call ${call.id}:`, error);
+          return { success: false, call_id: call.id, error };
+        }
+
+        return { success: true, call_id: call.id };
+      }));
+
+      // Check for any failures
+      const failures = results.filter(r => !r.success);
+      if (failures.length > 0) {
+        console.warn(`${failures.length} call(s) failed to end:`, failures);
+      }
     } catch (error) {
       console.error('Error ending calls:', error);
     } finally {
