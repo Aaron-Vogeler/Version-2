@@ -2,6 +2,7 @@ app = "Version-2"
 primary_region = "ash"
 
 [build]
+  dockerfile = "./Dockerfile"
 
 [http_service]
   internal_port = 8080
