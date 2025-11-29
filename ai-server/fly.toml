@@ -1,4 +1,4 @@
-app = "version-2" 
+app = "aaron-ai-server-v2" 
 primary_region = "ash"
 
 [build]
