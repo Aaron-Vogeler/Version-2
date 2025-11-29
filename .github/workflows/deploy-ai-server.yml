@@ -5,19 +5,25 @@ on:
     branches:
       - main
     paths:
-      - 'ai-server/**' # Only trigger when files in ai-server folder change
+      - "ai-server/**"   # Only run when ai-server code changes
 
 jobs:
   deploy:
-    name: Deploy
+    name: Deploy AI Server
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      # 1. Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # 2. Install Flyctl
+      - name: Install Flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
 
+      # 3. Deploy to Fly.io (from ai-server folder)
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only
         working-directory: ./ai-server
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only -a version-2
