@@ -6,17 +6,12 @@
 import NextAuth, { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { createClient } from '@supabase/supabase-js';
+import type { NextApiRequest, NextApiResponse } from 'next';
 
-// --- ENV VALIDATION -------------------------------------------------
-
-if (!process.env.NEXTAUTH_SECRET) {
-  throw new Error('NEXTAUTH_SECRET must be set');
-}
-
-if (!process.env.NEXTAUTH_URL) {
-  // Not strictly required in dev, but avoids a lot of weird auth issues in prod
-  throw new Error('NEXTAUTH_URL must be set (e.g. https://your-domain.com)');
-}
+// --- ENV VALIDATION (Build-time only for NEXT_PUBLIC_* vars) -------
+// NOTE: NEXTAUTH_SECRET and NEXTAUTH_URL are validated at runtime,
+// not build-time, to support Fly.io deployments where secrets are
+// only available at runtime, not during Docker build.
 
 if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
   throw new Error('NEXT_PUBLIC_SUPABASE_URL must be set');
@@ -130,4 +125,18 @@ export const authOptions: NextAuthOptions = {
   },
 };
 
-export default NextAuth(authOptions);
+// Runtime validation wrapper - ensures secrets are available when handling requests
+const handler = (req: NextApiRequest, res: NextApiResponse) => {
+  // Validate runtime-only secrets (not available during Docker build on Fly.io)
+  if (!process.env.NEXTAUTH_SECRET) {
+    throw new Error('NEXTAUTH_SECRET must be set at runtime');
+  }
+
+  if (!process.env.NEXTAUTH_URL) {
+    throw new Error('NEXTAUTH_URL must be set at runtime (e.g. https://your-domain.com)');
+  }
+
+  return NextAuth(req, res, authOptions);
+};
+
+export default handler;

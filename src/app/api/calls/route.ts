@@ -11,22 +11,33 @@ import { authOptions } from '@/../pages/api/auth/[...nextauth]';
 import { createClient } from '@supabase/supabase-js';
 
 // --- Supabase admin client (service role, server-only) ---
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// NOTE: Lazy initialization to avoid build-time dependency on runtime secrets
+let supabaseAdmin: ReturnType<typeof createClient> | null = null;
 
-if (!supabaseUrl || !serviceRoleKey) {
-  throw new Error(
-    'Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars'
-  );
+function getSupabaseAdmin() {
+  if (supabaseAdmin) {
+    return supabaseAdmin;
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error(
+      'Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars at runtime'
+    );
+  }
+
+  supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+
+  return supabaseAdmin;
 }
-
-const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-    detectSessionInUrl: false,
-  },
-});
 
 export async function GET(request: NextRequest) {
   try {
@@ -49,7 +60,7 @@ export async function GET(request: NextRequest) {
     const offset = parseInt(searchParams.get('offset') || '0', 10);
 
     // 3) Build Supabase query scoped by user_id
-    let query = supabaseAdmin
+    let query = getSupabaseAdmin()
       .from('calls')
       .select('*', { count: 'exact' })
       .eq('user_id', userId)
