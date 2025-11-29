@@ -1,6 +1,9 @@
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 const server = createServer(app);
@@ -8,25 +11,38 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 8080;
 
-app.get("/", (_, res) => res.send("AI Brain is Online 🧠"));
+// HTTP Webhook for Call Control (Start/Stop events)
+app.use(express.json());
 
-// Handle incoming Telnyx calls
+app.post("/webhooks/telnyx", (req, res) => {
+  const event = req.body;
+  console.log("Received Telnyx Event:", event.data?.event_type);
+  
+  // You will handle call logic here later
+  res.status(200).send("ok");
+});
+
+app.get("/health", (_, res) => res.status(200).send("Alive"));
+
+// WebSocket for Audio Streaming (The "Ears" & "Mouth")
 wss.on("connection", (ws) => {
-  console.log("📞 Telnyx Call Connected");
+  console.log("New Client Connected");
 
-  ws.on("message", (data) => {
-    const msg = JSON.parse(data.toString());
+  ws.on("message", (message) => {
+    const msg = JSON.parse(message.toString());
     
-    if (msg.event === "start") {
-      console.log(`Call Started: ${msg.start.call_control_id}`);
-    }
-    
+    // 1. Listen for "media" events (Audio from Telnyx)
     if (msg.event === "media") {
-      // Audio comes in here. We will send this to Deepgram later.
+      // TODO: Send msg.media.payload to Deepgram
+    }
+
+    // 2. Listen for "start" event (Metadata)
+    if (msg.event === "start") {
+      console.log("Media Stream Started", msg.start);
     }
   });
 
-  ws.on("close", () => console.log("Call Disconnected"));
+  ws.on("close", () => console.log("Client Disconnected"));
 });
 
 server.listen(PORT, () => {
