@@ -12,22 +12,33 @@ import { createClient } from '@supabase/supabase-js';
 import type { Call } from '@/lib/types/database';
 
 // --- Supabase admin client (service role, server-only) ---
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// NOTE: Lazy initialization to avoid build-time dependency on runtime secrets
+let supabaseAdmin: ReturnType<typeof createClient> | null = null;
 
-if (!supabaseUrl || !serviceRoleKey) {
-  throw new Error(
-    'Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars'
-  );
+function getSupabaseAdmin() {
+  if (supabaseAdmin) {
+    return supabaseAdmin;
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error(
+      'Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars at runtime'
+    );
+  }
+
+  supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+
+  return supabaseAdmin;
 }
-
-const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-    detectSessionInUrl: false,
-  },
-});
 
 export async function GET(request: NextRequest) {
   try {
@@ -48,7 +59,7 @@ export async function GET(request: NextRequest) {
     fromDate.setDate(fromDate.getDate() - days);
 
     // 3) Fetch all calls for this user in date range
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await getSupabaseAdmin()
       .from('calls')
       .select('*')
       .eq('user_id', userId)
