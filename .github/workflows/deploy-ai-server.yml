@@ -1,29 +1,23 @@
-name: Deploy AI Server to Fly.io
+name: Deploy to Fly.io
 
 on:
   push:
     branches:
       - main
-    paths:
-      - "ai-server/**"   # Only run when ai-server code changes
 
 jobs:
   deploy:
-    name: Deploy AI Server
+    name: Deploy Next.js App
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Install Flyctl
       - name: Install Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
-      # 3. Deploy to Fly.io (from ai-server folder)
       - name: Deploy to Fly.io
-        working-directory: ./ai-server
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl deploy --remote-only -a version-2
