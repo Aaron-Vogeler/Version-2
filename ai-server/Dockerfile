@@ -1,17 +1,20 @@
-FROM node:18-alpine
+FROM node:20-slim AS build
 
-WORKDIR /usr/src/app
+WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
-
-# Fix: NextAuth needs a secret ONLY during build
-ENV NEXTAUTH_SECRET="dummy"
-
 RUN npm run build
 
-EXPOSE 8080
+FROM node:20-slim
 
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=build /app /app
+RUN npm ci --omit=dev
+
+EXPOSE 8080
 CMD ["node", "dist/index.js"]
