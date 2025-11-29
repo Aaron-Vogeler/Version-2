@@ -1,4 +1,4 @@
-app = "personal-phone-agent" 
+app = "Version-2" 
 primary_region = "ash"
 
 [build]
