@@ -3,6 +3,7 @@
 /**
  * Listen in Browser Component
  * Enables real-time audio monitoring of calls via WebRTC
+ * Uses direct SIP credentials for authentication
  * Sends target_call_id in clientState to Cloudflare Worker
  */
 
@@ -22,188 +23,49 @@ type ConnectionState = 'idle' | 'connecting' | 'listening' | 'error' | 'disconne
 
 export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true); // start muted for monitoring
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<string[]>([]);
+
   const telnyxClientRef = useRef<any>(null);
   const currentCallRef = useRef<any>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Initialize Telnyx client on component mount
-  useEffect(() => {
-    const initializeTelnyxClient = async () => {
-      try {
-        // Fetch authentication token from backend
-        const tokenResponse = await fetch('/api/telnyx/token', {
-          method: 'POST',
-        });
-
-        if (!tokenResponse.ok) {
-          const errorData = await tokenResponse.json().catch(() => ({}));
-          const errorMsg = errorData.detail
-            ? `${errorData.error}: ${errorData.detail}`
-            : errorData.error || 'Failed to fetch Telnyx token';
-          throw new Error(errorMsg);
+  /** Safely serialize objects with circular references */
+  const safeStringify = (obj: any, indent: number = 2): string => {
+    const seen = new WeakSet();
+    return JSON.stringify(
+      obj,
+      (key, value) => {
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) return '[Circular]';
+          seen.add(value);
         }
-
-        const { token } = await tokenResponse.json();
-
-        if (!token) {
-          throw new Error('No token received from server');
-        }
-
-        // Create a new Telnyx RTC client instance with authentication
-        const client = new TelnyxRTC({
-          login_token: token,
-        });
-
-        // Open the websocket connection so calls can be placed
-        client.connect();
-
-        // Set up event listeners
-        client.on('telnyx.ready', () => {
-          console.log('Telnyx WebRTC client ready and authenticated');
-        });
-
-        client.on('telnyx.error', (error: any) => {
-          console.error('Telnyx error:', error);
-          setErrorMessage(`Connection error: ${error.message || 'Unknown error'}`);
-          setConnectionState('error');
-        });
-
-        client.on('telnyx.notification', (notification: any) => {
-          console.log('Telnyx notification:', notification);
-        });
-
-        telnyxClientRef.current = client;
-      } catch (error: any) {
-        console.error('Failed to initialize Telnyx client:', error);
-        setErrorMessage(error.message || 'Failed to initialize WebRTC client');
-        setConnectionState('error');
-      }
-    };
-
-    initializeTelnyxClient();
-
-    return () => {
-      // Cleanup on unmount
-      if (currentCallRef.current) {
-        try {
-          currentCallRef.current.hangup();
-        } catch (e) {
-          console.warn('Error hanging up during cleanup:', e);
-        }
-      }
-    };
-  }, []);
-
-  const handleListenClick = async () => {
-    if (!telnyxClientRef.current) {
-      setErrorMessage('WebRTC client not initialized');
-      return;
-    }
-
-    if (connectionState === 'listening') {
-      // Disconnect if already listening
-      handleDisconnect();
-      return;
-    }
-
-    try {
-      setConnectionState('connecting');
-      setErrorMessage(null);
-
-      // Request microphone permission
-      try {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (e) {
-        console.warn('Microphone permission denied or unavailable:', e);
-        // Continue anyway - we can still listen without microphone
-      }
-
-      // Get the monitor number from environment
-      const monitorNumber = process.env.NEXT_PUBLIC_MONITOR_NUMBER;
-      if (!monitorNumber) {
-        throw new Error('NEXT_PUBLIC_MONITOR_NUMBER not configured');
-      }
-
-      // Create client state with target_call_id
-      const clientState = {
-        target_call_id: callId,
-        monitoring: true,
-        timestamp: new Date().toISOString(),
-      };
-
-      // Initiate the WebRTC call with the monitor number
-      // The Cloudflare Worker listens on this number and routes based on target_call_id
-      const newCall = telnyxClientRef.current.newCall({
-        // Destination number that Cloudflare Worker listens for
-        destinationNumber: monitorNumber,
-        // Client state to identify the target call
-        clientState: JSON.stringify(clientState),
-        // Enable audio
-        audio: true,
-        // Custom headers for additional context
-        customHeaders: [
-          {
-            name: 'X-Target-Call-ID',
-            value: callId,
-          },
-        ],
-      });
-
-      if (!newCall) {
-        throw new Error('Failed to create WebRTC call');
-      }
-
-      currentCallRef.current = newCall;
-
-      // Set up call event listeners
-      newCall.on('telnyx.call.active', () => {
-        console.log('Call active - listening to audio stream');
-        setConnectionState('listening');
-
-        // Get the remote audio stream
-        const remoteStream = newCall.getRemoteStream?.();
-        if (remoteStream && remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = remoteStream;
-          remoteAudioRef.current.play();
-        }
-      });
-
-      newCall.on('telnyx.call.hangup', () => {
-        console.log('Call ended');
-        handleDisconnect();
-      });
-
-      newCall.on('telnyx.call.error', (error: any) => {
-        console.error('Call error:', error);
-        setErrorMessage(`Call error: ${error.message || 'Unknown error'}`);
-        setConnectionState('error');
-      });
-
-      newCall.on('telnyx.error', (error: any) => {
-        console.error('Call negotiation error:', error);
-        setErrorMessage(`Error: ${error.message || 'Connection failed'}`);
-        setConnectionState('error');
-      });
-    } catch (error: any) {
-      console.error('Failed to initiate listen session:', error);
-      setErrorMessage(
-        error.message || 'Failed to establish WebRTC connection'
-      );
-      setConnectionState('error');
-    }
+        return value;
+      },
+      indent
+    );
   };
 
+  /** Add timestamped debug message */
+  const addDebug = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const debugMsg = `[${timestamp}] ${message}`;
+    console.log(debugMsg);
+    setDebugInfo((prev) => [...prev, debugMsg].slice(-20));
+  };
+
+  /** Disconnect call + cleanup audio */
   const handleDisconnect = () => {
+    addDebug('Disconnecting...');
+
     if (currentCallRef.current) {
       try {
         currentCallRef.current.hangup();
-        currentCallRef.current = null;
       } catch (e) {
         console.warn('Error hanging up:', e);
       }
+      currentCallRef.current = null;
     }
 
     if (remoteAudioRef.current) {
@@ -212,9 +74,184 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
     }
 
     setConnectionState('disconnected');
-    setIsMuted(false);
+    setIsMuted(true);
   };
 
+  /** Initialize Telnyx WebRTC client */
+  useEffect(() => {
+    const initializeTelnyxClient = async () => {
+      try {
+        addDebug('🔧 Initializing Telnyx client...');
+
+        const sipUser = process.env.NEXT_PUBLIC_TELNYX_SIP_USER;
+        const sipPassword = process.env.NEXT_PUBLIC_TELNYX_SIP_PASSWORD;
+        const monitorNumber = process.env.NEXT_PUBLIC_MONITOR_NUMBER;
+
+        addDebug(`ENV Check - SIP User: ${sipUser ? '✓' : '✗ MISSING'}`);
+        addDebug(`ENV Check - SIP Password: ${sipPassword ? '✓' : '✗ MISSING'}`);
+        addDebug(`ENV Check - Monitor Number: ${monitorNumber || '✗ MISSING'}`);
+
+        if (!sipUser || !sipPassword || !monitorNumber) {
+          const missing = [];
+          if (!sipUser) missing.push('NEXT_PUBLIC_TELNYX_SIP_USER');
+          if (!sipPassword) missing.push('NEXT_PUBLIC_TELNYX_SIP_PASSWORD');
+          if (!monitorNumber) missing.push('NEXT_PUBLIC_MONITOR_NUMBER');
+
+          const msg = `Missing required environment variables: ${missing.join(', ')}`;
+          addDebug(`❌ ${msg}`);
+          setErrorMessage(msg);
+          setConnectionState('error');
+          return;
+        }
+
+        const client = new TelnyxRTC({
+          login: sipUser,
+          password: sipPassword,
+          ringtoneFile: 'https://cdn.telnyx.com/audio/ring.mp3',
+        });
+
+        addDebug('TelnyxRTC client created, connecting...');
+        client.connect();
+
+        client.on('telnyx.ready', () => {
+          addDebug('✅ Telnyx client READY - authenticated successfully');
+        });
+
+        client.on('telnyx.error', (error: any) => {
+          const details = safeStringify(error);
+          addDebug(`❌ Telnyx error: ${details}`);
+          setErrorMessage(`Connection error: ${error.message || details}`);
+          setConnectionState('error');
+        });
+
+        client.on('telnyx.notification', (notification: any) => {
+          console.log('Telnyx notification:', notification);
+
+          if (notification.type === 'callUpdate' && notification.call) {
+            const call = notification.call;
+
+            if (currentCallRef.current && call.id === currentCallRef.current.id) {
+              addDebug(`📞 Call state: ${call.prevState} → ${call.state}`);
+
+              if (call.state === 'active') {
+                setConnectionState('listening');
+                addDebug('🔊 Remote audio active');
+
+                let remoteStream = call.remoteStream;
+                if (!remoteStream && typeof call.getRemoteStream === 'function') {
+                  remoteStream = call.getRemoteStream();
+                }
+
+                if (remoteStream && remoteAudioRef.current) {
+                  remoteAudioRef.current.srcObject = remoteStream;
+                  remoteAudioRef.current.play().catch((err) =>
+                    addDebug(`⚠️ Audio play failed: ${err.message}`)
+                  );
+                } else {
+                  addDebug('⚠️ No remote stream yet');
+                }
+              }
+
+              if (['hangup', 'destroy', 'purge'].includes(call.state)) {
+                addDebug(`📴 Call ended: ${call.state}`);
+                handleDisconnect();
+              }
+            }
+          }
+        });
+
+        telnyxClientRef.current = client;
+      } catch (error: any) {
+        addDebug(`❌ Init failed: ${error.message}`);
+        setErrorMessage(`Initialization Error: ${error.message}`);
+        setConnectionState('error');
+      }
+    };
+
+    initializeTelnyxClient();
+
+    return () => {
+      if (currentCallRef.current) {
+        try {
+          currentCallRef.current.hangup();
+        } catch (e) {
+          console.warn('Error hanging up during cleanup:', e);
+        }
+        currentCallRef.current = null;
+      }
+
+      if (telnyxClientRef.current) {
+        try {
+          telnyxClientRef.current.disconnect();
+        } catch (e) {
+          console.warn('Error disconnecting client:', e);
+        }
+        telnyxClientRef.current = null;
+      }
+    };
+  }, []);
+
+  /** Handle Listen/Disconnect button */
+  const handleListenClick = async () => {
+    if (!telnyxClientRef.current) {
+      const msg = 'WebRTC client not initialized';
+      addDebug(`❌ ${msg}`);
+      setErrorMessage(msg);
+      return;
+    }
+
+    if (connectionState === 'listening') {
+      addDebug('Disconnecting from active call...');
+      handleDisconnect();
+      return;
+    }
+
+    try {
+      addDebug('🎧 Starting listen session...');
+      setConnectionState('connecting');
+      setErrorMessage(null);
+
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        addDebug('✅ Microphone permission granted');
+      } catch (e: any) {
+        addDebug(`⚠️ Mic unavailable: ${e.message}`);
+      }
+
+      const monitorNumber = process.env.NEXT_PUBLIC_MONITOR_NUMBER!;
+      addDebug(`📞 Calling monitor number: ${monitorNumber}`);
+      addDebug(`🎯 target_call_id = ${callId}`);
+
+      const clientState = {
+        target_call_id: callId,
+        user_id: 'admin_listener',
+      };
+
+      const newCall = telnyxClientRef.current.newCall({
+        destinationNumber: monitorNumber,
+        clientState: JSON.stringify(clientState),
+        audio: true,
+        video: false,
+      });
+
+      if (!newCall) throw new Error('Failed to create WebRTC call');
+
+      currentCallRef.current = newCall;
+
+      setIsMuted(true);
+      try {
+        newCall.mute();
+      } catch {}
+
+      addDebug('Call initiated, awaiting state changes...');
+    } catch (error: any) {
+      addDebug(`❌ Listen session failed: ${error.message}`);
+      setErrorMessage(`Failed to start listen session:\n${error.message}`);
+      setConnectionState('error');
+    }
+  };
+
+  /** Toggle mute/unmute */
   const handleMuteToggle = () => {
     if (!currentCallRef.current) return;
 
@@ -222,29 +259,30 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       if (isMuted) {
         currentCallRef.current.unmute();
         setIsMuted(false);
+        addDebug('🎤 Microphone unmuted');
       } else {
         currentCallRef.current.mute();
         setIsMuted(true);
+        addDebug('🎤 Microphone muted');
       }
-    } catch (error: any) {
-      console.error('Error toggling mute:', error);
+    } catch {
       setErrorMessage('Failed to toggle mute');
     }
   };
 
+  /** Badge UI */
   const getStatusBadge = () => {
     switch (connectionState) {
       case 'connecting':
         return (
           <Badge variant="secondary" className="flex items-center gap-1">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Connecting...
+            <Loader2 className="h-3 w-3 animate-spin" /> Connecting...
           </Badge>
         );
       case 'listening':
         return (
           <Badge variant="success" className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 bg-green-500 rounded-full animate-pulse" />
+            <span className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
             Listening Live
           </Badge>
         );
@@ -257,10 +295,7 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
     }
   };
 
-  // Don't show component if call is not ongoing
-  if (!isCallOngoing) {
-    return null;
-  }
+  if (!isCallOngoing) return null;
 
   return (
     <Card>
@@ -270,29 +305,41 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
           Listen in Browser
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Hidden audio element for remote audio */}
-        <audio
-          ref={remoteAudioRef}
-          autoPlay
-          playsInline
-          className="hidden"
-        />
 
-        {/* Status */}
+      <CardContent className="space-y-4">
+        <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Connection Status:</span>
           {getStatusBadge()}
         </div>
 
-        {/* Error message */}
         {errorMessage && (
-          <div className="bg-destructive/10 border border-destructive/20 rounded p-2 text-sm text-destructive">
-            {errorMessage}
+          <div className="bg-destructive/10 border border-destructive/20 rounded p-3 text-sm text-destructive">
+            <div className="font-semibold mb-1">Error Details:</div>
+            <pre className="whitespace-pre-wrap text-xs">{errorMessage}</pre>
           </div>
         )}
 
-        {/* Controls */}
+        {debugInfo.length > 0 && (
+          <div className="bg-muted/50 border rounded p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold">Debug Log:</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigator.clipboard.writeText(debugInfo.join('\n'))}
+                className="h-6 text-xs"
+              >
+                Copy Log
+              </Button>
+            </div>
+            <div className="bg-background rounded p-2 max-h-60 overflow-y-auto">
+              <pre className="text-xs whitespace-pre-wrap">{debugInfo.join('\n')}</pre>
+            </div>
+          </div>
+        )}
+
         <div className="flex gap-2">
           <Button
             onClick={handleListenClick}
@@ -302,20 +349,17 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
           >
             {connectionState === 'connecting' && (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Connecting...
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Connecting...
               </>
             )}
             {connectionState === 'listening' && (
               <>
-                <Phone className="mr-2 h-4 w-4" />
-                Disconnect
+                <Phone className="mr-2 h-4 w-4" /> Disconnect
               </>
             )}
             {connectionState !== 'connecting' && connectionState !== 'listening' && (
               <>
-                <Headphones className="mr-2 h-4 w-4" />
-                Listen Live
+                <Headphones className="mr-2 h-4 w-4" /> Listen Live
               </>
             )}
           </Button>
@@ -325,20 +369,16 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
               onClick={handleMuteToggle}
               variant="outline"
               size="icon"
-              title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+              className={isMuted ? 'text-muted-foreground' : 'text-destructive'}
             >
-              {isMuted ? (
-                <MicOff className="h-4 w-4" />
-              ) : (
-                <Mic className="h-4 w-4" />
-              )}
+              {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
             </Button>
           )}
         </div>
 
-        {/* Info text */}
         <p className="text-xs text-muted-foreground">
-          Connects to the target call via WebRTC. Audio streams in real-time to your browser.
+          Connects to the target call via WebRTC using SIP credentials. Audio streams in real-time to
+          your browser.
           {connectionState === 'listening' && ' Mic is available for two-way audio.'}
         </p>
       </CardContent>

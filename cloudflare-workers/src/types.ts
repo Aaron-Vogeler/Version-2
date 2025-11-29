@@ -59,6 +59,7 @@ export interface NormalizedEvent {
 
 export interface CallRecord {
   id: string;
+  call_control_id?: string; // Current Telnyx call_control_id for active operations
   tenant_id: string;
   user_id: string; // Authenticated user ID from NextAuth
   direction: 'inbound' | 'outbound';

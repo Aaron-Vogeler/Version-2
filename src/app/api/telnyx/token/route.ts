@@ -38,6 +38,8 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+
+      // More detailed error logging
       console.error('Telnyx token generation error:', {
         status: response.status,
         statusText: response.statusText,
@@ -45,16 +47,17 @@ export async function POST(request: NextRequest) {
         url: tokenUrl,
       });
 
-      // Return more specific error message
-      const errorMessage = errorData?.errors?.[0]?.detail
-        || errorData?.message
-        || `Telnyx API returned ${response.status}: ${response.statusText}`;
+      // More specific error message
+      const errorMessage =
+        errorData?.errors?.[0]?.detail ||
+        errorData?.message ||
+        `Telnyx API returned ${response.status}: ${response.statusText}`;
 
       return NextResponse.json(
         {
           error: 'Failed to generate Telnyx token',
           detail: errorMessage,
-          status: response.status
+          status: response.status,
         },
         { status: response.status }
       );

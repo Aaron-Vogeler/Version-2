@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } from '@/lib/utils';
 import { Call } from '@/lib/types/database';
-import { Phone, Eye } from 'lucide-react';
+import { Phone, Eye, Play, Square } from 'lucide-react';
 
 interface CallsTableProps {
   calls: Call[];
@@ -19,6 +19,38 @@ interface CallsTableProps {
 }
 
 export function CallsTable({ calls, onViewDetails }: CallsTableProps) {
+  const [playingCallId, setPlayingCallId] = useState<string | null>(null);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+
+  const handlePlayRecording = (call: Call) => {
+    // If already playing this call, stop it
+    if (playingCallId === call.id && audioElement) {
+      audioElement.pause();
+      audioElement.currentTime = 0;
+      setPlayingCallId(null);
+      setAudioElement(null);
+      return;
+    }
+
+    // Stop any currently playing audio
+    if (audioElement) {
+      audioElement.pause();
+      audioElement.currentTime = 0;
+    }
+
+    // Start playing the new recording
+    if (call.recording_url) {
+      const audio = new Audio(call.recording_url);
+      audio.addEventListener('ended', () => {
+        setPlayingCallId(null);
+        setAudioElement(null);
+      });
+      audio.play();
+      setAudioElement(audio);
+      setPlayingCallId(call.id);
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, 'success' | 'warning' | 'destructive' | 'default'> = {
       completed: 'success',
@@ -62,13 +94,14 @@ export function CallsTable({ calls, onViewDetails }: CallsTableProps) {
               <TableHead>Duration</TableHead>
               <TableHead>Cost</TableHead>
               <TableHead>Goal</TableHead>
+              <TableHead className="w-20">Recording</TableHead>
               <TableHead className="w-12"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {calls.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground">
+                <TableCell colSpan={10} className="text-center text-muted-foreground">
                   No calls found
                 </TableCell>
               </TableRow>
@@ -99,6 +132,24 @@ export function CallsTable({ calls, onViewDetails }: CallsTableProps) {
                       </Badge>
                     ) : (
                       '-'
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {call.recording_url ? (
+                      <Button
+                        variant={playingCallId === call.id ? 'default' : 'ghost'}
+                        size="icon"
+                        onClick={() => handlePlayRecording(call)}
+                        title={playingCallId === call.id ? 'Stop Recording' : 'Play Recording'}
+                      >
+                        {playingCallId === call.id ? (
+                          <Square className="h-4 w-4" />
+                        ) : (
+                          <Play className="h-4 w-4" />
+                        )}
+                      </Button>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">-</span>
                     )}
                   </TableCell>
                   <TableCell>

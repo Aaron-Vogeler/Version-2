@@ -76,6 +76,7 @@ export async function handleStartCall(request: Request, env: Env): Promise<Respo
 
     const { error: insertError } = await supabase.from('calls').insert({
       id: call_control_id, // Use Telnyx call_control_id as the primary key
+      call_control_id, // Store explicitly for hangup operations
       tenant_id,
       user_id, // CRITICAL: Insert the authenticated user's ID
       direction: 'outbound',

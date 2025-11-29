@@ -2,6 +2,8 @@
 
 /**
  * Dashboard Page with Call Delegation and Analytics
+ * * Updates:
+ * - Added "End Call" button functionality for active calls
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -16,7 +18,10 @@ import { CallsTable } from '@/components/dashboard/calls-table';
 import { RealTimeCallsTable } from '@/components/dashboard/real-time-calls-table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Phone, DollarSign, LogOut, BarChart3, Send } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
 
 export default function DashboardPage() {
@@ -37,19 +42,59 @@ export default function DashboardPage() {
   const [showCallDetail, setShowCallDetail] = useState(false);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [billingData, setBillingData] = useState<any>(null);
+  const [endingCalls, setEndingCalls] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [colorTheme, setColorTheme] = useState('blue');
+  const [phoneScheme, setPhoneScheme] = useState('modern');
 
-  // Live status tracking
-  const [liveCallStatuses, setLiveCallStatuses] = useState<Record<string, string>>({});
-
-  // Analytics throttling - prevent excessive API calls
-  const [lastAnalyticsRefresh, setLastAnalyticsRefresh] = useState<number>(0);
-  const ANALYTICS_REFRESH_COOLDOWN = 30000; // 30 seconds
-
+  // Initial load on mount
   useEffect(() => {
     checkAuth();
     loadDashboardData();
     loadAnalytics(true); // Force initial load
-    setupRealtimeSubscription();
+    loadSettings();
+  }, []);
+
+  // Load settings from localStorage
+  const loadSettings = () => {
+    const savedColorTheme = localStorage.getItem('colorTheme');
+    const savedPhoneScheme = localStorage.getItem('phoneScheme');
+
+    if (savedColorTheme) setColorTheme(savedColorTheme);
+    if (savedPhoneScheme) setPhoneScheme(savedPhoneScheme);
+  };
+
+  // Save settings to localStorage when they change
+  useEffect(() => {
+    localStorage.setItem('colorTheme', colorTheme);
+    applyColorTheme(colorTheme);
+  }, [colorTheme]);
+
+  useEffect(() => {
+    localStorage.setItem('phoneScheme', phoneScheme);
+  }, [phoneScheme]);
+
+  // Apply color theme to document
+  const applyColorTheme = (theme: string) => {
+    const root = document.documentElement;
+
+    // Remove existing theme classes
+    root.classList.remove('theme-blue', 'theme-green', 'theme-purple', 'theme-beige', 'theme-red');
+
+    // Add new theme class
+    root.classList.add(`theme-${theme}`);
+  };
+
+  // Analytics polling - fetch every 5 minutes instead of on every event
+  useEffect(() => {
+    // Set up polling interval
+    const analyticsInterval = setInterval(() => {
+      console.log('Polling analytics (5 minute interval)...');
+      loadAnalytics(false);
+    }, 5 * 60 * 1000); // 5 minutes
+
+    // Cleanup interval on unmount
+    return () => clearInterval(analyticsInterval);
   }, []);
 
   const checkAuth = async () => {
@@ -90,17 +135,8 @@ export default function DashboardPage() {
   };
 
   const loadAnalytics = async (force = false) => {
-    const now = Date.now();
-
-    // Throttle: skip if refreshed recently (unless forced)
-    if (!force && now - lastAnalyticsRefresh < ANALYTICS_REFRESH_COOLDOWN) {
-      console.log('Analytics refresh throttled - last refresh was', Math.round((now - lastAnalyticsRefresh) / 1000), 'seconds ago');
-      return;
-    }
-
     try {
-      console.log('Refreshing analytics...');
-      setLastAnalyticsRefresh(now);
+      console.log('Fetching analytics data...');
 
       // Load billing data
       const billingRes = await fetch('/api/analytics/billing?days=30');
@@ -113,85 +149,10 @@ export default function DashboardPage() {
     }
   };
 
-  const setupRealtimeSubscription = () => {
-    const supabase = createClient();
-
-    // Subscribe to calls table changes for live updates
-    const channel = supabase
-      .channel('dashboard-calls')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'calls',
-        },
-        (payload) => {
-          console.log('Dashboard call update received:', payload);
-
-          if (payload.eventType === 'INSERT') {
-            // New call created - add to the beginning of the list
-            const newCall = payload.new as Call;
-
-            setCalls(prev => {
-              // Check if call already exists to avoid duplicates
-              if (prev.some(c => c.id === newCall.id)) {
-                return prev;
-              }
-              return [newCall, ...prev];
-            });
-
-            // Update live status
-            setLiveCallStatuses(prev => ({
-              ...prev,
-              [newCall.id]: newCall.status,
-            }));
-
-            // Reload analytics for new call (throttled to 30s)
-            loadAnalytics();
-          } else if (payload.eventType === 'UPDATE') {
-            // Existing call updated - update in place
-            const updatedCall = payload.new as Call;
-
-            setCalls(prev =>
-              prev.map(call => call.id === updatedCall.id ? updatedCall : call)
-            );
-
-            // Update live status
-            setLiveCallStatuses(prev => ({
-              ...prev,
-              [updatedCall.id]: updatedCall.status,
-            }));
-
-            // Only refresh analytics if call reached terminal state (completed/failed)
-            // Skip for in-progress updates (transcript, duration, etc.) to reduce API load
-            if (updatedCall.status === 'completed' || updatedCall.status === 'failed') {
-              loadAnalytics(); // Throttled to 30s
-            }
-          } else if (payload.eventType === 'DELETE') {
-            // Call deleted - remove from list
-            const deletedCall = payload.old as Call;
-
-            setCalls(prev => prev.filter(call => call.id !== deletedCall.id));
-
-            // Remove from live status
-            setLiveCallStatuses(prev => {
-              const updated = { ...prev };
-              delete updated[deletedCall.id];
-              return updated;
-            });
-
-            // Reload analytics for deleted call (throttled to 30s)
-            loadAnalytics();
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  };
+  // Handle calls update from RealTimeCallsTable
+  const handleCallsUpdate = useCallback((updatedCalls: Call[]) => {
+    setCalls(updatedCalls);
+  }, []);
 
   const handleFiltersChange = useCallback((filters: CallFilters) => {
     // Save current filters
@@ -257,6 +218,62 @@ export default function DashboardPage() {
     window.location.href = '/login';
   };
 
+  const handleEndActiveCalls = async () => {
+    // Identify active calls
+    const activeCalls = calls.filter(call =>
+      ['initiated', 'ringing', 'answered'].includes(call.status)
+    );
+
+    if (activeCalls.length === 0) return;
+
+    // Confirm if there are multiple
+    if (activeCalls.length > 1) {
+      const confirmed = window.confirm(`Are you sure you want to end ${activeCalls.length} active calls?`);
+      if (!confirmed) return;
+    }
+
+    setEndingCalls(true);
+
+    try {
+      // End all active calls in parallel
+      // Use call_control_id if available, fallback to id for backwards compatibility
+      const results = await Promise.all(activeCalls.map(async (call) => {
+        const controlId = call.call_control_id || call.id;
+
+        const response = await fetch('/api/calls/hangup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ call_control_id: controlId }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+          console.error(`Failed to end call ${call.id}:`, error);
+          return { success: false, call_id: call.id, error };
+        }
+
+        return { success: true, call_id: call.id };
+      }));
+
+      // Check for any failures
+      const failures = results.filter(r => !r.success);
+      if (failures.length > 0) {
+        console.warn(`${failures.length} call(s) failed to end:`, failures);
+      }
+    } catch (error) {
+      console.error('Error ending calls:', error);
+    } finally {
+      setEndingCalls(false);
+    }
+  };
+
+  // Calculate active call count directly from calls array
+  const activeCallCount = calls.filter(call =>
+    call.status === 'initiated' ||
+    call.status === 'ringing' ||
+    call.status === 'answered'
+  ).length;
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -279,18 +296,32 @@ export default function DashboardPage() {
             )}
           </div>
           <div className="flex items-center gap-4">
-            {/* Live Call Indicator */}
-            {(() => {
-              const activeCallCount = Object.entries(liveCallStatuses).filter(
-                ([_, status]) => status !== 'completed'
-              ).length;
-              return activeCallCount > 0 && (
+            {/* Live Call Indicator & End Button */}
+            {activeCallCount > 0 && (
+              <>
                 <Badge variant="success" className="animate-pulse">
                   <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
                   {activeCallCount} Active
                 </Badge>
-              );
-            })()}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleEndActiveCalls}
+                  disabled={endingCalls}
+                >
+                  <PhoneOff className="mr-2 h-4 w-4" />
+                  {endingCalls ? 'Ending...' : activeCallCount > 1 ? 'End All Calls' : 'End Call'}
+                </Button>
+              </>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowSettings(true)}
+              title="Settings"
+            >
+              <Settings className="h-5 w-5" />
+            </Button>
             <Button variant="outline" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
               Logout
@@ -338,11 +369,7 @@ export default function DashboardPage() {
             <RealTimeCallsTable
               displayCalls={filteredCalls}
               onViewDetails={handleViewCallDetails}
-              onCallsUpdate={(updatedCalls) => {
-                // Update the unfiltered calls state
-                setCalls(updatedCalls);
-                // FilteredCalls will be updated automatically via useCallback dependency
-              }}
+              onCallsUpdate={handleCallsUpdate}
             />
           </TabsContent>
         </Tabs>
@@ -354,6 +381,78 @@ export default function DashboardPage() {
         open={showCallDetail}
         onOpenChange={setShowCallDetail}
       />
+
+      {/* Settings Dialog */}
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Settings</DialogTitle>
+            <DialogDescription>
+              Customize your dashboard appearance and phone settings.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            {/* Color Theme Selection */}
+            <div className="space-y-2">
+              <Label htmlFor="color-theme">Color Theme</Label>
+              <Select value={colorTheme} onValueChange={setColorTheme}>
+                <SelectTrigger id="color-theme">
+                  <SelectValue placeholder="Select color theme" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="blue">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-blue-500" />
+                      <span>Blue</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="green">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-green-500" />
+                      <span>Green</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="purple">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-purple-500" />
+                      <span>Purple</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="beige">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-amber-200" />
+                      <span>Beige</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="red">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-red-500" />
+                      <span>Red</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Phone Scheme/Template Selection */}
+            <div className="space-y-2">
+              <Label htmlFor="phone-scheme">Phone Template</Label>
+              <Select value={phoneScheme} onValueChange={setPhoneScheme}>
+                <SelectTrigger id="phone-scheme">
+                  <SelectValue placeholder="Select phone template" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="modern">Modern</SelectItem>
+                  <SelectItem value="classic">Classic</SelectItem>
+                  <SelectItem value="minimal">Minimal</SelectItem>
+                  <SelectItem value="professional">Professional</SelectItem>
+                  <SelectItem value="compact">Compact</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
