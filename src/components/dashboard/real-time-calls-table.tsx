@@ -68,8 +68,10 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
   useEffect(() => {
     if (!isLive) return;
 
-    // Load initial data
-    loadInitialData();
+    // FIX: Commented out to prevent infinite loop.
+    // The parent component (DashboardPage) already fetches initial data on mount.
+    // Calling this here triggers a state update in the parent -> re-render -> remount -> infinite loop.
+    // loadInitialData();
 
     console.log('Setting up Supabase Realtime subscription...');
 
@@ -143,7 +145,7 @@ export function RealTimeCallsTable({ displayCalls, onViewDetails, onCallsUpdate 
       console.log('Cleaning up Realtime subscription');
       supabase.removeChannel(channel);
     };
-  }, [isLive, loadInitialData]);
+  }, [isLive, supabase]); // Removed loadInitialData from deps to be safe
 
   const toggleLive = () => {
     setIsLive((prev) => !prev);
