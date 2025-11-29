@@ -1,14 +1,16 @@
 /**
  * Telnyx Voice API → Supabase Call Logger
- * Cloudflare Worker - WITH MONITOR LEG FIXES
+ * Cloudflare Worker - WITH MONITOR LEG FIXES & OPENAI WHISPER & SPEAKER LABELS
  *
  * Features:
  * - Outbound call initiation with user tracking
  * - Webhook handling for call events
- * - Real-time + post-call transcription logging
+ * - Real-time + post-call transcription logging (Using OpenAI Whisper)
+ * - Formatted Speaker Labels (Merlin vs Phone Number)
  * - Cost tracking
  * - Multi-user support via user_id (NOT NULL)
  * - Conference + monitor leg for live listening (FIXED)
+ * - Telnyx AI Assistant enabled on answered primary leg
  *
  * Environment Variables:
  * - TELNYX_API_KEY
@@ -18,6 +20,7 @@
  * - SUPABASE_URL
  * - SUPABASE_SERVICE_KEY  (service_role)
  * - DEFAULT_USER_ID       (RECOMMENDED: your auth.users.id)
+ * - AI_ASSISTANT_ID       (Telnyx AI Assistant id to auto-start)
  */
 
 export default {
@@ -49,16 +52,10 @@ export default {
 
     /**
      * Normalize phone number for comparison
-     * Removes all formatting characters (hyphens, spaces, parentheses)
-     * Keeps only digits and leading + sign
-     * Examples:
-     *   +1-206-207-9439 → +12062079439
-     *   +1 (206) 207-9439 → +12062079439
-     *   12062079439 → 12062079439
      */
     const normalizePhoneNumber = (phoneNumber) => {
       if (!phoneNumber) return null;
-      return phoneNumber.toString().replace(/[^\d+]/g, '');
+      return phoneNumber.toString().replace(/[^\d+]/g, "");
     };
 
     const getUserIdFromJWT = (request) => {
@@ -103,10 +100,9 @@ export default {
       if (!encodedState) return {};
       try {
         // Handle both stringified JSON and base64 encoded JSON
-        if (typeof encodedState === 'string') {
-          // Check if it looks like JSON or Base64
-          if (encodedState.trim().startsWith('{')) {
-             return JSON.parse(encodedState);
+        if (typeof encodedState === "string") {
+          if (encodedState.trim().startsWith("{")) {
+            return JSON.parse(encodedState);
           }
           return JSON.parse(atob(encodedState));
         }
@@ -168,7 +164,7 @@ export default {
     const updateCall = async (callId, fields) => {
       if (!callId) {
         console.error("Cannot update call without id");
-        return;
+        return null;
       }
 
       const data = cleanObject({
@@ -177,9 +173,7 @@ export default {
       });
 
       const response = await fetch(
-        `${env.SUPABASE_URL}/rest/v1/calls?id=eq.${encodeURIComponent(
-          callId
-        )}`,
+        `${env.SUPABASE_URL}/rest/v1/calls?id=eq.${encodeURIComponent(callId)}`,
         {
           method: "PATCH",
           headers: {
@@ -197,29 +191,119 @@ export default {
       return response;
     };
 
-    const appendTranscript = async (callId, newChunk, status) => {
+    // Find an existing call row by ANY of the candidate IDs
+    const findCallRow = async (candidateIds, select = "id,user_id,goal") => {
+      const ids = (candidateIds || []).filter(Boolean);
+      if (!ids.length) return null;
+
+      const orClause = ids
+        .map((id) => `id.eq.${encodeURIComponent(id)}`)
+        .join(",");
+
+      try {
+        const resp = await fetch(
+          `${env.SUPABASE_URL}/rest/v1/calls?or=(${orClause})&select=${select}&limit=1`,
+          { headers: supabaseHeaders }
+        );
+        if (!resp.ok) {
+          await logSupabaseError("find call row", resp);
+          return null;
+        }
+        const rows = await resp.json();
+        return Array.isArray(rows) && rows.length ? rows[0] : null;
+      } catch (e) {
+        console.error("findCallRow exception:", e);
+        return null;
+      }
+    };
+
+    // ✅ Terminal-status guard to prevent regressions
+    const isTerminalStatus = (s) =>
+      ["completed", "failed", "canceled", "busy", "no_answer"].includes(
+        (s || "").toString().toLowerCase()
+      );
+
+    const safeUpdateStatus = async (callId, newStatus, extraFields = {}) => {
+      try {
+        const row = await findCallRow([callId], "id,status");
+        const currentStatus = row?.status;
+
+        // If already terminal, do NOT downgrade
+        if (isTerminalStatus(currentStatus) && !isTerminalStatus(newStatus)) {
+          console.log(
+            `⛔ Skipping status downgrade ${currentStatus} → ${newStatus} for ${callId}`
+          );
+          return null;
+        }
+
+        return updateCall(callId, { status: newStatus, ...extraFields });
+      } catch (e) {
+        console.error("safeUpdateStatus error:", e);
+        return null;
+      }
+    };
+
+    /**
+     * ✅ LIVESTREAMING FUNCTIONALITY (ported from your first script)
+     * Appends transcript text with speaker identification
+     * Stream Direction:
+     * - 'outgoing': Audio from Telnyx to User (AI → Merlin)
+     * - 'incoming': Audio from User to Telnyx (Human → phone number)
+     */
+    const appendTranscript = async (callId, newChunk, status, streamDirection) => {
       if (!callId || !newChunk) return;
 
       try {
+        // Fetch existing transcript AND call info to determine speaker
         const getResponse = await fetch(
           `${env.SUPABASE_URL}/rest/v1/calls?id=eq.${encodeURIComponent(
             callId
-          )}&select=live_transcript`,
+          )}&select=live_transcript,to_e164,from_e164,direction`,
           { headers: supabaseHeaders }
         );
 
         let existingTranscript = "";
+        let callData = null;
 
         if (getResponse.ok) {
           const rows = await getResponse.json();
           if (Array.isArray(rows) && rows.length > 0) {
-            existingTranscript = rows[0].live_transcript || "";
+            callData = rows[0];
+            existingTranscript = callData.live_transcript || "";
           }
         }
 
+        if (!callData) {
+          console.warn(
+            `Call data not found for ${callId}, cannot append transcript.`
+          );
+          return;
+        }
+
+        // Determine Speaker Label
+        let speakerName = "Unknown";
+
+        if (streamDirection === "outgoing") {
+          // Outgoing audio stream from Telnyx is the AI Assistant
+          speakerName = "Merlin";
+        } else {
+          // Incoming stream is the human:
+          // If call was OUTBOUND (we called them): human is TO number
+          // If call was INBOUND (they called us): human is FROM number
+          if (callData.direction === "inbound") {
+            speakerName = callData.from_e164 || "Customer";
+          } else {
+            speakerName = callData.to_e164 || "Customer";
+          }
+        }
+
+        // Format: Speaker Name (newline) Text
+        const formattedBlock = `${speakerName}\n${newChunk}`;
+
+        // Add double newline for clean separation
         const updatedTranscript = existingTranscript
-          ? `${existingTranscript}\n${newChunk}`
-          : newChunk;
+          ? `${existingTranscript}\n\n${formattedBlock}`
+          : formattedBlock;
 
         await updateCall(callId, {
           live_transcript: updatedTranscript,
@@ -230,9 +314,6 @@ export default {
       }
     };
 
-    /**
-     * FIXED: Fetch the conference ID for a SPECIFIC call.
-     */
     const getConferenceIdForCall = async (targetCallId) => {
       if (!targetCallId) return null;
 
@@ -269,22 +350,35 @@ export default {
       "Content-Type": "application/json",
     };
 
+    // Start Recording (minimal + known-good body)
     const startRecording = async (callControlId) => {
-      return fetch(
-        `https://api.telnyx.com/v2/calls/${callControlId}/actions/record_start`,
-        {
-          method: "POST",
-          headers: telnyxHeaders,
-          body: JSON.stringify({
-            format: "mp3",
-            channels: "dual",
-          }),
+      try {
+        const resp = await fetch(
+          `https://api.telnyx.com/v2/calls/${callControlId}/actions/record_start`,
+          {
+            method: "POST",
+            headers: telnyxHeaders,
+            body: JSON.stringify({
+              format: "mp3",
+              channels: "dual",
+            }),
+          }
+        );
+
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => "");
+          console.error("❌ Telnyx record_start failed:", resp.status, txt);
+        } else {
+          console.log("🎙️ Telnyx record_start OK:", callControlId);
         }
-      ).catch((error) => {
+
+        return resp;
+      } catch (error) {
         console.error("Failed to start recording:", error);
-      });
+      }
     };
 
+    // Start Live Transcription with OpenAI Whisper
     const startTranscription = async (callControlId) => {
       return fetch(
         `https://api.telnyx.com/v2/calls/${callControlId}/actions/transcription_start`,
@@ -293,13 +387,43 @@ export default {
           headers: telnyxHeaders,
           body: JSON.stringify({
             language: "en",
-            transcription_engine: "telnyx",
+            transcription_engine: "Telnyx",
+            transcription_model: "openai/whisper-large-v3-turbo",
             transcription_tracks: "both",
           }),
         }
       ).catch((error) => {
         console.error("Failed to start transcription:", error);
       });
+    };
+
+    // ✅ Start Telnyx AI Assistant on a live call
+    const startAIAssistant = async (callControlId, assistantId) => {
+      if (!callControlId || !assistantId) return;
+
+      try {
+        const resp = await fetch(
+          `https://api.telnyx.com/v2/calls/${callControlId}/actions/ai_assistant_start`,
+          {
+            method: "POST",
+            headers: telnyxHeaders,
+            body: JSON.stringify({
+              assistant: { id: assistantId },
+            }),
+          }
+        );
+
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => "");
+          console.error("❌ Telnyx ai_assistant_start failed:", resp.status, txt);
+        } else {
+          console.log("🤖 Telnyx AI Assistant started:", assistantId);
+        }
+
+        return resp;
+      } catch (error) {
+        console.error("Failed to start AI assistant:", error);
+      }
     };
 
     // Create a conference for the primary call leg
@@ -375,7 +499,7 @@ export default {
     // ============================================================================
 
     if (url.pathname === "/" && request.method === "GET") {
-      return new Response("✅ Telnyx Voice API Worker - Online", {
+      return new Response("✅ Telnyx Voice API Worker - Online (Whisper Enabled)", {
         status: 200,
         headers: { "Content-Type": "text/plain" },
       });
@@ -397,7 +521,6 @@ export default {
           );
         }
 
-        // Resolve user_id (REQUIRED because calls.user_id is NOT NULL)
         const userIdFromBody = body.user_id;
         const userIdFromJWT = getUserIdFromJWT(request);
         const fallbackUserId = env.DEFAULT_USER_ID || null;
@@ -416,12 +539,15 @@ export default {
           );
         }
 
-        // Encode metadata in client_state
+        // assistant_id can be passed per-call, otherwise env.AI_ASSISTANT_ID will be used
+        const assistantId = body.assistant_id || null;
+
         const clientState = btoa(
           JSON.stringify({
             user_id: userId,
             goal: goal || null,
             to_number,
+            assistant_id: assistantId, // harmless if null
           })
         );
 
@@ -450,27 +576,30 @@ export default {
         const callSessionId =
           data?.data?.call_session_id ||
           data?.data?.call_session?.id ||
-          data?.data?.call_control_id;
+          null;
 
-        if (callSessionId) {
+        const callControlId = data?.data?.call_control_id || null;
+
+        const primaryId = callSessionId || callControlId;
+
+        if (primaryId) {
           const timestamp = now();
-          const callControlId = data?.data?.call_control_id;
 
           await upsertCall({
-            id: callSessionId,
-            call_control_id: callControlId, // Store for hangup operations
+            id: primaryId,
             user_id: userId,
             direction: "outbound",
             from_e164: env.FROM_NUMBER,
             to_e164: to_number,
             status: "initiated",
             goal: goal || null,
+            metadata: callControlId ? { call_control_id: callControlId } : undefined,
             created_at: timestamp,
             updated_at: timestamp,
             started_at: timestamp,
           });
 
-          console.log("✅ Call initiated:", callSessionId);
+          console.log("✅ Call initiated:", primaryId);
         }
 
         return jsonResponse(data, response.status);
@@ -501,13 +630,35 @@ export default {
       const payload = event?.data?.payload || {};
 
       const callControlId = payload.call_control_id;
-      const callSessionId = payload.call_session_id || payload.call_session?.id;
-      const callId = callSessionId || callControlId;
+      const callSessionId =
+        payload.call_session_id || payload.call_session?.id;
 
-      if (!callId) {
+      const derivedCallId = callSessionId || callControlId;
+      if (!derivedCallId) {
         console.warn("Webhook received without call identifier:", eventType);
         return new Response("ok", { status: 200 });
       }
+
+      const clientStateData = decodeClientState(payload.client_state);
+
+      let userId = clientStateData.user_id || env.DEFAULT_USER_ID || null;
+      let goal = clientStateData.goal || null;
+
+      // Resolve assistantId (per-call takes priority)
+      const assistantId =
+        clientStateData.assistant_id ||
+        env.AI_ASSISTANT_ID ||
+        null;
+
+      const existingRow = await findCallRow(
+        [callSessionId, callControlId],
+        "id,user_id,goal,conference_id,status,direction,to_e164,from_e164"
+      );
+
+      const callId = existingRow?.id || derivedCallId;
+
+      if (!userId) userId = existingRow?.user_id || null;
+      if (!goal) goal = existingRow?.goal || null;
 
       const occurredAt =
         payload.occurred_at ||
@@ -515,13 +666,11 @@ export default {
         payload.start_time ||
         now();
 
-      const userVariables = payload.user_variables || {};
       const monitorNumber = env.MONITOR_NUMBER;
-
-      // Detect if this is the "Monitor" leg (the call from the browser)
-      // Normalize phone numbers before comparison to handle formatting differences
       const normalizedMonitorNumber = normalizePhoneNumber(monitorNumber);
-      const normalizedPayloadTo = normalizePhoneNumber(payload.to || payload.to_number);
+      const normalizedPayloadTo = normalizePhoneNumber(
+        payload.to || payload.to_number
+      );
 
       const isMonitorCall =
         !!normalizedMonitorNumber &&
@@ -530,37 +679,18 @@ export default {
       console.log("📞 Webhook received:", {
         type: eventType,
         callId,
-        callControlId,
-        to: payload.to || payload.to_number,
-        from: payload.from || payload.from_number,
         isMonitorCall,
       });
 
-      // 🔍 DETAILED MONITOR DETECTION DEBUG
-      console.log("🔍 Monitor Detection Debug:", {
-        monitorNumberEnv: monitorNumber,
-        normalizedMonitorNumber,
-        payloadTo: payload.to,
-        payloadToNumber: payload.to_number,
-        normalizedPayloadTo,
-        isMonitorCall,
-        comparisonResult: normalizedPayloadTo === normalizedMonitorNumber,
-      });
-
-      const clientStateData = decodeClientState(payload.client_state);
-      const userId = clientStateData.user_id || env.DEFAULT_USER_ID || null;
-      const goal = clientStateData.goal || null;
-
-      // Extract phone numbers (required for database)
       const fromNumber = payload.from || payload.from_number;
       const toNumber = payload.to || payload.to_number;
 
-      // FIXED: Skip upsert for monitor calls (they have invalid user_id 'admin_listener')
-      // Also skip if we don't have required fields (from_e164, to_e164)
-      if (userId && !isMonitorCall && fromNumber && toNumber) {
+      // ✅ Prevent terminal calls from being overwritten back to initiated
+      const existingIsTerminal = isTerminalStatus(existingRow?.status);
+
+      if (userId && !isMonitorCall && fromNumber && toNumber && !existingIsTerminal) {
         await upsertCall({
           id: callId,
-          call_control_id: callControlId, // Always store for hangup operations
           user_id: userId,
           direction: normalizeDirection(payload.direction),
           from_e164: fromNumber,
@@ -571,98 +701,80 @@ export default {
           updated_at: occurredAt,
           started_at: payload.start_time || occurredAt,
         });
-      } else if (!isMonitorCall) {
-        // Log why we're skipping
-        const reasons = [];
-        if (!userId) reasons.push('no user_id');
-        if (!fromNumber) reasons.push('no from_number');
-        if (!toNumber) reasons.push('no to_number');
-
-        if (reasons.length > 0) {
-          console.warn(
-            `Skipping baseline upsert for ${callId}: ${reasons.join(', ')}`
-          );
-        }
       }
-      // Monitor calls intentionally skip upsert
 
       // ----------------------------------------------------------------------
       // CALL ANSWERED HANDLER
       // ----------------------------------------------------------------------
       if (eventType === "call.answered" && callControlId) {
         if (isMonitorCall) {
-          // 🔥 FIXED MONITOR LEG LOGIC 🔥
-
           ctx.waitUntil(
             (async () => {
               try {
-                // 1. Extract target ID from clientState
-                const monitorClientState = decodeClientState(payload.client_state);
+                const monitorClientState = decodeClientState(
+                  payload.client_state
+                );
                 const targetCallId = monitorClientState.target_call_id;
 
                 if (!targetCallId) {
-                  console.error("❌ Monitor call missing target_call_id in clientState");
+                  console.error(
+                    "❌ Monitor call missing target_call_id in clientState"
+                  );
                   return;
                 }
 
-                console.log("🎧 Monitor call answered. Target call ID:", targetCallId);
-
-                // 2. Look up the target call's conference ID with retry logic
                 let conferenceId = await getConferenceIdForCall(targetCallId);
 
-                // First retry (conference might still be creating)
                 if (!conferenceId) {
                   console.log("⏳ Conference not ready, retrying in 1s...");
-                  await new Promise(r => setTimeout(r, 1000));
-                  conferenceId = await getConferenceIdForCall(targetCallId);
-                }
-
-                // Second retry
-                if (!conferenceId) {
-                  console.log("⏳ Second retry in 1.5s...");
-                  await new Promise(r => setTimeout(r, 1500));
+                  await new Promise((r) => setTimeout(r, 1000));
                   conferenceId = await getConferenceIdForCall(targetCallId);
                 }
 
                 if (!conferenceId) {
-                  console.error("❌ Monitor failed: No conference found for target call:", targetCallId);
+                  console.error(
+                    "❌ Monitor failed: No conference found for target call:",
+                    targetCallId
+                  );
                   return;
                 }
 
-                // 3. Join the conference
-                console.log(`🎧 Joining monitor to conference: ${conferenceId}`);
                 await joinConferenceAsMonitor(conferenceId, callControlId);
 
-                // 4. FIXED: Update the TARGET call row (not the monitor call row!)
-                console.log(`✅ Updating target call ${targetCallId} with monitor info`);
                 await updateCall(targetCallId, {
                   monitor_initiated: true,
                   monitor_conference_id: conferenceId,
                 });
 
                 console.log("✅ Monitor successfully joined conference");
-
               } catch (error) {
                 console.error("❌ Monitor leg handler failed:", error);
               }
             })()
           );
         } else {
-          // Primary AI/customer leg – record, transcribe, and create conference
-          console.log("📱 Call answered, starting recording + transcription + conference");
+          // Primary AI/customer leg – record, transcribe, create conference, and start AI assistant
+          console.log(
+            "📱 Call answered, starting recording & transcription (Whisper enabled)"
+          );
 
           ctx.waitUntil(startRecording(callControlId));
           ctx.waitUntil(startTranscription(callControlId));
 
+          if (assistantId) {
+            ctx.waitUntil(startAIAssistant(callControlId, assistantId));
+          } else {
+            console.warn(
+              "⚠️ No assistantId found (client_state.assistant_id or env.AI_ASSISTANT_ID). Skipping ai_assistant_start."
+            );
+          }
+
           ctx.waitUntil(
-            updateCall(callId, {
-              call_control_id: callControlId, // Ensure it's stored
-              status: "answered",
+            safeUpdateStatus(callId, "answered", {
               answered_at: now(),
             })
           );
 
-          // Create a conference for this call
           ctx.waitUntil(
             (async () => {
               try {
@@ -676,24 +788,19 @@ export default {
                   return;
                 }
 
-                console.log("🎧 Creating conference for call:", callId);
                 const conf = await createConference(callControlId, callId);
                 const conferenceId = conf?.id;
 
                 if (conferenceId) {
-                  console.log("✅ Conference created:", {
-                    callId,
-                    conferenceId,
-                  });
-
                   await updateCall(callId, {
                     conference_id: conferenceId,
                   });
-                } else {
-                  console.error("❌ Failed to create conference for call:", callId);
                 }
               } catch (error) {
-                console.error("Failed to create conference for answered call:", error);
+                console.error(
+                  "Failed to create conference for answered call:",
+                  error
+                );
               }
             })()
           );
@@ -702,10 +809,7 @@ export default {
 
       // CALL INITIATED / RINGING
       if (eventType === "call.initiated" || eventType === "call.ringing") {
-        // 🔥 AUTO-ANSWER MONITOR CALLS 🔥
         if (isMonitorCall && callControlId && eventType === "call.initiated") {
-          console.log("🎧 Monitor call initiated, auto-answering...");
-
           ctx.waitUntil(
             (async () => {
               try {
@@ -716,31 +820,21 @@ export default {
                     headers: telnyxHeaders,
                   }
                 );
-
-                if (answerResp.ok) {
-                  console.log("✅ Monitor call auto-answered successfully");
-                } else {
-                  const errorText = await answerResp.text().catch(() => "Unable to read error");
-                  console.error(
-                    `❌ Failed to auto-answer monitor call [${answerResp.status}]:`,
-                    errorText
-                  );
+                if (!answerResp.ok) {
+                  console.error("❌ Failed to auto-answer monitor call");
                 }
               } catch (error) {
-                console.error("❌ Exception while auto-answering monitor call:", error);
+                console.error(
+                  "❌ Exception while auto-answering monitor call:",
+                  error
+                );
               }
             })()
           );
         }
 
-        // Update call status to ringing (for non-monitor calls)
         if (!isMonitorCall) {
-          ctx.waitUntil(
-            updateCall(callId, {
-              call_control_id: callControlId, // Ensure it's stored
-              status: "ringing",
-            })
-          );
+          ctx.waitUntil(safeUpdateStatus(callId, "ringing"));
         }
       }
 
@@ -759,15 +853,8 @@ export default {
           );
         }
 
-        console.log("📴 Call ended:", {
-          callId,
-          duration: durationSeconds,
-          cause: payload.hangup_cause,
-        });
-
         ctx.waitUntil(
           updateCall(callId, {
-            call_control_id: callControlId, // Ensure it's stored
             status: "completed",
             ended_at: endedAt,
             duration_sec: durationSeconds,
@@ -777,12 +864,24 @@ export default {
       }
 
       // RECORDING SAVED
-      if (eventType === "call.recording.saved") {
+      const recordingSavedEvents = [
+        "call.recording.saved",
+        "recording_saved",
+        "conference.recording.saved",
+        "conference_recording_saved",
+      ];
+
+      if (recordingSavedEvents.includes(eventType)) {
+        const pickUrl = (obj) =>
+          obj?.mp3 ||
+          obj?.wav ||
+          obj?.m4a ||
+          (obj && Object.values(obj)[0]) ||
+          null;
+
         const recordingUrl =
-          payload.public_recording_urls?.mp3 ||
-          payload.public_recording_urls?.wav ||
-          payload.recording_urls?.mp3 ||
-          payload.recording_urls?.wav ||
+          pickUrl(payload.public_recording_urls) ||
+          pickUrl(payload.recording_urls) ||
           payload.recording_url ||
           null;
 
@@ -794,10 +893,12 @@ export default {
               recording_url: recordingUrl,
             })
           );
+        } else {
+          console.warn("recording saved event but no URL found", payload);
         }
       }
 
-      // LIVE TRANSCRIPTION
+      // ✅ LIVESTREAMING / LIVE TRANSCRIPTION (ported behavior)
       const liveTranscriptionEvents = [
         "call.transcription",
         "call.transcription.partial",
@@ -811,7 +912,9 @@ export default {
 
         if (transcriptText) {
           const isFinalFlag =
-            payload.transcription_data?.is_final ?? payload.is_final ?? false;
+            payload.transcription_data?.is_final ??
+            payload.is_final ??
+            false;
 
           const isFinal =
             isFinalFlag === true ||
@@ -821,13 +924,12 @@ export default {
 
           const status = isFinal ? "completed" : "in_progress";
 
-          console.log("📝 Live transcript:", {
-            type: eventType,
-            length: transcriptText.length,
-            isFinal,
-          });
+          // ✅ old behavior: use Telnyx-provided direction directly
+          const streamDirection = payload.direction;
 
-          ctx.waitUntil(appendTranscript(callId, transcriptText, status));
+          ctx.waitUntil(
+            appendTranscript(callId, transcriptText, status, streamDirection)
+          );
         }
       }
 
@@ -839,11 +941,6 @@ export default {
         const transcriptionUrl = transcriptionId
           ? `/recording_transcriptions/${transcriptionId}`
           : payload.transcription_url || null;
-
-        console.log("📄 Recording transcription saved:", {
-          hasText: !!transcriptText,
-          transcriptionId,
-        });
 
         ctx.waitUntil(
           updateCall(callId, {
@@ -865,12 +962,6 @@ export default {
           payload.total_cost || payload.amount_billed_usd || null;
 
         const currency = payload.currency || "USD";
-
-        console.log("💰 Call cost:", {
-          billedSeconds,
-          cost: totalCost,
-          currency,
-        });
 
         ctx.waitUntil(
           updateCall(callId, {
@@ -915,8 +1006,6 @@ export default {
         const clientStateEncoded = callData?.data?.client_state;
 
         const variables = decodeClientState(clientStateEncoded);
-
-        console.log("🔄 Dynamic variables requested:", variables);
 
         return jsonResponse({ dynamic_variables: variables });
       } catch (error) {
