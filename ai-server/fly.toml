@@ -1,9 +1,8 @@
-app = "version-2" 
+app = "version-2"
 primary_region = "ash"
 
 [build]
-dockerfile = "Dockerfile"
-
+  dockerfile = "Dockerfile"
 
 [http_service]
   internal_port = 8080
@@ -15,6 +14,5 @@ dockerfile = "Dockerfile"
 
 [env]
   NODE_ENV = "production"
-  NEXTAUTH_SECRET = "9ltM0oxaXJd0Few3sJYXW2IA6FtPtyCUMy3Q0bEZmDM="
 
 # trigger deploy
