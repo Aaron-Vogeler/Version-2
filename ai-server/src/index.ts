@@ -1,6 +1,6 @@
 import express from "express";
 import { createServer } from "http";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { LiveTranscriptionEvents } from "@deepgram/sdk";
 import axios from "axios";
 import config from "./config";
@@ -10,10 +10,189 @@ import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext } from "./pipeline/llm";
 import { synthesizeSpeech } from "./pipeline/tts";
 
+// Constants
+const TTS_DEBOUNCE_MS = 2000; // 2 seconds of silence before responding
+
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
 const deepgram = createDeepgramClient();
+
+// -----------------------------------------------------------------------------
+// HELPER FUNCTIONS
+// -----------------------------------------------------------------------------
+
+/**
+ * Queue a user transcript fragment for potential LLM + TTS processing.
+ * Resets the debounce timer on each transcript update.
+ */
+function queueUserTranscript(
+  callContext: CallContext,
+  transcript: string,
+  ws: WebSocket
+): void {
+  // Update the transcript and timestamp
+  callContext.lastUserTranscript = transcript;
+  callContext.lastTranscriptAt = Date.now();
+
+  // Clear any existing debounce timer
+  if (callContext.ttsDebounceTimer) {
+    clearTimeout(callContext.ttsDebounceTimer);
+  }
+
+  // Schedule a new TTS response timer
+  callContext.ttsDebounceTimer = setTimeout(() => {
+    scheduleTtsResponse(callContext, ws);
+  }, TTS_DEBOUNCE_MS);
+}
+
+/**
+ * Check if the call is still active and ready for TTS.
+ */
+function canSpeak(callContext: CallContext, ws: WebSocket): boolean {
+  return callContext.isCallActive === true && ws.readyState === WebSocket.OPEN;
+}
+
+/**
+ * When the debounce timer fires, process the accumulated transcript.
+ */
+async function scheduleTtsResponse(
+  callContext: CallContext,
+  ws: WebSocket
+): Promise<void> {
+  try {
+    // Guard: Check if we can still speak
+    if (!canSpeak(callContext, ws)) {
+      console.log("⚠️ Call ended or WebSocket closed, skipping TTS response");
+      return;
+    }
+
+    const userText = callContext.lastUserTranscript?.trim() || "";
+    if (!userText) {
+      console.log("⚠️ No transcript to process");
+      return;
+    }
+
+    console.log("🎯 Processing accumulated transcript:", userText);
+
+    // Send to LLM
+    let aiText: string;
+    try {
+      aiText = await generateAssistantReply(userText, callContext);
+    } catch (groqError) {
+      console.error(
+        "❌ Groq API error:",
+        groqError instanceof Error ? groqError.message : groqError
+      );
+      if (canSpeak(callContext, ws)) {
+        ws.send(
+          JSON.stringify({
+            event: "error",
+            payload: { message: "Failed to process request with AI model" },
+          })
+        );
+      }
+      return;
+    }
+
+    if (!aiText) {
+      console.warn("⚠️ Groq returned empty response");
+      if (canSpeak(callContext, ws)) {
+        ws.send(
+          JSON.stringify({
+            event: "error",
+            payload: { message: "AI model returned empty response" },
+          })
+        );
+      }
+      return;
+    }
+
+    console.log("🤖 AI:", aiText);
+
+    // Send to TTS only if we can still speak
+    await sendTtsResponse(callContext, ws, aiText);
+
+    // Clear transcript after processing
+    callContext.lastUserTranscript = "";
+  } catch (error) {
+    console.error(
+      "❌ Unexpected error in TTS response handler:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/**
+ * Send the AI response as speech via OpenAI TTS.
+ */
+async function sendTtsResponse(
+  callContext: CallContext,
+  ws: WebSocket,
+  aiText: string
+): Promise<void> {
+  // Double-check we can still speak before calling TTS API
+  if (!canSpeak(callContext, ws)) {
+    console.log("⚠️ Call ended or WebSocket closed, skipping TTS API call");
+    return;
+  }
+
+  console.log("🔊 Converting to speech with OpenAI TTS...");
+  let audioBuffer24k: Buffer;
+  try {
+    audioBuffer24k = await synthesizeSpeech(aiText);
+    console.log("🔊 Synthesized audio");
+  } catch (ttsError) {
+    console.error(
+      "❌ OpenAI error:",
+      ttsError instanceof Error ? ttsError.message : ttsError
+    );
+    if (canSpeak(callContext, ws)) {
+      ws.send(
+        JSON.stringify({
+          event: "error",
+          payload: { message: "TTS synthesis failed" },
+        })
+      );
+    }
+    return;
+  }
+
+  // Downsample from 24kHz to 8kHz to match Telnyx native format
+  const audioBuffer8k = downsample24kHzTo8kHz(audioBuffer24k);
+  console.log("📉 Downsampled to 8kHz, size:", audioBuffer8k.length, "bytes");
+
+  // Send to Telnyx
+  if (canSpeak(callContext, ws)) {
+    ws.send(
+      JSON.stringify({
+        event: "playback",
+        payload: {
+          type: "media",
+          payload: audioBuffer8k.toString("base64"),
+          encoding: "pcm",
+          sample_rate: 8000,
+        },
+      })
+    );
+    console.log("🔊 Audio sent to Telnyx");
+  } else {
+    console.log("⚠️ WebSocket not open, cannot send audio");
+  }
+}
+
+/**
+ * Cleanup call state (clear timers, mark as inactive).
+ */
+function cleanupCallState(callContext: CallContext): void {
+  console.log("🧹 Cleaning up call state");
+  callContext.isCallActive = false;
+  if (callContext.ttsDebounceTimer) {
+    clearTimeout(callContext.ttsDebounceTimer);
+    callContext.ttsDebounceTimer = undefined;
+  }
+  callContext.lastUserTranscript = "";
+}
 
 // -----------------------------------------------------------------------------
 // APP + SERVER
@@ -63,6 +242,10 @@ app.post("/webhooks/telnyx", async (req, res) => {
         console.error("❌ Failed to start streaming:", error instanceof Error ? error.message : error);
       }
     }
+  } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
+    console.log("📞 Call ended:", eventType);
+    // Note: We don't have access to callContext here, but we mark the call
+    // as inactive via the WebSocket close event. Cleanup happens there.
   }
 
   res.send("ok");
@@ -88,7 +271,7 @@ wss.on("connection", async (ws) => {
 
   console.log("🎧 Deepgram stream started");
 
-  // Relay Deepgram transcript → Groq → Telnyx
+  // Relay Deepgram transcript → Groq → Telnyx (with 2-second silence debounce)
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
@@ -102,81 +285,20 @@ wss.on("connection", async (ws) => {
 
       console.log("🗣️ User:", userText);
 
-      // -------------------------
-      // Ask Groq LLM
-      // -------------------------
-      let aiText: string;
-      try {
-        aiText = await generateAssistantReply(userText, callContext);
-      } catch (groqError) {
-        console.error("❌ Groq API error:", groqError instanceof Error ? groqError.message : groqError);
-        ws.send(
-          JSON.stringify({
-            event: "error",
-            payload: { message: "Failed to process request with AI model" },
-          })
-        );
+      // Guard: Only queue if we have a valid call context and the call is active
+      if (!callContext) {
+        console.log("⚠️ No call context yet, skipping transcript");
         return;
       }
 
-      if (!aiText) {
-        console.warn("⚠️ Groq returned empty response");
-        ws.send(
-          JSON.stringify({
-            event: "error",
-            payload: { message: "AI model returned empty response" },
-          })
-        );
-        return;
-      }
-
-      console.log("🤖 AI:", aiText);
-
-      // -------------------------
-      // Convert text to speech using OpenAI TTS
-      // -------------------------
-      console.log("🔊 Converting to speech with OpenAI TTS...");
-      let audioBuffer24k: Buffer;
-      try {
-        audioBuffer24k = await synthesizeSpeech(aiText);
-        console.log("🔊 Synthesized audio");
-      } catch (ttsError) {
-        console.error("❌ OpenAI error:", ttsError instanceof Error ? ttsError.message : ttsError);
-        ws.send(
-          JSON.stringify({
-            event: "error",
-            payload: { message: "TTS synthesis failed" },
-          })
-        );
-        return;
-      }
-
-      // Downsample from 24kHz to 8kHz to match Telnyx native format
-      const audioBuffer8k = downsample24kHzTo8kHz(audioBuffer24k);
-      console.log("📉 Downsampled to 8kHz, size:", audioBuffer8k.length, "bytes");
-
-      // -------------------------
-      // Send synthesized speech → Telnyx
-      // -------------------------
-      if (ws.readyState === ws.OPEN) {
-        ws.send(
-          JSON.stringify({
-            event: "playback",
-            payload: {
-              type: "media",
-              payload: audioBuffer8k.toString("base64"),
-              encoding: "pcm",
-              sample_rate: 8000, // Downsampled to 8kHz to match Telnyx format
-            },
-          })
-        );
-        console.log("🔊 Audio sent to Telnyx");
-      } else {
-        console.warn("⚠️ WebSocket not open, cannot send audio");
-      }
+      // Queue the transcript with debounce
+      queueUserTranscript(callContext, userText, ws);
     } catch (error) {
-      console.error("❌ Unexpected error in transcript handler:", error instanceof Error ? error.message : error);
-      if (ws.readyState === ws.OPEN) {
+      console.error(
+        "❌ Unexpected error in transcript handler:",
+        error instanceof Error ? error.message : error
+      );
+      if (ws.readyState === WebSocket.OPEN && callContext) {
         ws.send(
           JSON.stringify({
             event: "error",
@@ -222,6 +344,9 @@ wss.on("connection", async (ws) => {
             goal: decoded.goal,
             userId: decoded.userId,
             initiatedAt: decoded.initiatedAt,
+            isCallActive: true, // Mark call as active
+            lastUserTranscript: "",
+            lastTranscriptAt: 0,
           };
 
           console.log("📋 Call context initialized:", callContext);
@@ -237,6 +362,9 @@ wss.on("connection", async (ws) => {
         dgLive.send(audio.buffer);
       } else if (msg.event === "stop") {
         console.log("🛑 Telnyx media stream stopped");
+        if (callContext) {
+          cleanupCallState(callContext);
+        }
       }
     } catch (error) {
       console.error("❌ Error processing WebSocket message:", error instanceof Error ? error.message : error);
@@ -245,6 +373,9 @@ wss.on("connection", async (ws) => {
 
   ws.on("close", () => {
     console.log("🔌 Client disconnected");
+    if (callContext) {
+      cleanupCallState(callContext);
+    }
     dgLive.finish();
   });
 });

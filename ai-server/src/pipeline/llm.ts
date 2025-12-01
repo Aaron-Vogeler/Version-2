@@ -16,6 +16,11 @@ export interface CallContext {
   callControlId?: string;
   streamId?: string;
   initiatedAt?: string;
+  // Debounce and call state tracking
+  lastUserTranscript?: string;
+  lastTranscriptAt?: number;
+  ttsDebounceTimer?: NodeJS.Timeout;
+  isCallActive?: boolean;
 }
 
 /**
