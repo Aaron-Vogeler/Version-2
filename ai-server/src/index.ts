@@ -14,9 +14,11 @@ const PORT = process.env.PORT || 8080;
 
 const DG_API_KEY = process.env.DEEPGRAM_API_KEY;
 const GROQ_KEY = process.env.GROQ_API_KEY;
+const OPENAI_KEY = process.env.OPENAI_API_KEY;
 
 if (!DG_API_KEY) throw new Error("Missing DEEPGRAM_API_KEY");
 if (!GROQ_KEY) throw new Error("Missing GROQ_API_KEY");
+if (!OPENAI_KEY) throw new Error("Missing OPENAI_API_KEY");
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -26,6 +28,10 @@ const deepgram = new Deepgram(DG_API_KEY);
 const groq = new OpenAI({
   apiKey: GROQ_KEY,
   baseURL: "https://api.groq.com/openai/v1",
+});
+
+const openai = new OpenAI({
+  apiKey: OPENAI_KEY,
 });
 
 // -----------------------------------------------------------------------------
@@ -90,15 +96,31 @@ wss.on("connection", async (ws) => {
     console.log("🤖 Groq:", aiText);
 
     // -------------------------
+    // Convert text to speech using OpenAI TTS
+    // -------------------------
+    console.log("🔊 Converting to speech with OpenAI TTS...");
+    const audioResponse = await openai.audio.speech.create({
+      model: "tts-1",
+      voice: "alloy",
+      input: aiText,
+      response_format: "pcm",
+    });
+
+    // Convert the response stream to a buffer
+    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+    console.log("✅ TTS complete, audio buffer size:", audioBuffer.length, "bytes");
+
+    // -------------------------
     // Send synthesized speech → Telnyx
     // -------------------------
     ws.send(
       JSON.stringify({
         event: "playback",
         payload: {
-          type: "text",
-          text: aiText,
-          voice: "alloy",
+          type: "media",
+          payload: audioBuffer.toString("base64"),
+          encoding: "pcm",
+          sample_rate: 24000, // OpenAI TTS returns 24000 Hz PCM
         },
       })
     );
