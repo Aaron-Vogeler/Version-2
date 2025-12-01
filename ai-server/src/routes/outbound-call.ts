@@ -43,7 +43,7 @@ router.post("/", async (req: Request, res: Response) => {
     const telnyxResponse = await axios.post<TelnyxCallResponse>(
       "https://api.telnyx.com/v2/calls",
       {
-        connection_id: process.env.TELNYX_CONNECTION_ID,
+        connection_id: process.env.TELNYX_SIP_CONNECTION_ID,
         to: toNumber,
         from: fromNumber,
         client_state: clientStateBase64,
