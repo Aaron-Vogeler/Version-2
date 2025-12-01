@@ -2,6 +2,8 @@
  * Audio pipeline utilities for processing PCM audio streams
  */
 
+import { encode as encodeMulaw } from 'mu-law';
+
 /**
  * Downsamples 24kHz PCM audio to 8kHz for Telnyx compatibility.
  *
@@ -24,4 +26,25 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   }
 
   return Buffer.from(downsampledSamples.buffer);
+}
+
+/**
+ * Converts 16-bit linear PCM audio to 8-bit mulaw format.
+ *
+ * Telnyx uses PCMU (mulaw) codec for voice calls. This converts the 16-bit
+ * linear PCM audio (from OpenAI TTS) to 8-bit mulaw format that Telnyx expects.
+ *
+ * @param pcmBuffer - 16-bit linear PCM audio buffer
+ * @returns 8-bit mulaw audio buffer
+ */
+export function pcmToMulaw(pcmBuffer: Buffer): Buffer {
+  const samples = new Int16Array(
+    pcmBuffer.buffer,
+    pcmBuffer.byteOffset,
+    pcmBuffer.byteLength / 2
+  );
+
+  // Encode Int16Array to mulaw
+  const mulawBuffer = Buffer.from(encodeMulaw(samples));
+  return mulawBuffer;
 }

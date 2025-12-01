@@ -5,7 +5,7 @@ import { LiveTranscriptionEvents } from "@deepgram/sdk";
 import axios from "axios";
 import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
-import { downsample24kHzTo8kHz } from "./pipeline/audio";
+import { downsample24kHzTo8kHz, pcmToMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext } from "./pipeline/llm";
 import { synthesizeSpeech } from "./pipeline/tts";
@@ -162,6 +162,10 @@ async function sendTtsResponse(
   const audioBuffer8k = downsample24kHzTo8kHz(audioBuffer24k);
   console.log("📉 Downsampled to 8kHz, size:", audioBuffer8k.length, "bytes");
 
+  // Convert from 16-bit linear PCM to 8-bit mulaw (PCMU) for Telnyx
+  const mulawBuffer = pcmToMulaw(audioBuffer8k);
+  console.log("🔄 Converted to mulaw, size:", mulawBuffer.length, "bytes");
+
   // Send to Telnyx
   if (canSpeak(callContext, ws)) {
     ws.send(
@@ -169,8 +173,8 @@ async function sendTtsResponse(
         event: "playback",
         payload: {
           type: "media",
-          payload: audioBuffer8k.toString("base64"),
-          encoding: "pcm",
+          payload: mulawBuffer.toString("base64"),
+          encoding: "mulaw",
           sample_rate: 8000,
         },
       })
