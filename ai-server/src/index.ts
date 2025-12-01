@@ -8,16 +8,12 @@ import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
+import { generateAssistantReply } from "./pipeline/llm";
 
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
 const deepgram = createDeepgramClient();
-
-const groq = new OpenAI({
-  apiKey: config.groq.apiKey,
-  baseURL: "https://api.groq.com/openai/v1",
-});
 
 const openai = new OpenAI({
   apiKey: config.openai.apiKey,
@@ -101,15 +97,9 @@ wss.on("connection", async (ws) => {
       // -------------------------
       // Ask Groq LLM
       // -------------------------
-      let groqResp;
+      let aiText: string;
       try {
-        groqResp = await groq.chat.completions.create({
-          model: config.groq.model,
-          messages: [
-            { role: "system", content: config.llm.systemPrompt },
-            { role: "user", content: userText },
-          ],
-        });
+        aiText = await generateAssistantReply(userText);
       } catch (groqError) {
         console.error("❌ Groq API error:", groqError instanceof Error ? groqError.message : groqError);
         ws.send(
@@ -121,7 +111,6 @@ wss.on("connection", async (ws) => {
         return;
       }
 
-      const aiText = groqResp.choices[0]?.message?.content;
       if (!aiText) {
         console.warn("⚠️ Groq returned empty response");
         ws.send(
@@ -133,7 +122,7 @@ wss.on("connection", async (ws) => {
         return;
       }
 
-      console.log("🤖 Groq:", aiText);
+      console.log("🤖 AI:", aiText);
 
       // -------------------------
       // Convert text to speech using OpenAI TTS
