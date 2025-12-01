@@ -40,7 +40,10 @@ app.post("/webhooks/telnyx", async (req, res) => {
       "📦 Telnyx call.answered payload:",
       JSON.stringify(req.body, null, 2)
     );
-    const callControlId = req.body?.data?.call_control_id;
+    const callControlId = req.body?.data?.payload?.call_control_id;
+    if (!callControlId) {
+      console.warn("⚠️ call.answered webhook missing payload.call_control_id");
+    }
     if (callControlId) {
       try {
         await axios.post(
