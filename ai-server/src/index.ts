@@ -65,7 +65,7 @@ wss.on("connection", async (ws) => {
     encoding: "mulaw",
     sample_rate: 8000,
     channels: 1,
-    endpointing: true,
+    endpointing: 100,
   });
 
   console.log("🎧 Deepgram stream started");
@@ -145,7 +145,7 @@ wss.on("connection", async (ws) => {
     // Telnyx media packets → Deepgram
     if (msg.event === "media" && msg.media?.payload) {
       const audio = Buffer.from(msg.media.payload, "base64");
-      dgLive.send(audio);
+      dgLive.send(new Uint8Array(audio).buffer);
     }
 
     if (msg.event === "start") {
