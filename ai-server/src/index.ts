@@ -6,6 +6,20 @@ import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 import OpenAI from "openai";
 import outboundCallRouter from "./routes/outbound-call";
 
+// Audio utility: downsample 24kHz PCM to 8kHz for Telnyx compatibility
+function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
+  // OpenAI TTS returns 24kHz PCM (16-bit signed)
+  // Telnyx expects 8kHz, so we downsample by taking every 3rd sample
+  const samples = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, pcmBuffer.byteLength / 2);
+  const downsampledSamples = new Int16Array(Math.floor(samples.length / 3));
+
+  for (let i = 0; i < downsampledSamples.length; i++) {
+    downsampledSamples[i] = samples[i * 3];
+  }
+
+  return Buffer.from(downsampledSamples.buffer);
+}
+
 dotenv.config();
 
 // -----------------------------------------------------------------------------
@@ -76,63 +90,114 @@ wss.on("connection", async (ws) => {
 
   // Relay Deepgram transcript → Groq → Telnyx
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
-    const results = dgEvent.channel?.alternatives?.[0];
+    try {
+      const results = dgEvent.channel?.alternatives?.[0];
 
-    if (!results || !results.transcript) return;
+      if (!results || !results.transcript) return;
 
-    const userText = results.transcript.trim();
-    if (!userText) return;
+      const userText = results.transcript.trim();
+      if (!userText) return;
 
-    console.log("🗣️ User:", userText);
+      console.log("🗣️ User:", userText);
 
-    // -------------------------
-    // Ask Groq LLM
-    // -------------------------
-    const groqResp = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        { role: "system", content: "You are a helpful voice assistant." },
-        { role: "user", content: userText },
-      ],
-    });
+      // -------------------------
+      // Ask Groq LLM
+      // -------------------------
+      let groqResp;
+      try {
+        groqResp = await groq.chat.completions.create({
+          model: "llama-3.1-8b-instant",
+          messages: [
+            { role: "system", content: "You are a helpful voice assistant." },
+            { role: "user", content: userText },
+          ],
+        });
+      } catch (groqError) {
+        console.error("❌ Groq API error:", groqError instanceof Error ? groqError.message : groqError);
+        ws.send(
+          JSON.stringify({
+            event: "error",
+            payload: { message: "Failed to process request with AI model" },
+          })
+        );
+        return;
+      }
 
-    const aiText = groqResp.choices[0].message.content;
-    if (!aiText) {
-      console.warn("⚠️ Groq returned empty response");
-      return;
+      const aiText = groqResp.choices[0]?.message?.content;
+      if (!aiText) {
+        console.warn("⚠️ Groq returned empty response");
+        ws.send(
+          JSON.stringify({
+            event: "error",
+            payload: { message: "AI model returned empty response" },
+          })
+        );
+        return;
+      }
+
+      console.log("🤖 Groq:", aiText);
+
+      // -------------------------
+      // Convert text to speech using OpenAI TTS
+      // -------------------------
+      console.log("🔊 Converting to speech with OpenAI TTS...");
+      let audioResponse;
+      try {
+        audioResponse = await openai.audio.speech.create({
+          model: "tts-1",
+          voice: "alloy",
+          input: aiText,
+          response_format: "pcm",
+        });
+      } catch (ttsError) {
+        console.error("❌ OpenAI TTS error:", ttsError instanceof Error ? ttsError.message : ttsError);
+        ws.send(
+          JSON.stringify({
+            event: "error",
+            payload: { message: "Failed to generate speech audio" },
+          })
+        );
+        return;
+      }
+
+      // Convert the response stream to a buffer
+      const audioBuffer24k = Buffer.from(await audioResponse.arrayBuffer());
+      console.log("✅ TTS complete, 24kHz audio buffer size:", audioBuffer24k.length, "bytes");
+
+      // Downsample from 24kHz to 8kHz to match Telnyx native format
+      const audioBuffer8k = downsample24kHzTo8kHz(audioBuffer24k);
+      console.log("📉 Downsampled to 8kHz, size:", audioBuffer8k.length, "bytes");
+
+      // -------------------------
+      // Send synthesized speech → Telnyx
+      // -------------------------
+      if (ws.readyState === ws.OPEN) {
+        ws.send(
+          JSON.stringify({
+            event: "playback",
+            payload: {
+              type: "media",
+              payload: audioBuffer8k.toString("base64"),
+              encoding: "pcm",
+              sample_rate: 8000, // Downsampled to 8kHz to match Telnyx format
+            },
+          })
+        );
+        console.log("🔊 Audio sent to Telnyx");
+      } else {
+        console.warn("⚠️ WebSocket not open, cannot send audio");
+      }
+    } catch (error) {
+      console.error("❌ Unexpected error in transcript handler:", error instanceof Error ? error.message : error);
+      if (ws.readyState === ws.OPEN) {
+        ws.send(
+          JSON.stringify({
+            event: "error",
+            payload: { message: "Unexpected error processing transcript" },
+          })
+        );
+      }
     }
-
-    console.log("🤖 Groq:", aiText);
-
-    // -------------------------
-    // Convert text to speech using OpenAI TTS
-    // -------------------------
-    console.log("🔊 Converting to speech with OpenAI TTS...");
-    const audioResponse = await openai.audio.speech.create({
-      model: "tts-1",
-      voice: "alloy",
-      input: aiText,
-      response_format: "pcm",
-    });
-
-    // Convert the response stream to a buffer
-    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
-    console.log("✅ TTS complete, audio buffer size:", audioBuffer.length, "bytes");
-
-    // -------------------------
-    // Send synthesized speech → Telnyx
-    // -------------------------
-    ws.send(
-      JSON.stringify({
-        event: "playback",
-        payload: {
-          type: "media",
-          payload: audioBuffer.toString("base64"),
-          encoding: "pcm",
-          sample_rate: 24000, // OpenAI TTS returns 24000 Hz PCM
-        },
-      })
-    );
   });
 
   //-----------------------------
@@ -142,18 +207,23 @@ wss.on("connection", async (ws) => {
     let msg: any;
     try {
       msg = JSON.parse(raw.toString());
-    } catch {
+    } catch (parseError) {
+      console.warn("⚠️ Failed to parse WebSocket message:", parseError instanceof Error ? parseError.message : parseError);
       return;
     }
 
-    // Telnyx media packets → Deepgram
-    if (msg.event === "media" && msg.media?.payload) {
-      const audio = Buffer.from(msg.media.payload, "base64");
-      dgLive.send(new Uint8Array(audio).buffer);
-    }
-
-    if (msg.event === "start") {
-      console.log("🎙️ Telnyx media stream started");
+    try {
+      // Telnyx media packets → Deepgram
+      if (msg.event === "media" && msg.media?.payload) {
+        const audio = Buffer.from(msg.media.payload, "base64");
+        dgLive.send(audio.buffer);
+      } else if (msg.event === "start") {
+        console.log("🎙️ Telnyx media stream started");
+      } else if (msg.event === "stop") {
+        console.log("🛑 Telnyx media stream stopped");
+      }
+    } catch (error) {
+      console.error("❌ Error processing WebSocket message:", error instanceof Error ? error.message : error);
     }
   });
 
