@@ -2,22 +2,18 @@ import express from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import { LiveTranscriptionEvents } from "@deepgram/sdk";
-import OpenAI from "openai";
 import axios from "axios";
 import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply } from "./pipeline/llm";
+import { synthesizeSpeech } from "./pipeline/tts";
 
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
 const deepgram = createDeepgramClient();
-
-const openai = new OpenAI({
-  apiKey: config.openai.apiKey,
-});
 
 // -----------------------------------------------------------------------------
 // APP + SERVER
@@ -128,28 +124,20 @@ wss.on("connection", async (ws) => {
       // Convert text to speech using OpenAI TTS
       // -------------------------
       console.log("🔊 Converting to speech with OpenAI TTS...");
-      let audioResponse;
+      let audioBuffer24k: Buffer;
       try {
-        audioResponse = await openai.audio.speech.create({
-          model: config.openai.ttsModel,
-          voice: config.openai.ttsVoice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer",
-          input: aiText,
-          response_format: "pcm",
-        });
+        audioBuffer24k = await synthesizeSpeech(aiText);
+        console.log("🔊 Synthesized audio");
       } catch (ttsError) {
-        console.error("❌ OpenAI TTS error:", ttsError instanceof Error ? ttsError.message : ttsError);
+        console.error("❌ OpenAI error:", ttsError instanceof Error ? ttsError.message : ttsError);
         ws.send(
           JSON.stringify({
             event: "error",
-            payload: { message: "Failed to generate speech audio" },
+            payload: { message: "TTS synthesis failed" },
           })
         );
         return;
       }
-
-      // Convert the response stream to a buffer
-      const audioBuffer24k = Buffer.from(await audioResponse.arrayBuffer());
-      console.log("✅ TTS complete, 24kHz audio buffer size:", audioBuffer24k.length, "bytes");
 
       // Downsample from 24kHz to 8kHz to match Telnyx native format
       const audioBuffer8k = downsample24kHzTo8kHz(audioBuffer24k);
