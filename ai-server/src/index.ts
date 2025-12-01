@@ -6,20 +6,7 @@ import OpenAI from "openai";
 import axios from "axios";
 import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
-
-// Audio utility: downsample 24kHz PCM to 8kHz for Telnyx compatibility
-function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
-  // OpenAI TTS returns 24kHz PCM (16-bit signed)
-  // Telnyx expects 8kHz, so we downsample by taking every 3rd sample
-  const samples = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, pcmBuffer.byteLength / 2);
-  const downsampledSamples = new Int16Array(Math.floor(samples.length / 3));
-
-  for (let i = 0; i < downsampledSamples.length; i++) {
-    downsampledSamples[i] = samples[i * 3];
-  }
-
-  return Buffer.from(downsampledSamples.buffer);
-}
+import { downsample24kHzTo8kHz } from "./pipeline/audio";
 
 // -----------------------------------------------------------------------------
 // CLIENTS
