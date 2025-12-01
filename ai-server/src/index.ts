@@ -285,9 +285,9 @@ wss.on("connection", async (ws) => {
 
       console.log("🗣️ User:", userText);
 
-      // Guard: Only queue if we have a valid call context and the call is active
-      if (!callContext) {
-        console.log("⚠️ No call context yet, skipping transcript");
+      // Guard: Only queue if we have a valid call context and the call is still active
+      if (!callContext || !callContext.isCallActive) {
+        console.log("⚠️ Call not active or no context, skipping transcript");
         return;
       }
 
