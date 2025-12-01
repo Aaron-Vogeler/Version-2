@@ -4,6 +4,7 @@ import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
 import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 import OpenAI from "openai";
+import outboundCallRouter from "./routes/outbound-call";
 
 dotenv.config();
 
@@ -45,6 +46,9 @@ app.use(express.json());
 
 // HEALTH CHECK
 app.get("/health", (_, res) => res.status(200).send("Alive"));
+
+// OUTBOUND CALL ENDPOINT
+app.use("/api/outbound-call", outboundCallRouter);
 
 // TELNYX WEBHOOKS (Call start/stop)
 app.post("/webhooks/telnyx", (req, res) => {
