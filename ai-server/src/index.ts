@@ -7,7 +7,7 @@ import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
-import { generateAssistantReply } from "./pipeline/llm";
+import { generateAssistantReply, type CallContext } from "./pipeline/llm";
 import { synthesizeSpeech } from "./pipeline/tts";
 
 // -----------------------------------------------------------------------------
@@ -67,6 +67,9 @@ app.post("/webhooks/telnyx", async (req, res) => {
 wss.on("connection", async (ws) => {
   console.log("🔌 Telnyx WebSocket Connected");
 
+  // Initialize call context (populated when "start" message arrives)
+  let callContext: CallContext | undefined;
+
   // Create a Deepgram live stream
   const dgLive = await deepgram.listen.live({
     model: config.deepgram.model,
@@ -95,7 +98,7 @@ wss.on("connection", async (ws) => {
       // -------------------------
       let aiText: string;
       try {
-        aiText = await generateAssistantReply(userText);
+        aiText = await generateAssistantReply(userText, callContext);
       } catch (groqError) {
         console.error("❌ Groq API error:", groqError instanceof Error ? groqError.message : groqError);
         ws.send(
@@ -188,12 +191,40 @@ wss.on("connection", async (ws) => {
     }
 
     try {
+      // Capture Telnyx client_state when call starts
+      if (msg.event === "start") {
+        console.log("🎬 Call started");
+
+        try {
+          const start = msg.start || {};
+          const clientStateBase64 = start.client_state;
+          const callControlId = start.call_control_id;
+          const streamId = msg.stream_id;
+
+          let decoded: any = {};
+          if (typeof clientStateBase64 === "string" && clientStateBase64.length > 0) {
+            const json = Buffer.from(clientStateBase64, "base64").toString("utf8");
+            decoded = JSON.parse(json);
+          }
+
+          callContext = {
+            callControlId,
+            streamId,
+            goal: decoded.goal,
+            userId: decoded.userId,
+            initiatedAt: decoded.initiatedAt,
+          };
+
+          console.log("📋 Call context initialized:", callContext);
+        } catch (err) {
+          console.error("❌ Failed to decode Telnyx client_state:", err instanceof Error ? err.message : err);
+          // Do NOT throw; just continue without context
+        }
+      }
       // Telnyx media packets → Deepgram
-      if (msg.event === "media" && msg.media?.payload) {
+      else if (msg.event === "media" && msg.media?.payload) {
         const audio = Buffer.from(msg.media.payload, "base64");
         dgLive.send(audio.buffer);
-      } else if (msg.event === "start") {
-        console.log("🎙️ Telnyx media stream started");
       } else if (msg.event === "stop") {
         console.log("🛑 Telnyx media stream stopped");
       }
