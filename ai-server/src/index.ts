@@ -1,17 +1,18 @@
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
-import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
+import { LiveTranscriptionEvents } from "@deepgram/sdk";
 import OpenAI from "openai";
 import axios from "axios";
 import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz } from "./pipeline/audio";
+import { createDeepgramClient } from "./pipeline/stt";
 
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
-const deepgram = createClient(config.deepgram.apiKey);
+const deepgram = createDeepgramClient();
 
 const groq = new OpenAI({
   apiKey: config.groq.apiKey,
