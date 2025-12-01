@@ -1,5 +1,5 @@
 /**
- * Secure API proxy for delegating calls to Cloudflare Worker
+ * Secure API proxy for delegating calls to Fly.io AI server
  * Requires authentication via NextAuth
  */
 
@@ -38,34 +38,36 @@ export default async function handler(
       return res.status(401).json({ error: 'User ID not found in session' });
     }
 
-    // Forward request to Cloudflare Worker
-    const workerUrl = 'https://telnyx-webhook.aaronmvogeler.workers.dev/start-call';
+    // Forward request to Fly.io AI server
+    const flyUrl = 'https://version-2-cr4fsa.fly.dev/api/outbound-call';
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
 
-    // Optional: Add worker authentication token if configured
-    if (process.env.WORKER_TOKEN) {
-      headers['Authorization'] = `Bearer ${process.env.WORKER_TOKEN}`;
-    }
-
-    const workerResponse = await fetch(workerUrl, {
+    const flyResponse = await fetch(flyUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         goal,
-        to_number,
-        // IMPORTANT: Send the authenticated user's ID to the Worker
-        user_id: userId,
+        toNumber: to_number,
+        userId,
       }),
     });
 
     // Get response body
-    const responseData = await workerResponse.json().catch(() => ({}));
+    const responseData = await flyResponse.json().catch(() => ({}));
 
-    // Return worker response with same status code
-    return res.status(workerResponse.status).json(responseData);
+    // If Fly.io returns an error, forward that status + message
+    if (!flyResponse.ok) {
+      return res.status(flyResponse.status).json(responseData);
+    }
+
+    // If successful, return status ok with fly response
+    return res.status(200).json({
+      status: 'ok',
+      flyResponse: responseData,
+    });
   } catch (error: any) {
     console.error('Delegate API error:', error);
     return res.status(500).json({
