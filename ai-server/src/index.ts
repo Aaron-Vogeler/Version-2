@@ -60,7 +60,7 @@ wss.on("connection", async (ws) => {
   console.log("🔌 Telnyx WebSocket Connected");
 
   // Create a Deepgram live stream
-  const dgLive = await deepgram.transcription.live({
+  const dgLive = await deepgram.listen.live({
     model: "nova-2",
     encoding: "mulaw",
     sample_rate: 8000,
@@ -71,7 +71,7 @@ wss.on("connection", async (ws) => {
   console.log("🎧 Deepgram stream started");
 
   // Relay Deepgram transcript → Groq → Telnyx
-  dgLive.on("transcriptReceived", async (dgEvent) => {
+  dgLive.on("transcriptReceived", async (dgEvent: any) => {
     const results = dgEvent.channel?.alternatives?.[0];
 
     if (!results || !results.transcript) return;
@@ -93,6 +93,11 @@ wss.on("connection", async (ws) => {
     });
 
     const aiText = groqResp.choices[0].message.content;
+    if (!aiText) {
+      console.warn("⚠️ Groq returned empty response");
+      return;
+    }
+
     console.log("🤖 Groq:", aiText);
 
     // -------------------------
