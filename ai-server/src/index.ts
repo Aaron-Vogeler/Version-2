@@ -93,6 +93,8 @@ wss.on("connection", async (ws) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
 
+      console.log("📝 Deepgram raw transcript:", results?.transcript);
+
       if (!results || !results.transcript) return;
 
       const userText = results.transcript.trim();
@@ -231,6 +233,7 @@ wss.on("connection", async (ws) => {
       // Telnyx media packets → Deepgram
       else if (msg.event === "media" && msg.media?.payload) {
         const audio = Buffer.from(msg.media.payload, "base64");
+        console.log("🎙️ Received Telnyx media packet, bytes:", audio.length);
         dgLive.send(audio.buffer);
       } else if (msg.event === "stop") {
         console.log("🛑 Telnyx media stream stopped");
