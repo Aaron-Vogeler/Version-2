@@ -388,7 +388,7 @@ wss.on("connection", async (ws) => {
         if (process.env.LOG_AUDIO_PACKETS === "true") {
           console.log("🎙️ Received Telnyx media packet, bytes:", audio.length);
         }
-        dgLive.send(audio.buffer);
+        dgLive.send(audio);
       } else if (msg.event === "stop") {
         console.log("🛑 Telnyx media stream stopped");
         if (callContext) {
