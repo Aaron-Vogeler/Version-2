@@ -2,7 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
-import { Deepgram } from "@deepgram/sdk";
+import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 import OpenAI from "openai";
 
 dotenv.config();
@@ -23,7 +23,7 @@ if (!OPENAI_KEY) throw new Error("Missing OPENAI_API_KEY");
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
-const deepgram = new Deepgram(DG_API_KEY);
+const deepgram = createClient(DG_API_KEY);
 
 const groq = new OpenAI({
   apiKey: GROQ_KEY,
@@ -71,7 +71,7 @@ wss.on("connection", async (ws) => {
   console.log("🎧 Deepgram stream started");
 
   // Relay Deepgram transcript → Groq → Telnyx
-  dgLive.on("transcriptReceived", async (dgEvent: any) => {
+  dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     const results = dgEvent.channel?.alternatives?.[0];
 
     if (!results || !results.transcript) return;
