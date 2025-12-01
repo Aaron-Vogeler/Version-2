@@ -1,10 +1,10 @@
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
-import dotenv from "dotenv";
 import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 import OpenAI from "openai";
 import axios from "axios";
+import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 
 // Audio utility: downsample 24kHz PCM to 8kHz for Telnyx compatibility
@@ -21,35 +21,18 @@ function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   return Buffer.from(downsampledSamples.buffer);
 }
 
-dotenv.config();
-
-// -----------------------------------------------------------------------------
-// ENV
-// -----------------------------------------------------------------------------
-const PORT = process.env.PORT || 8080;
-
-const DG_API_KEY = process.env.DEEPGRAM_API_KEY;
-const GROQ_KEY = process.env.GROQ_API_KEY;
-const OPENAI_KEY = process.env.OPENAI_API_KEY;
-const TELNYX_API_KEY = process.env.TELNYX_API_KEY;
-
-if (!DG_API_KEY) throw new Error("Missing DEEPGRAM_API_KEY");
-if (!GROQ_KEY) throw new Error("Missing GROQ_API_KEY");
-if (!OPENAI_KEY) throw new Error("Missing OPENAI_API_KEY");
-if (!TELNYX_API_KEY) throw new Error("Missing TELNYX_API_KEY");
-
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
-const deepgram = createClient(DG_API_KEY);
+const deepgram = createClient(config.deepgram.apiKey);
 
 const groq = new OpenAI({
-  apiKey: GROQ_KEY,
+  apiKey: config.groq.apiKey,
   baseURL: "https://api.groq.com/openai/v1",
 });
 
 const openai = new OpenAI({
-  apiKey: OPENAI_KEY,
+  apiKey: config.openai.apiKey,
 });
 
 // -----------------------------------------------------------------------------
@@ -79,12 +62,12 @@ app.post("/webhooks/telnyx", async (req, res) => {
         await axios.post(
           `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
           {
-            stream_url: "wss://version-2-cr4fsa.fly.dev",
+            stream_url: config.telnyx.streamUrl,
             stream_track: "inbound_track",
           },
           {
             headers: {
-              Authorization: `Bearer ${TELNYX_API_KEY}`,
+              Authorization: `Bearer ${config.telnyx.apiKey}`,
             },
           }
         );
@@ -106,7 +89,7 @@ wss.on("connection", async (ws) => {
 
   // Create a Deepgram live stream
   const dgLive = await deepgram.listen.live({
-    model: "nova-2",
+    model: config.deepgram.model,
     encoding: "mulaw",
     sample_rate: 8000,
     channels: 1,
@@ -133,9 +116,9 @@ wss.on("connection", async (ws) => {
       let groqResp;
       try {
         groqResp = await groq.chat.completions.create({
-          model: "llama-3.1-8b-instant",
+          model: config.groq.model,
           messages: [
-            { role: "system", content: "You are a helpful voice assistant." },
+            { role: "system", content: config.llm.systemPrompt },
             { role: "user", content: userText },
           ],
         });
@@ -171,8 +154,8 @@ wss.on("connection", async (ws) => {
       let audioResponse;
       try {
         audioResponse = await openai.audio.speech.create({
-          model: "tts-1",
-          voice: "alloy",
+          model: config.openai.ttsModel,
+          voice: config.openai.ttsVoice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer",
           input: aiText,
           response_format: "pcm",
         });
@@ -263,6 +246,6 @@ wss.on("connection", async (ws) => {
 // -----------------------------------------------------------------------------
 // START SERVER
 // -----------------------------------------------------------------------------
-server.listen(PORT, () => {
-  console.log(`🚀 AI Server running on port ${PORT}`);
+server.listen(config.port, () => {
+  console.log(`🚀 AI Server running on port ${config.port}`);
 });

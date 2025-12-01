@@ -1,5 +1,6 @@
 import express, { Router, Request, Response } from "express";
 import axios from "axios";
+import config from "../config";
 
 const router = Router();
 
@@ -32,9 +33,6 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Hardcoded Telnyx number for now
-    const fromNumber = "+12767735173";
-
     // Encode client state (goal + userId) in base64
     const clientStatePayload = JSON.stringify({ goal, userId });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
@@ -43,14 +41,14 @@ router.post("/", async (req: Request, res: Response) => {
     const telnyxResponse = await axios.post<TelnyxCallResponse>(
       "https://api.telnyx.com/v2/calls",
       {
-        connection_id: process.env.TELNYX_SIP_CONNECTION_ID,
+        connection_id: config.telnyx.sipConnectionId,
         to: toNumber,
-        from: fromNumber,
+        from: config.telnyx.fromNumber,
         client_state: clientStateBase64,
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
+          Authorization: `Bearer ${config.telnyx.apiKey}`,
           "Content-Type": "application/json",
         },
       }
