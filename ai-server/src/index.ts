@@ -4,6 +4,7 @@ import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
 import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 import OpenAI from "openai";
+import axios from "axios";
 import outboundCallRouter from "./routes/outbound-call";
 
 // Audio utility: downsample 24kHz PCM to 8kHz for Telnyx compatibility
@@ -30,10 +31,12 @@ const PORT = process.env.PORT || 8080;
 const DG_API_KEY = process.env.DEEPGRAM_API_KEY;
 const GROQ_KEY = process.env.GROQ_API_KEY;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
+const TELNYX_API_KEY = process.env.TELNYX_API_KEY;
 
 if (!DG_API_KEY) throw new Error("Missing DEEPGRAM_API_KEY");
 if (!GROQ_KEY) throw new Error("Missing GROQ_API_KEY");
 if (!OPENAI_KEY) throw new Error("Missing OPENAI_API_KEY");
+if (!TELNYX_API_KEY) throw new Error("Missing TELNYX_API_KEY");
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -65,9 +68,33 @@ app.get("/health", (_, res) => res.status(200).send("Alive"));
 app.use("/api/outbound-call", outboundCallRouter);
 
 // TELNYX WEBHOOKS (Call start/stop)
-app.post("/webhooks/telnyx", (req, res) => {
+app.post("/webhooks/telnyx", async (req, res) => {
   const eventType = req.body?.data?.event_type;
   console.log("📞 Telnyx webhook event:", eventType);
+
+  if (eventType === "call.answered") {
+    const callControlId = req.body?.data?.call_control_id;
+    if (callControlId) {
+      try {
+        await axios.post(
+          `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
+          {
+            stream_url: "wss://version-2-cr4fsa.fly.dev",
+            stream_track: "inbound_track",
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${TELNYX_API_KEY}`,
+            },
+          }
+        );
+        console.log("✅ Streaming started for call:", callControlId);
+      } catch (error) {
+        console.error("❌ Failed to start streaming:", error instanceof Error ? error.message : error);
+      }
+    }
+  }
+
   res.send("ok");
 });
 
