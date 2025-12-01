@@ -182,7 +182,7 @@ async function sendTtsResponse(
 }
 
 /**
- * Cleanup call state (clear timers, mark as inactive).
+ * Cleanup call state (clear timers, mark as inactive, close Deepgram connection).
  */
 function cleanupCallState(callContext: CallContext): void {
   console.log("🧹 Cleaning up call state");
@@ -192,6 +192,27 @@ function cleanupCallState(callContext: CallContext): void {
     callContext.ttsDebounceTimer = undefined;
   }
   callContext.lastUserTranscript = "";
+
+  // Close the Deepgram WebSocket if it exists and is open
+  if (callContext.deepgramSocket) {
+    try {
+      // Try to send CloseStream if the SDK requires it
+      if (typeof callContext.deepgramSocket.finish === "function") {
+        callContext.deepgramSocket.finish();
+      }
+      // Close the underlying WebSocket
+      if (typeof callContext.deepgramSocket.close === "function") {
+        callContext.deepgramSocket.close(1000, "Call ended");
+      }
+      console.log("✅ Deepgram connection closed");
+    } catch (error) {
+      console.warn(
+        "⚠️ Error closing Deepgram connection:",
+        error instanceof Error ? error.message : error
+      );
+    }
+    callContext.deepgramSocket = undefined;
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -276,6 +297,16 @@ wss.on("connection", async (ws) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
 
+      // Guard: Check if call is still active BEFORE logging raw transcript
+      if (!callContext || !callContext.isCallActive) {
+        // Only log at debug level if call is not active to avoid flooding logs
+        if (results?.transcript) {
+          console.debug("📝 Deepgram raw transcript (call inactive):", results.transcript);
+        }
+        return;
+      }
+
+      // Log raw transcript only if call is active
       console.log("📝 Deepgram raw transcript:", results?.transcript);
 
       if (!results || !results.transcript) return;
@@ -284,12 +315,6 @@ wss.on("connection", async (ws) => {
       if (!userText) return;
 
       console.log("🗣️ User:", userText);
-
-      // Guard: Only queue if we have a valid call context and the call is still active
-      if (!callContext || !callContext.isCallActive) {
-        console.log("⚠️ Call not active or no context, skipping transcript");
-        return;
-      }
 
       // Queue the transcript with debounce
       queueUserTranscript(callContext, userText, ws);
@@ -347,6 +372,7 @@ wss.on("connection", async (ws) => {
             isCallActive: true, // Mark call as active
             lastUserTranscript: "",
             lastTranscriptAt: 0,
+            deepgramSocket: dgLive, // Store Deepgram connection for cleanup
           };
 
           console.log("📋 Call context initialized:", callContext);
@@ -358,7 +384,10 @@ wss.on("connection", async (ws) => {
       // Telnyx media packets → Deepgram
       else if (msg.event === "media" && msg.media?.payload) {
         const audio = Buffer.from(msg.media.payload, "base64");
-        console.log("🎙️ Received Telnyx media packet, bytes:", audio.length);
+        // Only log packet details if LOG_AUDIO_PACKETS is enabled (reduces noise in logs)
+        if (process.env.LOG_AUDIO_PACKETS === "true") {
+          console.log("🎙️ Received Telnyx media packet, bytes:", audio.length);
+        }
         dgLive.send(audio.buffer);
       } else if (msg.event === "stop") {
         console.log("🛑 Telnyx media stream stopped");

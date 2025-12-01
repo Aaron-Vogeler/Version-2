@@ -21,6 +21,8 @@ export interface CallContext {
   lastTranscriptAt?: number;
   ttsDebounceTimer?: NodeJS.Timeout;
   isCallActive?: boolean;
+  // Deepgram connection reference for cleanup
+  deepgramSocket?: any;
 }
 
 /**
