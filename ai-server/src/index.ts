@@ -36,6 +36,10 @@ app.post("/webhooks/telnyx", async (req, res) => {
   console.log("📞 Telnyx webhook event:", eventType);
 
   if (eventType === "call.answered") {
+    console.log(
+      "📦 Telnyx call.answered payload:",
+      JSON.stringify(req.body, null, 2)
+    );
     const callControlId = req.body?.data?.call_control_id;
     if (callControlId) {
       try {
