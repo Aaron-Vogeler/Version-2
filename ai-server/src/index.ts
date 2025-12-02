@@ -254,7 +254,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
           `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
           {
             stream_url: config.telnyx.streamUrl,
-            stream_track: "inbound_track",
+            stream_track: "both",
           },
           {
             headers: {
