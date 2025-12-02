@@ -110,6 +110,10 @@ async function scheduleTtsResponse(
 
     console.log("🤖 AI:", aiText);
 
+    // Log debug URL for testing this specific AI response
+    const debugUrl = `${config.telnyx.streamUrl}/debug/tts-8k-wav?text=${encodeURIComponent(aiText)}`;
+    console.log("🔗 Debug WAV URL:", debugUrl);
+
     // Send to TTS only if we can still speak
     await sendTtsResponse(callContext, ws, aiText);
 
