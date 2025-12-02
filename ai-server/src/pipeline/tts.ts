@@ -1,15 +1,14 @@
-import OpenAI from "openai";
+import axios from "axios";
+import { exec } from "child_process";
+import { promisify } from "util";
+import * as fs from "fs";
+import * as path from "path";
 import config from "../config";
 
-/**
- * OpenAI TTS client configured with API key
- */
-const openai = new OpenAI({
-  apiKey: config.openai.apiKey,
-});
+const execPromise = promisify(exec);
 
 /**
- * Quick helper to inspect raw PCM from OpenAI.
+ * Quick helper to inspect raw PCM from Telnyx.
  * This will tell us if the samples look like real 16-bit audio
  * or if we're mis-interpreting the format.
  */
@@ -89,7 +88,7 @@ function analyzePcmBuffer(pcmBuffer: Buffer) {
 }
 
 /**
- * Synthesizes speech from text using OpenAI TTS API.
+ * Synthesizes speech from text using Telnyx TTS API.
  * Returns 24kHz PCM audio as a Node.js Buffer.
  *
  * @param aiText - The text to synthesize into speech
@@ -99,36 +98,72 @@ export async function synthesizeSpeech(aiText: string): Promise<Buffer> {
   const startTime = Date.now();
   console.log("🎤 ========== TTS SYNTHESIS START ==========");
   console.log("📝 Text to synthesize:", aiText);
-  console.log("🔧 TTS Model:", config.openai.ttsModel);
-  console.log("🗣️ TTS Voice:", config.openai.ttsVoice);
-  console.log("📤 Calling OpenAI TTS API...");
+  console.log("🗣️ TTS Voice:", config.telnyx.ttsVoiceId);
+  console.log("📤 Calling Telnyx TTS API...");
 
-  const audioResponse = await openai.audio.speech.create({
-    model: config.openai.ttsModel,
-    voice: config.openai.ttsVoice as
-      | "alloy"
-      | "echo"
-      | "fable"
-      | "onyx"
-      | "nova"
-      | "shimmer",
-    input: aiText,
-    response_format: "pcm",
-  });
+  try {
+    // Call Telnyx TTS API
+    const telnyxResponse = await axios.post(
+      "https://api.telnyx.com/v2/text_to_speech",
+      {
+        text: aiText,
+        voice_id: config.telnyx.ttsVoiceId,
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${config.telnyx.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        responseType: "arraybuffer",
+      }
+    );
 
-  const apiResponseTime = Date.now();
-  console.log("✅ OpenAI API responded in", (apiResponseTime - startTime), "ms");
+    const apiResponseTime = Date.now();
+    console.log("✅ Telnyx API responded in", apiResponseTime - startTime, "ms");
 
-  const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+    // Telnyx returns MP3 audio, so we need to convert it to PCM
+    // Write the MP3 to a temporary file
+    const tempDir = "/tmp";
+    const timestamp = Date.now();
+    const mp3File = path.join(tempDir, `tts_${timestamp}.mp3`);
+    const pcmFile = path.join(tempDir, `tts_${timestamp}.pcm`);
 
-  const bufferParseTime = Date.now();
-  console.log("✅ Audio buffer parsed in", (bufferParseTime - apiResponseTime), "ms");
+    fs.writeFileSync(mp3File, telnyxResponse.data);
+    console.log("✅ MP3 file written in", Date.now() - apiResponseTime, "ms");
 
-  // 🔎 NEW: analyze the raw PCM before we touch it
-  analyzePcmBuffer(audioBuffer);
+    // Use ffmpeg to convert MP3 to PCM (24kHz, 16-bit, little-endian)
+    const ffmpegCommand = `ffmpeg -i "${mp3File}" -f s16le -acodec pcm_s16le -ar 24000 "${pcmFile}" -y`;
 
-  console.log("⏱️ Total TTS synthesis time:", (Date.now() - startTime), "ms");
-  console.log("==========================================");
+    try {
+      await execPromise(ffmpegCommand);
+      console.log("✅ MP3 converted to PCM in", Date.now() - apiResponseTime, "ms");
 
-  return audioBuffer;
+      // Read the PCM file
+      const audioBuffer = fs.readFileSync(pcmFile);
+
+      // Cleanup temporary files
+      fs.unlinkSync(mp3File);
+      fs.unlinkSync(pcmFile);
+
+      // Analyze the PCM buffer
+      analyzePcmBuffer(audioBuffer);
+
+      console.log("⏱️ Total TTS synthesis time:", Date.now() - startTime, "ms");
+      console.log("==========================================");
+
+      return audioBuffer;
+    } catch (ffmpegError) {
+      // Cleanup MP3 file on error
+      if (fs.existsSync(mp3File)) fs.unlinkSync(mp3File);
+      if (fs.existsSync(pcmFile)) fs.unlinkSync(pcmFile);
+
+      console.error("❌ FFmpeg conversion error:", ffmpegError);
+      throw new Error(
+        "Failed to convert MP3 to PCM. Make sure ffmpeg is installed on the system."
+      );
+    }
+  } catch (error) {
+    console.error("❌ TTS Error:", error);
+    throw error;
+  }
 }
