@@ -348,58 +348,101 @@ function generateWavHeader(pcmDataLength: number): Buffer {
   return header;
 }
 
-// DEBUG ENDPOINT: Listen to downsampled 8kHz PCM as WAV
+// DEBUG ENDPOINT: Listen to 24kHz RAW PCM (OpenAI TTS output)
+app.get("/debug/tts-raw-24k", async (req, res) => {
+  try {
+    const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
+    console.log("🎵 DEBUG ENDPOINT: /debug/tts-raw-24k (RAW OpenAI TTS output)");
+
+    const pcm24k = await synthesizeSpeech(text);
+    const wavHeader = generateWavHeader(pcm24k.length);
+    const wavFile = Buffer.concat([wavHeader, pcm24k]);
+
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Content-Disposition", `inline; filename="tts-raw-24k-${Date.now()}.wav"`);
+    res.send(wavFile);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// DEBUG ENDPOINT: 24kHz NORMALIZED PCM (before downsampling)
+app.get("/debug/tts-normalized-24k", async (req, res) => {
+  try {
+    const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
+    console.log("🎵 DEBUG ENDPOINT: /debug/tts-normalized-24k (normalized at 24kHz)");
+
+    const pcm24k = await synthesizeSpeech(text);
+    const pcm24kNormalized = normalizePcm(pcm24k);
+    const wavHeader = generateWavHeader(pcm24kNormalized.length);
+    const wavFile = Buffer.concat([wavHeader, pcm24kNormalized]);
+
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Content-Disposition", `inline; filename="tts-normalized-24k-${Date.now()}.wav"`);
+    res.send(wavFile);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// DEBUG ENDPOINT: 8kHz PCM (downsampled, normalized, BEFORE μ-law)
 app.get("/debug/tts-8k-wav", async (req, res) => {
   try {
     const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
-    console.log("");
-    console.log("🎵 ==========================================");
-    console.log("🎵 DEBUG ENDPOINT: /debug/tts-8k-wav");
-    console.log("🎵 ==========================================");
-    console.log("📝 Input text:", text);
-    console.log("🔧 This endpoint will process the full TTS pipeline and return a WAV file");
-    console.log("");
+    console.log("🎵 DEBUG ENDPOINT: /debug/tts-8k-wav (8kHz PCM, normalized, BEFORE μ-law)");
 
-    // Get 24kHz PCM from OpenAI TTS
     const pcm24k = await synthesizeSpeech(text);
+    const pcm24kNormalized = normalizePcm(pcm24k);
+    const pcm8k = downsample24kHzTo8kHz(pcm24kNormalized);
+    const pcm8kBoosted = boostBeforeMulaw(pcm8k);
 
-    // Downsample to 8kHz
-    const pcm8k = downsample24kHzTo8kHz(pcm24k);
+    const wavHeader = generateWavHeader(pcm8kBoosted.length);
+    const wavFile = Buffer.concat([wavHeader, pcm8kBoosted]);
 
-    // Generate WAV header
-    const wavHeader = generateWavHeader(pcm8k.length);
-
-    // Combine header + PCM data
-    const wavFile = Buffer.concat([wavHeader, pcm8k]);
-
-    const durationMs = ((pcm8k.length / 2) / 8000) * 1000; // 16-bit samples at 8kHz
-
-    console.log("");
-    console.log("✅ WAV FILE GENERATED SUCCESSFULLY");
-    console.log("📊 Output Details:");
-    console.log("   • Format: WAV (RIFF)");
-    console.log("   • Sample rate: 8000 Hz");
-    console.log("   • Channels: 1 (mono)");
-    console.log("   • Bit depth: 16-bit PCM");
-    console.log("   • File size:", wavFile.length, "bytes");
-    console.log("   • Audio duration:", durationMs.toFixed(2), "ms");
-    console.log("");
-    console.log("🎧 You can now play this file to hear the processed audio");
-    console.log("   This is the audio AFTER downsampling but BEFORE μ-law encoding");
-    console.log("==========================================");
-    console.log("");
-
-    // Send as audio/wav
     res.setHeader("Content-Type", "audio/wav");
-    res.setHeader("Content-Disposition", `inline; filename="tts-debug-${Date.now()}.wav"`);
-    res.setHeader("Content-Length", wavFile.length);
+    res.setHeader("Content-Disposition", `inline; filename="tts-8k-${Date.now()}.wav"`);
     res.send(wavFile);
   } catch (error) {
-    console.error("❌ Debug TTS endpoint error:", error instanceof Error ? error.message : error);
-    res.status(500).json({
-      error: "Failed to generate TTS audio",
-      message: error instanceof Error ? error.message : String(error),
-    });
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// DEBUG ENDPOINT: Raw μ-law bytes (what Telnyx receives)
+app.get("/debug/tts-mulaw-raw", async (req, res) => {
+  try {
+    const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
+    console.log("🎵 DEBUG ENDPOINT: /debug/tts-mulaw-raw (raw μ-law bytes for Telnyx)");
+
+    const pcm24k = await synthesizeSpeech(text);
+    const pcm24kNormalized = normalizePcm(pcm24k);
+    const pcm8k = downsample24kHzTo8kHz(pcm24kNormalized);
+    const pcm8kBoosted = boostBeforeMulaw(pcm8k);
+    const mulawBuffer = pcmToMulaw(pcm8kBoosted);
+
+    // Also decode back to PCM for listening
+    const decodedPcm = new Int16Array(mulawBuffer.length);
+    for (let i = 0; i < mulawBuffer.length; i++) {
+      const byte = mulawBuffer[i];
+      const inverted = (~byte) & 0xff;
+      const sign = inverted & 0x80;
+      const exponent = (inverted >> 4) & 0x07;
+      const mantissa = inverted & 0x0f;
+
+      let sample = (mantissa << (exponent + 3)) + (0x80 << (exponent + 3));
+      if (exponent === 0) sample = (mantissa << 4) + 8;
+      if (sign === 0) sample = -sample;
+      decodedPcm[i] = sample;
+    }
+
+    const decodedBuffer = Buffer.from(decodedPcm.buffer, decodedPcm.byteOffset, decodedPcm.byteLength);
+    const wavHeader = generateWavHeader(decodedBuffer.length);
+    const wavFile = Buffer.concat([wavHeader, decodedBuffer]);
+
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Content-Disposition", `inline; filename="tts-mulaw-decoded-${Date.now()}.wav"`);
+    res.send(wavFile);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
 
