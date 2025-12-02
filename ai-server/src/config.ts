@@ -35,7 +35,7 @@ const config = {
   openai: {
     apiKey: requireEnv("OPENAI_API_KEY"),
     ttsModel: getEnv("OPENAI_TTS_MODEL", "tts-1"),
-    ttsVoice: getEnv("OPENAI_TTS_VOICE", "alloy"),
+    ttsVoice: getEnv("OPENAI_TTS_VOICE", "nova"),
   },
 
   telnyx: {
