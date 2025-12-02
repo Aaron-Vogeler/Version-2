@@ -144,6 +144,19 @@ async function sendTtsResponse(
   }
 
   // Call Telnyx Speak API to synthesize and play audio
+  if (!callContext.callControlId) {
+    console.error("❌ Cannot synthesize speech: callControlId is not set");
+    if (canSpeak(callContext, ws)) {
+      ws.send(
+        JSON.stringify({
+          event: "error",
+          payload: { message: "Call control ID not initialized" },
+        })
+      );
+    }
+    return;
+  }
+
   try {
     await synthesizeSpeech(aiText, callContext.callControlId);
   } catch (ttsError) {
