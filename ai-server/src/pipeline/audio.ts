@@ -79,12 +79,20 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   // Create a new Int16Array to hold downsampled samples (8 kHz)
   const samples8k = new Int16Array(Math.floor(samples24k.length / 3));
 
-  // Downsample by taking every 3rd sample
+  // Downsample with a simple 3-tap box filter:
+  // For each output sample, average 3 consecutive input samples.
+  // This acts as a low-pass filter to reduce aliasing artifacts
+  // that would otherwise cause warbly/noisy sound on the call.
   for (let i = 0; i < samples8k.length; i++) {
-    samples8k[i] = samples24k[i * 3];
+    const base = i * 3;
+    const s0 = samples24k[base] ?? 0;
+    const s1 = samples24k[base + 1] ?? s0;
+    const s2 = samples24k[base + 2] ?? s1;
+    const avg = Math.round((s0 + s1 + s2) / 3);
+    samples8k[i] = avg;
   }
 
-  // Create a Buffer that wraps the Int16Array's underlying memory
+  // Wrap the Int16Array's underlying memory in a Buffer.
   // This preserves the 16-bit little-endian sample data correctly.
   // CRITICAL: Do NOT use Buffer.from(samples8k) because that would
   // treat the array as an iterable of numbers and corrupt the data.
