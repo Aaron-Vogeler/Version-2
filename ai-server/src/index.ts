@@ -124,7 +124,7 @@ async function scheduleTtsResponse(
 }
 
 /**
- * Send the AI response as speech via OpenAI TTS.
+ * Send the AI response as speech via Telnyx TTS.
  */
 async function sendTtsResponse(
   callContext: CallContext,
@@ -134,7 +134,7 @@ async function sendTtsResponse(
   const pipelineStartTime = Date.now();
   console.log("");
   console.log("🎵 ========================================");
-  console.log("🎵 STARTING FULL TTS AUDIO PIPELINE");
+  console.log("🎵 STARTING TTS SPEAK ACTION");
   console.log("🎵 ========================================");
 
   // Double-check we can still speak before calling TTS API
@@ -143,13 +143,12 @@ async function sendTtsResponse(
     return;
   }
 
-  // Step 1: TTS Synthesis
-  let audioBuffer24k: Buffer;
+  // Call Telnyx Speak API to synthesize and play audio
   try {
-    audioBuffer24k = await synthesizeSpeech(aiText);
+    await synthesizeSpeech(aiText, callContext.callControlId);
   } catch (ttsError) {
     console.error(
-      "❌ OpenAI error:",
+      "❌ Telnyx TTS error:",
       ttsError instanceof Error ? ttsError.message : ttsError
     );
     if (canSpeak(callContext, ws)) {
@@ -163,122 +162,9 @@ async function sendTtsResponse(
     return;
   }
 
-  // Print debug links for audio quality testing
-  const textForUrl = encodeURIComponent(aiText);
-  const baseUrl = config.telnyx.streamUrl.replace('wss://', 'https://');
-  console.log("");
-  console.log("🎧 ========== DEBUG AUDIO FILES ==========");
-  console.log("📥 Download these files to test audio quality:");
-  console.log(`   1️⃣  Raw 24kHz: ${baseUrl}/debug/tts-raw-24k?text=${textForUrl}`);
-  console.log(`   2️⃣  Normalized 24kHz: ${baseUrl}/debug/tts-normalized-24k?text=${textForUrl}`);
-  console.log(`   3️⃣  Downsampled 8kHz: ${baseUrl}/debug/tts-8k-wav?text=${textForUrl}`);
-  console.log(`   4️⃣  μ-law Encoded: ${baseUrl}/debug/tts-mulaw-raw?text=${textForUrl}`);
+  console.log("⏱️ Total TTS response time:", Date.now() - pipelineStartTime, "ms");
   console.log("==========================================");
   console.log("");
-
-  // Step 2: Normalize audio (moderate, not aggressive)
-  const normalizeStartTime = Date.now();
-  const audioBuffer24kNormalized = normalizePcm(audioBuffer24k);
-
-  // Step 3: Downsample from 24kHz to 8kHz (with correct 3400Hz cutoff)
-  const downsampleStartTime = Date.now();
-  const audioBuffer8k = downsample24kHzTo8kHz(audioBuffer24kNormalized);
-
-  // Step 4: Gentle boost only if needed (not aggressive)
-  const boostStartTime = Date.now();
-  const audioBuffer8kBoosted = boostBeforeMulaw(audioBuffer8k);
-
-  // Step 5: μ-law encoding (using corrected G.711 algorithm)
-  const mulawStartTime = Date.now();
-  const audioBuffer = pcmToMulaw(audioBuffer8kBoosted);
-
-  // Step 6: Chunk audio into 20ms packets
-  const chunkStartTime = Date.now();
-  const audioChunks = chunkAudio(audioBuffer);
-
-  // Step 7: Stream to Telnyx with precise timing
-  const streamStartTime = Date.now();
-  console.log("");
-  console.log("📡 ========== STREAMING TO TELNYX ==========");
-  console.log("📊 Streaming Info:");
-  console.log("   • Total chunks to send:", audioChunks.length);
-  console.log("   • Packet interval:", "20 ms");
-  console.log("   • Expected streaming duration:", (audioChunks.length * 20), "ms");
-  console.log("   • WebSocket state:", ws.readyState === WebSocket.OPEN ? "OPEN" : "CLOSED");
-
-  // Send audio chunks to Telnyx with precise timing (20ms per chunk)
-  // Using high-resolution timing to avoid jitter from setTimeout variance
-  if (canSpeak(callContext, ws)) {
-    let sentChunks = 0;
-    const CHUNK_INTERVAL_MS = 20;
-    const startTime = process.hrtime.bigint();
-    
-    for (let i = 0; i < audioChunks.length; i++) {
-      const chunk = audioChunks[i];
-
-      // Calculate when this chunk SHOULD be sent (based on start time)
-      const targetTimeNs = BigInt(i * CHUNK_INTERVAL_MS) * BigInt(1_000_000);
-      const elapsedNs = process.hrtime.bigint() - startTime;
-      const waitNs = targetTimeNs - elapsedNs;
-      
-      // If we're behind schedule, send immediately; otherwise wait
-      if (waitNs > BigInt(1_000_000)) { // More than 1ms to wait
-        const waitMs = Number(waitNs / BigInt(1_000_000));
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-      }
-
-      // Check if call is still active before sending
-      if (!canSpeak(callContext, ws)) {
-        console.log("⚠️ Call ended while sending audio, stopped at chunk", i + 1, "of", audioChunks.length);
-        break;
-      }
-
-      ws.send(
-        JSON.stringify({
-          event: "media",
-          media: {
-            payload: chunk.toString("base64"),
-          },
-        })
-      );
-      sentChunks++;
-
-      // Log progress every 50 chunks (every 1 second)
-      if (sentChunks % 50 === 0) {
-        const actualElapsedMs = Number((process.hrtime.bigint() - startTime) / BigInt(1_000_000));
-        const expectedMs = sentChunks * CHUNK_INTERVAL_MS;
-        const drift = actualElapsedMs - expectedMs;
-        console.log(`📤 Sent ${sentChunks}/${audioChunks.length} chunks | Drift: ${drift > 0 ? '+' : ''}${drift}ms`);
-      }
-    }
-
-    const streamEndTime = Date.now();
-    const actualStreamDuration = streamEndTime - streamStartTime;
-
-    console.log("");
-    console.log("✅ Streaming complete!");
-    console.log("   • Chunks sent:", sentChunks, "of", audioChunks.length);
-    console.log("   • Actual streaming time:", actualStreamDuration, "ms");
-    console.log("   • Expected streaming time:", (audioChunks.length * 20), "ms");
-    console.log("   • Timing accuracy:", ((actualStreamDuration / (audioChunks.length * 20)) * 100).toFixed(1) + "%");
-    console.log("===========================================");
-
-    // Overall pipeline summary
-    console.log("");
-    console.log("⏱️  ========== PIPELINE TIMING SUMMARY ==========");
-    console.log("   • TTS Synthesis:", (normalizeStartTime - pipelineStartTime), "ms");
-    console.log("   • Normalization:", (downsampleStartTime - normalizeStartTime), "ms");
-    console.log("   • Downsampling:", (boostStartTime - downsampleStartTime), "ms");
-    console.log("   • Pre-μlaw Check:", (mulawStartTime - boostStartTime), "ms");
-    console.log("   • μ-law Encoding:", (chunkStartTime - mulawStartTime), "ms");
-    console.log("   • Chunking:", (streamStartTime - chunkStartTime), "ms");
-    console.log("   • Streaming:", actualStreamDuration, "ms");
-    console.log("   • TOTAL PIPELINE:", (Date.now() - pipelineStartTime), "ms");
-    console.log("===============================================");
-    console.log("");
-  } else {
-    console.log("⚠️ WebSocket not open, cannot send audio");
-  }
 }
 
 /**
@@ -371,94 +257,8 @@ function generateWavHeader(pcmDataLength: number, sampleRate: number = 8000): Bu
   return header;
 }
 
-// DEBUG ENDPOINT: Listen to 24kHz RAW PCM (OpenAI TTS output)
-app.get("/debug/tts-raw-24k", async (req, res) => {
-  try {
-    const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
-    console.log("🎵 DEBUG ENDPOINT: /debug/tts-raw-24k (RAW OpenAI TTS output)");
-
-    const pcm24k = await synthesizeSpeech(text);
-    const wavHeader = generateWavHeader(pcm24k.length, 24000);
-    const wavFile = Buffer.concat([wavHeader, pcm24k]);
-
-    res.setHeader("Content-Type", "audio/wav");
-    res.setHeader("Content-Disposition", `inline; filename="tts-raw-24k-${Date.now()}.wav"`);
-    res.send(wavFile);
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-// DEBUG ENDPOINT: 24kHz NORMALIZED PCM (before downsampling)
-app.get("/debug/tts-normalized-24k", async (req, res) => {
-  try {
-    const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
-    console.log("🎵 DEBUG ENDPOINT: /debug/tts-normalized-24k (normalized at 24kHz)");
-
-    const pcm24k = await synthesizeSpeech(text);
-    const pcm24kNormalized = normalizePcm(pcm24k);
-    const wavHeader = generateWavHeader(pcm24kNormalized.length, 24000);
-    const wavFile = Buffer.concat([wavHeader, pcm24kNormalized]);
-
-    res.setHeader("Content-Type", "audio/wav");
-    res.setHeader("Content-Disposition", `inline; filename="tts-normalized-24k-${Date.now()}.wav"`);
-    res.send(wavFile);
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-// DEBUG ENDPOINT: 8kHz PCM (downsampled, normalized, BEFORE μ-law)
-app.get("/debug/tts-8k-wav", async (req, res) => {
-  try {
-    const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
-    console.log("🎵 DEBUG ENDPOINT: /debug/tts-8k-wav (8kHz PCM, normalized, BEFORE μ-law)");
-
-    const pcm24k = await synthesizeSpeech(text);
-    const pcm24kNormalized = normalizePcm(pcm24k);
-    const pcm8k = downsample24kHzTo8kHz(pcm24kNormalized);
-    const pcm8kBoosted = boostBeforeMulaw(pcm8k);
-
-    const wavHeader = generateWavHeader(pcm8kBoosted.length, 8000);
-    const wavFile = Buffer.concat([wavHeader, pcm8kBoosted]);
-
-    res.setHeader("Content-Type", "audio/wav");
-    res.setHeader("Content-Disposition", `inline; filename="tts-8k-${Date.now()}.wav"`);
-    res.send(wavFile);
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-// DEBUG ENDPOINT: Raw μ-law bytes (decoded back to PCM for listening)
-app.get("/debug/tts-mulaw-raw", async (req, res) => {
-  try {
-    const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
-    console.log("🎵 DEBUG ENDPOINT: /debug/tts-mulaw-raw (μ-law decoded back to PCM)");
-
-    const pcm24k = await synthesizeSpeech(text);
-    const pcm24kNormalized = normalizePcm(pcm24k);
-    const pcm8k = downsample24kHzTo8kHz(pcm24kNormalized);
-    const pcm8kBoosted = boostBeforeMulaw(pcm8k);
-    const mulawBuffer = pcmToMulaw(pcm8kBoosted);
-
-    // Decode μ-law back to PCM using standard G.711 decoding
-    const decodedPcm = new Int16Array(mulawBuffer.length);
-    for (let i = 0; i < mulawBuffer.length; i++) {
-      decodedPcm[i] = decodeMulawG711(mulawBuffer[i]);
-    }
-
-    const decodedBuffer = Buffer.from(decodedPcm.buffer, decodedPcm.byteOffset, decodedPcm.byteLength);
-    const wavHeader = generateWavHeader(decodedBuffer.length, 8000);
-    const wavFile = Buffer.concat([wavHeader, decodedBuffer]);
-
-    res.setHeader("Content-Type", "audio/wav");
-    res.setHeader("Content-Disposition", `inline; filename="tts-mulaw-decoded-${Date.now()}.wav"`);
-    res.send(wavFile);
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-  }
-});
+// DEBUG ENDPOINTS REMOVED: These were specific to OpenAI TTS pipeline with manual audio processing.
+// With Telnyx TTS, audio synthesis and playback are handled directly by Telnyx on the call.
 
 /**
  * ITU-T G.711 μ-law decoder.
