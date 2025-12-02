@@ -2,7 +2,48 @@
  * Audio pipeline utilities for processing PCM audio streams
  */
 
-import { encode as encodeMulaw } from 'mu-law';
+/**
+ * Standard μ-law (mulaw) encoding algorithm.
+ * Converts 16-bit linear PCM samples to 8-bit μ-law compressed format.
+ *
+ * μ-law is a logarithmic compression codec used in telephony (ITU-T G.711).
+ *
+ * @param sample - 16-bit signed PCM sample
+ * @returns 8-bit μ-law encoded byte
+ */
+function encodeSampleMulaw(sample: number): number {
+  const BIAS = 0x84;
+  const CLIP = 32635;
+  const QUANT_MASK = 0xf;
+  const SEG_SHIFT = 4;
+  const SEG_MASK = 0x70;
+
+  // Extract sign bit and work with absolute value
+  let sign = (sample >> 8) & 0x80;
+  if (sign !== 0) {
+    sample = -sample;
+  }
+
+  // Clip to valid range
+  if (sample > CLIP) {
+    sample = CLIP;
+  }
+
+  // Calculate exponent and mantissa
+  let exponent = 0;
+  let mantissa = sample + BIAS;
+
+  if (mantissa >= 256) {
+    exponent = (Math.log2(mantissa) | 0) - 8;
+    mantissa = (mantissa >> (exponent + 3)) & QUANT_MASK;
+    exponent = (exponent + 1) << SEG_SHIFT;
+  } else {
+    mantissa = (mantissa >> 4) & QUANT_MASK;
+  }
+
+  // Combine and invert
+  return (~(sign | exponent | mantissa)) & 0xff;
+}
 
 /**
  * Downsamples 24kHz PCM audio to 8kHz for Telnyx compatibility.
@@ -51,21 +92,15 @@ export function pcmToMulaw(pcmBuffer: Buffer): Buffer {
   console.log("🔍 Debug pcmToMulaw - Samples count:", samples.length);
   console.log("🔍 Debug pcmToMulaw - First few samples:", Array.from(samples.slice(0, 5)));
 
-  // Encode Int16Array to mulaw - returns Uint8Array
-  let mulawArray: Uint8Array;
-  try {
-    mulawArray = encodeMulaw(samples);
-    console.log("🔍 Debug pcmToMulaw - Encode successful, result type:", typeof mulawArray);
-
-    // Validate that we got a Uint8Array, not an error code
-    if (!mulawArray || !(mulawArray instanceof Uint8Array)) {
-      throw new Error(`encodeMulaw() returned invalid result: ${mulawArray} (type: ${typeof mulawArray}). Expected Uint8Array.`);
-    }
-    console.log("🔍 Debug pcmToMulaw - Result is Uint8Array, length:", mulawArray.length);
-  } catch (err) {
-    console.error("🔍 Debug pcmToMulaw - Encode failed:", err);
-    throw err;
+  // Encode each 16-bit PCM sample to 8-bit μ-law
+  const mulawArray = new Uint8Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    mulawArray[i] = encodeSampleMulaw(samples[i]);
   }
+
+  console.log("🔍 Debug pcmToMulaw - Encoding complete");
+  console.log("🔍 Debug pcmToMulaw - Result is Uint8Array, length:", mulawArray.length);
+  console.log("🔍 Debug pcmToMulaw - First few encoded bytes:", Array.from(mulawArray.slice(0, 5)));
 
   // Convert Uint8Array to Buffer
   const mulawBuffer = Buffer.from(mulawArray);
