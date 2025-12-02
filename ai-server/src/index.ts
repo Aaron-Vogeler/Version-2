@@ -325,6 +325,44 @@ app.get("/debug/tts-8k-wav", async (req, res) => {
   }
 });
 
+// DEBUG ENDPOINT: Generate AI response from user message, then WAV
+app.get("/debug/tts-8k-wav-from-user", async (req, res) => {
+  try {
+    const userMessage = (req.query.userMessage as string) || "Hello";
+    console.log("🎵 Debug LLM+TTS endpoint called with user message:", userMessage);
+
+    // Generate AI response from user message
+    const aiResponse = await generateAssistantReply(userMessage);
+    console.log("✓ LLM generated response:", aiResponse);
+
+    // Get 24kHz PCM from OpenAI TTS
+    const pcm24k = await synthesizeSpeech(aiResponse);
+    console.log("✓ OpenAI TTS returned:", pcm24k.length, "bytes at 24kHz");
+
+    // Downsample to 8kHz
+    const pcm8k = downsample24kHzTo8kHz(pcm24k);
+    console.log("✓ Downsampled to 8kHz:", pcm8k.length, "bytes");
+
+    // Generate WAV header
+    const wavHeader = generateWavHeader(pcm8k.length);
+
+    // Combine header + PCM data
+    const wavFile = Buffer.concat([wavHeader, pcm8k]);
+    console.log("✓ WAV file generated:", wavFile.length, "bytes total");
+
+    // Send as audio/wav
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Content-Length", wavFile.length);
+    res.send(wavFile);
+  } catch (error) {
+    console.error("❌ Debug LLM+TTS endpoint error:", error instanceof Error ? error.message : error);
+    res.status(500).json({
+      error: "Failed to generate AI response or TTS audio",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 
 // OUTBOUND CALL ENDPOINT
 app.use("/api/outbound-call", outboundCallRouter);
