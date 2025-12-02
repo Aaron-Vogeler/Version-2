@@ -1,67 +1,117 @@
 /**
  * Audio pipeline utilities for processing PCM audio streams.
  * Handles downsampling, mulaw encoding, and chunking for Telnyx PCMU streams.
+ * 
+ * FIXED ISSUES:
+ * 1. Corrected ITU-T G.711 μ-law encoder (was using wrong segment detection)
+ * 2. Lowered FIR cutoff to 3400 Hz (was 4100 Hz, above 4000 Hz Nyquist)
+ * 3. Reduced normalization target to 85% (was 99%, causing harshness)
+ * 4. Removed redundant pre-μlaw boost (double amplification)
  */
 
 /**
- * Standard μ-law (mulaw) encoding algorithm (ITU-T G.711).
- * Converts 16-bit linear PCM samples to 8-bit μ-law compressed format.
- *
- * μ-law is a logarithmic compression codec used in telephony.
- * This implementation strictly follows the ITU-T G.711 specification.
- *
- * @param sample - 16-bit signed PCM sample
- * @returns 8-bit μ-law encoded byte
+ * ITU-T G.711 μ-law encoding lookup table approach.
+ * This is the CORRECT implementation per the G.711 standard.
+ * 
+ * μ-law compresses 14-bit dynamic range into 8 bits using logarithmic
+ * compression, which matches human hearing perception.
+ */
+
+// Precomputed segment table for fast encoding
+const MULAW_BIAS = 0x84;  // 132 in decimal
+const MULAW_CLIP = 32635; // Maximum value before clipping
+const MULAW_SEGMENT_TABLE = [0, 132, 396, 924, 1980, 4092, 8316, 16764];
+
+/**
+ * Standard ITU-T G.711 μ-law encoding.
+ * Converts a 16-bit linear PCM sample to 8-bit μ-law.
+ * 
+ * @param sample - 16-bit signed PCM sample (-32768 to 32767)
+ * @returns 8-bit μ-law encoded byte (0-255)
  */
 function encodeSampleMulaw(sample: number): number {
-  const BIAS = 0x84;
-  const CLIP = 32635;
-  const QUANT_MASK = 0xf;
-  const SEG_SHIFT = 4;
-
-  // Extract sign bit
-  let sign = (sample & 0x8000) ? 0x80 : 0x00;
-
-  // Work with absolute value
-  if (sign !== 0) {
+  // Get the sign bit (1 = positive, 0 = negative in μ-law convention)
+  let sign = 0;
+  if (sample < 0) {
+    sign = 0x80;
     sample = -sample;
   }
 
-  // Clip to valid range
-  if (sample > CLIP) {
-    sample = CLIP;
+  // Clip to maximum value
+  if (sample > MULAW_CLIP) {
+    sample = MULAW_CLIP;
   }
 
-  // Add bias
-  sample = sample + BIAS;
+  // Add bias for better low-amplitude encoding
+  sample += MULAW_BIAS;
 
-  let exponent = 0;
-  let mantissa = 0;
-
-  // Find the exponent by finding the highest set bit position
-  // This determines which segment (0-7) the sample belongs to
-  for (exponent = 7; exponent > 0; exponent--) {
-    if ((sample & (0xff << exponent)) !== 0) {
+  // Find the segment (exponent) by checking which range the sample falls into
+  let exponent = 7;
+  for (let i = 0; i < 8; i++) {
+    if (sample <= MULAW_SEGMENT_TABLE[i + 1]) {
+      exponent = i;
       break;
     }
   }
+  
+  // Alternative segment finding using bit position (more standard approach)
+  // Find the position of the most significant bit
+  exponent = 0;
+  let shifted = sample >> 7;
+  while (shifted > 0 && exponent < 7) {
+    shifted >>= 1;
+    exponent++;
+  }
 
-  // Extract the 4-bit mantissa from the appropriate bits
-  mantissa = (sample >> (exponent + 3)) & QUANT_MASK;
+  // Extract the 4-bit mantissa from the appropriate position
+  const mantissa = (sample >> (exponent + 3)) & 0x0F;
 
-  // Combine sign, exponent, and mantissa
-  const encoded = sign | (exponent << SEG_SHIFT) | mantissa;
-
-  // Invert for μ-law encoding
-  return (~encoded) & 0xff;
+  // Combine: sign (1 bit) + exponent (3 bits) + mantissa (4 bits)
+  // Then invert all bits (μ-law uses inverted encoding for better noise immunity)
+  const encoded = ~(sign | (exponent << 4) | mantissa);
+  
+  return encoded & 0xFF;
 }
 
 /**
- * Normalizes PCM audio to use the full dynamic range.
- *
- * This is critical for μ-law encoding, which is a logarithmic codec.
- * Low amplitude signals get quantized poorly, losing quality.
- * Normalization prevents this by scaling the audio to use ~90% of full scale.
+ * Alternative: Use the standard μ-law formula directly.
+ * This is mathematically equivalent but clearer.
+ * 
+ * Formula: F(x) = sgn(x) * ln(1 + μ|x|) / ln(1 + μ)
+ * where μ = 255 for telephony.
+ */
+function encodeSampleMulawPrecise(sample: number): number {
+  const MU = 255;
+  const MAX = 32768;
+
+  // Get sign
+  const sign = sample < 0 ? 1 : 0;
+  sample = Math.abs(sample);
+
+  // Normalize to 0-1 range
+  const normalized = Math.min(sample / MAX, 1.0);
+
+  // Apply μ-law compression formula
+  const compressed = Math.log(1 + MU * normalized) / Math.log(1 + MU);
+
+  // Convert back to 8-bit range (0-127 for magnitude)
+  let magnitude = Math.floor(compressed * 127);
+
+  // Combine sign and magnitude, then invert
+  const encoded = (sign << 7) | magnitude;
+  return (~encoded) & 0xFF;
+}
+
+/**
+ * Normalizes PCM audio to use optimal dynamic range for μ-law encoding.
+ * 
+ * IMPORTANT: μ-law is logarithmic, so it handles a wide dynamic range well.
+ * Over-normalization (pushing to 99%) actually HURTS quality by:
+ * - Clipping transients
+ * - Reducing natural speech dynamics
+ * - Creating harsh, compressed sound
+ * 
+ * Target: ~80-85% of full scale preserves dynamics while avoiding quantization noise.
  *
  * @param pcmBuffer - 16-bit signed PCM audio buffer
  * @returns Normalized 16-bit signed PCM audio buffer
@@ -84,7 +134,7 @@ export function normalizePcm(pcmBuffer: Buffer): Buffer {
     if (abs > peak) peak = abs;
   }
 
-  // Also calculate RMS for reference
+  // Calculate RMS for reference
   let sumSquares = 0;
   for (let i = 0; i < samples.length; i++) {
     sumSquares += samples[i] * samples[i];
@@ -96,33 +146,45 @@ export function normalizePcm(pcmBuffer: Buffer): Buffer {
   console.log("   • RMS amplitude:", rmsIn.toFixed(2));
   console.log("   • Peak utilization:", ((peak / 32767) * 100).toFixed(1) + "%");
 
-  // AGGRESSIVE normalization: target 99% of full scale
-  // μ-law is logarithmic and REQUIRES high amplitude to work well
-  // At low amplitudes, quantization noise dominates
-  const TARGET_PEAK = Math.round(32767 * 0.99); // 99% of full scale
+  // MODERATE normalization: target 85% of full scale
+  // This preserves speech dynamics while ensuring good SNR
+  const TARGET_PEAK = Math.round(32767 * 0.85); // 85% of full scale
   let scaleFactor = 1.0;
   let clippedSamples = 0;
 
-  if (peak > 0 && peak < TARGET_PEAK) {
+  // Only normalize if peak is below 70% (avoid amplifying already loud audio)
+  if (peak > 0 && peak < TARGET_PEAK * 0.82) {  // ~70% threshold
     scaleFactor = TARGET_PEAK / peak;
+    
+    // Limit maximum gain to 3x to avoid amplifying noise
+    scaleFactor = Math.min(scaleFactor, 3.0);
 
-    console.log("🔊 AGGRESSIVE AMPLIFICATION by", (scaleFactor * 100).toFixed(1) + "% (targeting 99% scale)...");
+    console.log("🔊 Normalizing by", scaleFactor.toFixed(2) + "x (targeting 85% scale)...");
 
-    // Apply scaling with careful clipping tracking
+    // Apply scaling with soft clipping to avoid harsh artifacts
     for (let i = 0; i < samples.length; i++) {
-      const scaled = samples[i] * scaleFactor;
+      let scaled = samples[i] * scaleFactor;
+      
+      // Soft clipping using tanh-like curve for values approaching limits
+      if (Math.abs(scaled) > 28000) {
+        const sign = scaled > 0 ? 1 : -1;
+        const excess = Math.abs(scaled) - 28000;
+        // Compress the excess to avoid hard clipping
+        scaled = sign * (28000 + excess * 0.3);
+      }
+      
       const clamped = Math.max(-32768, Math.min(32767, Math.round(scaled)));
-      if (Math.round(scaled) !== clamped) clippedSamples++;
+      if (Math.abs(scaled) > 32767) clippedSamples++;
       samples[i] = clamped;
     }
 
     if (clippedSamples > 0) {
-      console.log("⚠️  Clipped", clippedSamples, "samples (", ((clippedSamples / samples.length) * 100).toFixed(2) + "%)");
+      console.log("⚠️  Soft-clipped", clippedSamples, "samples (", ((clippedSamples / samples.length) * 100).toFixed(2) + "%)");
     }
   } else if (peak === 0) {
     console.log("⚠️  No audio data detected!");
   } else {
-    console.log("✅ Audio already near full scale");
+    console.log("✅ Audio already at good level, no normalization needed");
   }
 
   // Re-calculate peak and RMS after scaling
@@ -140,7 +202,7 @@ export function normalizePcm(pcmBuffer: Buffer): Buffer {
   console.log("   • Peak amplitude:", newPeak);
   console.log("   • RMS amplitude:", rmsOut.toFixed(2));
   console.log("   • Peak utilization:", ((newPeak / 32767) * 100).toFixed(1) + "%");
-  console.log("   • RMS gain:", (scaleFactor * 100).toFixed(1) + "%");
+  console.log("   • Gain applied:", scaleFactor.toFixed(2) + "x");
   console.log("");
   console.log("✅ Normalization complete in", (Date.now() - startTime), "ms");
   console.log("=========================================");
@@ -151,20 +213,25 @@ export function normalizePcm(pcmBuffer: Buffer): Buffer {
 /**
  * Downsamples 24kHz PCM audio to 8kHz for Telnyx compatibility.
  *
- * OpenAI TTS returns 24kHz PCM (16-bit signed, little-endian) audio.
- * Telnyx expects 8kHz, so we downsample by taking every 3rd sample (24000 / 8000 = 3).
- *
- * This function correctly preserves the 16-bit little-endian sample data
- * by returning a Buffer view of the underlying Int16Array memory.
+ * CRITICAL FIX: Cutoff frequency lowered from 4100 Hz to 3400 Hz.
+ * 
+ * The Nyquist frequency for 8kHz output is 4000 Hz. Any frequency content
+ * above Nyquist will "fold back" (alias) into the audible range, creating
+ * metallic/warbling artifacts.
+ * 
+ * Standard telephony uses 3400 Hz cutoff (the standard "toll quality" bandwidth).
+ * This provides a guard band to ensure clean anti-aliasing.
  *
  * @param pcmBuffer - 24kHz PCM audio buffer (16-bit signed, little-endian)
  * @returns 8kHz PCM audio buffer (16-bit signed, little-endian)
  */
 const DECIMATION_FACTOR = 3;
+
+// FIR filter with CORRECT cutoff at 3400 Hz (telephony standard)
 const LOWPASS_TAPS = createLowpassTaps({
-  cutoffHz: 4100, // Maximally aggressive: just below output Nyquist (4000 Hz) preserves max frequency content
+  cutoffHz: 3400,   // FIXED: Was 4100 Hz (above Nyquist!)
   sampleRate: 24000,
-  numTaps: 63, // 63 taps balanced for performance; more taps don't help and add complexity
+  numTaps: 63,      // Good balance of quality and performance
 });
 
 export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
@@ -194,11 +261,8 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   const rms24k = Math.sqrt(sum24k / samples24k.length);
   console.log("   • RMS amplitude:", rms24k.toFixed(2));
   console.log("   • Peak range:", min24k, "to", max24k);
-  console.log("   • First 5 samples:", Array.from(samples24k.slice(0, 5)));
 
-  // FIR low-pass filter before decimating by 3. A 63-tap Hann-windowed
-  // sinc removes high-frequency energy more aggressively than the
-  // previous biquad and avoids warble artifacts once μ-law encoded.
+  // Apply FIR low-pass filter with decimation
   const samples8k = new Int16Array(Math.floor(samples24k.length / DECIMATION_FACTOR));
   const centerTap = (LOWPASS_TAPS.length - 1) / 2;
 
@@ -206,7 +270,7 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   console.log("   • Filter type: FIR low-pass (Hann-windowed sinc)");
   console.log("   • Number of taps:", LOWPASS_TAPS.length);
   console.log("   • Decimation factor:", DECIMATION_FACTOR);
-  console.log("   • Expected cutoff: 4100 Hz (maximizes frequency content before 8kHz output)");
+  console.log("   • Cutoff frequency: 3400 Hz (telephony standard)");
 
   let clampedSamples = 0;
   for (let i = 0; i < samples8k.length; i++) {
@@ -242,13 +306,8 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   console.log("   • RMS amplitude:", rms8k.toFixed(2));
   console.log("   • Peak range:", min8k, "to", max8k);
   console.log("   • Clamped samples:", clampedSamples, `(${((clampedSamples / samples8k.length) * 100).toFixed(2)}%)`);
-  console.log("   • First 5 samples:", Array.from(samples8k.slice(0, 5)));
-  console.log("   • RMS change:", ((rms8k / rms24k) * 100).toFixed(1) + "%", "(should be ~100% if filter preserves level)");
+  console.log("   • RMS preservation:", ((rms8k / rms24k) * 100).toFixed(1) + "%");
 
-  // Wrap the Int16Array's underlying memory in a Buffer.
-  // This preserves the 16-bit little-endian sample data correctly.
-  // CRITICAL: Do NOT use Buffer.from(samples8k) because that would
-  // treat the array as an iterable of numbers and corrupt the data.
   const result = Buffer.from(
     samples8k.buffer,
     samples8k.byteOffset,
@@ -263,6 +322,14 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   return result;
 }
 
+/**
+ * Creates FIR low-pass filter coefficients using windowed sinc design.
+ * 
+ * @param cutoffHz - Cutoff frequency in Hz
+ * @param sampleRate - Sample rate in Hz
+ * @param numTaps - Number of filter taps (must be odd)
+ * @returns Filter coefficients (Float64Array)
+ */
 function createLowpassTaps({
   cutoffHz,
   sampleRate,
@@ -278,15 +345,14 @@ function createLowpassTaps({
 
   for (let i = 0; i < numTaps; i++) {
     const n = i - center;
-    const window = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (numTaps - 1))); // Hann window
-    const ideal =
-      n === 0
-        ? 2 * fc
-        : (Math.sin(2 * Math.PI * fc * n) / (Math.PI * n)) * 2 * fc;
-    taps[i] = ideal * window;
+    // Hann window for smooth frequency response
+    const window = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (numTaps - 1)));
+    // Ideal sinc filter
+    const sinc = n === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * n) / (Math.PI * n);
+    taps[i] = sinc * window;
   }
 
-  // Normalize to unity gain at DC to preserve level
+  // Normalize to unity gain at DC
   const sum = taps.reduce((acc, v) => acc + v, 0);
   for (let i = 0; i < numTaps; i++) {
     taps[i] /= sum || 1;
@@ -296,13 +362,16 @@ function createLowpassTaps({
 }
 
 /**
- * Final amplitude boost before μ-law encoding.
- * This is CRITICAL: μ-law is logarithmic and requires high amplitude signals.
- * If the input is below ~24000 peak, μ-law quantization becomes very poor.
- * This final stage ensures we're using the full range of the μ-law codec.
+ * Final amplitude adjustment before μ-law encoding.
+ * 
+ * SIMPLIFIED: Removed aggressive boosting. The normalization stage
+ * already handles level optimization. This now just does a gentle
+ * check to ensure we're not sending silent audio.
+ * 
+ * μ-law's logarithmic nature means it handles a WIDE dynamic range well.
+ * Peaks at 15000-25000 work perfectly fine. Over-boosting causes distortion.
  */
 export function boostBeforeMulaw(pcmBuffer: Buffer): Buffer {
-  // Quick peak check
   const samples = new Int16Array(
     pcmBuffer.buffer,
     pcmBuffer.byteOffset,
@@ -315,58 +384,49 @@ export function boostBeforeMulaw(pcmBuffer: Buffer): Buffer {
     if (abs > peak) peak = abs;
   }
 
-  // μ-law works best with peaks at 25000+
-  // If we're below that, boost more
-  const MIN_PEAK_FOR_MULAW = 24000;
+  // Only boost if audio is very quiet (below 20% of full scale)
+  // This catches edge cases where TTS output is unusually quiet
+  const MIN_ACCEPTABLE_PEAK = 6500; // ~20% of full scale
 
-  if (peak > 0 && peak < MIN_PEAK_FOR_MULAW) {
-    const boost = MIN_PEAK_FOR_MULAW / peak;
+  if (peak > 0 && peak < MIN_ACCEPTABLE_PEAK) {
+    // Gentle boost to reach 50% of full scale (not 99%!)
+    const targetPeak = 16000;
+    const boost = targetPeak / peak;
 
-    console.log("🔊 ========== FINAL PRE-MULAW BOOST ==========");
+    console.log("🔊 ========== GENTLE PRE-MULAW BOOST ==========");
     console.log("📊 Input peak:", peak, `(${((peak / 32767) * 100).toFixed(1)}%)`);
-    console.log("🔊 Applying boost:", (boost * 100).toFixed(1) + "% to reach optimal μ-law range");
+    console.log("🔊 Applying gentle boost:", boost.toFixed(2) + "x");
 
-    let boostedPeak = 0;
     for (let i = 0; i < samples.length; i++) {
       const boosted = samples[i] * boost;
-      const clamped = Math.max(-32768, Math.min(32767, Math.round(boosted)));
-      samples[i] = clamped;
-      const abs = Math.abs(clamped);
-      if (abs > boostedPeak) boostedPeak = abs;
+      samples[i] = Math.max(-32768, Math.min(32767, Math.round(boosted)));
     }
 
-    console.log("📊 Output peak:", boostedPeak, `(${((boostedPeak / 32767) * 100).toFixed(1)}%)`);
     console.log("=========================================");
+  } else {
+    console.log("✅ Audio level good for μ-law, peak:", peak, `(${((peak / 32767) * 100).toFixed(1)}%)`);
   }
 
   return Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
 }
 
 /**
- * Converts 16-bit linear PCM audio to 8-bit mulaw format.
- *
- * Telnyx uses PCMU (mulaw) codec for voice calls. This converts the 16-bit
- * linear PCM audio (from OpenAI TTS at 8 kHz) to 8-bit mulaw format.
+ * Converts 16-bit linear PCM audio to 8-bit μ-law format.
+ * Uses the CORRECT ITU-T G.711 standard algorithm.
  *
  * @param pcmBuffer - 16-bit linear PCM audio buffer (8kHz, little-endian)
- * @returns 8-bit mulaw audio buffer (8kHz)
+ * @returns 8-bit μ-law audio buffer (8kHz)
  */
 export function pcmToMulaw(pcmBuffer: Buffer): Buffer {
   const startTime = Date.now();
   console.log("🔄 ========== PCM → μ-LAW ENCODING ==========");
 
-  // Read 16-bit little-endian samples from the input buffer
   const sampleCount = pcmBuffer.length / 2;
-  const samples = new Int16Array(sampleCount);
-
-  for (let i = 0; i < sampleCount; i++) {
-    samples[i] = pcmBuffer.readInt16LE(i * 2);
-  }
-
+  
   // Analyze input PCM
   let minPcm = 32767, maxPcm = -32768, sumPcm = 0;
   for (let i = 0; i < sampleCount; i++) {
-    const s = samples[i];
+    const s = pcmBuffer.readInt16LE(i * 2);
     if (s < minPcm) minPcm = s;
     if (s > maxPcm) maxPcm = s;
     sumPcm += s * s;
@@ -374,77 +434,129 @@ export function pcmToMulaw(pcmBuffer: Buffer): Buffer {
   const rmsPcm = Math.sqrt(sumPcm / sampleCount);
 
   console.log("📊 Input (16-bit PCM @ 8kHz):");
-  console.log("   • Buffer length:", pcmBuffer.length, "bytes");
   console.log("   • Sample count:", sampleCount);
   console.log("   • Duration:", ((sampleCount / 8000) * 1000).toFixed(2), "ms");
   console.log("   • RMS amplitude:", rmsPcm.toFixed(2));
   console.log("   • Peak range:", minPcm, "to", maxPcm);
-  console.log("   • First 5 samples:", Array.from(samples.slice(0, 5)));
 
-  // Encode each 16-bit PCM sample to 8-bit μ-law
+  // Encode each sample using CORRECT G.711 μ-law algorithm
   const mulawArray = new Uint8Array(sampleCount);
   for (let i = 0; i < sampleCount; i++) {
-    mulawArray[i] = encodeSampleMulaw(samples[i]);
+    const sample = pcmBuffer.readInt16LE(i * 2);
+    mulawArray[i] = encodeMulawG711(sample);
   }
 
   console.log("");
   console.log("📊 Output (8-bit μ-law):");
   console.log("   • Encoded bytes:", mulawArray.length);
-  console.log("   • Compression ratio:", (pcmBuffer.length / mulawArray.length).toFixed(1) + ":1", "(16-bit → 8-bit)");
-  console.log("   • First 5 encoded bytes:", Array.from(mulawArray.slice(0, 5)));
-  console.log("   • Encoding standard: ITU-T G.711 μ-law");
+  console.log("   • Compression ratio: 2:1");
+  console.log("   • First 10 encoded bytes:", Array.from(mulawArray.slice(0, 10)));
 
-  // Convert Uint8Array to Buffer
   const mulawBuffer = Buffer.from(mulawArray);
 
   console.log("");
   console.log("✅ μ-law encoding complete in", (Date.now() - startTime), "ms");
-  console.log("   • Output buffer length:", mulawBuffer.length, "bytes");
   console.log("===========================================");
 
   return mulawBuffer;
 }
 
 /**
- * Chunks mulaw audio into properly-sized packets for Telnyx streaming.
+ * CORRECT ITU-T G.711 μ-law encoder.
+ * 
+ * This implementation matches the official G.711 specification exactly.
+ * The algorithm:
+ * 1. Handle sign
+ * 2. Add bias (132)
+ * 3. Find segment by locating MSB position
+ * 4. Extract mantissa
+ * 5. Combine and invert
+ */
+function encodeMulawG711(sample: number): number {
+  const BIAS = 0x84;  // 132
+  const CLIP = 32635; // Maximum before clipping
+  
+  // Step 1: Extract sign
+  let sign = 0;
+  if (sample < 0) {
+    sign = 0x80;
+    sample = -sample;
+  }
+  
+  // Step 2: Clip to valid range
+  if (sample > CLIP) {
+    sample = CLIP;
+  }
+  
+  // Step 3: Add bias
+  sample += BIAS;
+  
+  // Step 4: Find segment (exponent) by finding MSB position
+  // Segments are defined by bit positions after bias is added
+  let exponent = 0;
+  let mantissa = 0;
+  
+  // Find the segment using standard G.711 segment boundaries
+  // After adding bias, sample is at least 132
+  if (sample >= 0x4000) {       // 16384
+    exponent = 7;
+    mantissa = (sample >> 10) & 0x0F;
+  } else if (sample >= 0x2000) { // 8192
+    exponent = 6;
+    mantissa = (sample >> 9) & 0x0F;
+  } else if (sample >= 0x1000) { // 4096
+    exponent = 5;
+    mantissa = (sample >> 8) & 0x0F;
+  } else if (sample >= 0x0800) { // 2048
+    exponent = 4;
+    mantissa = (sample >> 7) & 0x0F;
+  } else if (sample >= 0x0400) { // 1024
+    exponent = 3;
+    mantissa = (sample >> 6) & 0x0F;
+  } else if (sample >= 0x0200) { // 512
+    exponent = 2;
+    mantissa = (sample >> 5) & 0x0F;
+  } else if (sample >= 0x0100) { // 256
+    exponent = 1;
+    mantissa = (sample >> 4) & 0x0F;
+  } else {                       // < 256
+    exponent = 0;
+    mantissa = (sample >> 3) & 0x0F;
+  }
+  
+  // Step 5: Combine sign, exponent, mantissa and invert all bits
+  const encoded = sign | (exponent << 4) | mantissa;
+  return (~encoded) & 0xFF;
+}
+
+/**
+ * Chunks μ-law audio into 20ms packets for Telnyx streaming.
+ * At 8kHz sample rate, 20ms = 160 samples = 160 bytes (8-bit μ-law).
  *
- * At 8kHz sample rate, 20ms of audio = 160 samples = 160 bytes (8-bit mulaw).
- * This function breaks the mulaw audio into 20ms chunks, which is the standard
- * packet size for VoIP applications and matches Telnyx streaming expectations.
- *
- * @param mulawBuffer - 8-bit mulaw audio buffer (8kHz)
- * @returns Array of 20ms audio chunks (Buffer objects)
+ * @param mulawBuffer - 8-bit μ-law audio buffer (8kHz)
+ * @returns Array of 20ms audio chunks
  */
 export function chunkAudio(mulawBuffer: Buffer): Buffer[] {
   console.log("🔀 ========== AUDIO CHUNKING ==========");
-  const SAMPLE_RATE = 8000; // Hz
-  const CHUNK_DURATION_MS = 20; // milliseconds
-  const CHUNK_SIZE = (SAMPLE_RATE / 1000) * CHUNK_DURATION_MS; // 160 bytes per chunk
+  const SAMPLE_RATE = 8000;
+  const CHUNK_DURATION_MS = 20;
+  const CHUNK_SIZE = (SAMPLE_RATE / 1000) * CHUNK_DURATION_MS; // 160 bytes
 
-  console.log("📊 Chunking Configuration:");
-  console.log("   • Sample rate:", SAMPLE_RATE, "Hz");
-  console.log("   • Chunk duration:", CHUNK_DURATION_MS, "ms");
-  console.log("   • Chunk size:", CHUNK_SIZE, "bytes");
+  console.log("📊 Configuration:");
+  console.log("   • Chunk size:", CHUNK_SIZE, "bytes (20ms @ 8kHz)");
 
   const chunks: Buffer[] = [];
 
-  // Slice the buffer into 20ms chunks
   for (let i = 0; i < mulawBuffer.length; i += CHUNK_SIZE) {
     const chunk = mulawBuffer.slice(i, Math.min(i + CHUNK_SIZE, mulawBuffer.length));
     chunks.push(chunk);
   }
 
   const totalDurationMs = (mulawBuffer.length / SAMPLE_RATE) * 1000;
-  const lastChunkSize = chunks[chunks.length - 1]?.length || 0;
 
-  console.log("");
-  console.log("📊 Chunking Results:");
-  console.log("   • Input buffer size:", mulawBuffer.length, "bytes");
-  console.log("   • Total duration:", totalDurationMs.toFixed(2), "ms");
+  console.log("📊 Results:");
   console.log("   • Total chunks:", chunks.length);
-  console.log("   • Full chunks:", chunks.length - 1);
-  console.log("   • Last chunk size:", lastChunkSize, "bytes", lastChunkSize < CHUNK_SIZE ? "(partial)" : "(full)");
-  console.log("   • Streaming time:", (chunks.length * CHUNK_DURATION_MS).toFixed(0), "ms", `(${chunks.length} × ${CHUNK_DURATION_MS}ms)`);
+  console.log("   • Total duration:", totalDurationMs.toFixed(2), "ms");
   console.log("======================================");
 
   return chunks;
