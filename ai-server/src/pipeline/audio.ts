@@ -68,6 +68,13 @@ function encodeSampleMulaw(sample: number): number {
  * @param pcmBuffer - 24kHz PCM audio buffer (16-bit signed, little-endian)
  * @returns 8kHz PCM audio buffer (16-bit signed, little-endian)
  */
+const DECIMATION_FACTOR = 3;
+const LOWPASS_TAPS = createLowpassTaps({
+  cutoffHz: 3400,
+  sampleRate: 24000,
+  numTaps: 63,
+});
+
 export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   // Create an Int16Array view of the input buffer (24 kHz samples)
   const samples24k = new Int16Array(
@@ -76,20 +83,24 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
     pcmBuffer.byteLength / 2
   );
 
-  // Create a new Int16Array to hold downsampled samples (8 kHz)
-  const samples8k = new Int16Array(Math.floor(samples24k.length / 3));
+  // FIR low-pass filter before decimating by 3. A 63-tap Hann-windowed
+  // sinc removes high-frequency energy more aggressively than the
+  // previous biquad and avoids warble artifacts once μ-law encoded.
+  const samples8k = new Int16Array(Math.floor(samples24k.length / DECIMATION_FACTOR));
+  const centerTap = (LOWPASS_TAPS.length - 1) / 2;
 
-  // Downsample with a simple 3-tap box filter:
-  // For each output sample, average 3 consecutive input samples.
-  // This acts as a low-pass filter to reduce aliasing artifacts
-  // that would otherwise cause warbly/noisy sound on the call.
   for (let i = 0; i < samples8k.length; i++) {
-    const base = i * 3;
-    const s0 = samples24k[base] ?? 0;
-    const s1 = samples24k[base + 1] ?? s0;
-    const s2 = samples24k[base + 2] ?? s1;
-    const avg = Math.round((s0 + s1 + s2) / 3);
-    samples8k[i] = avg;
+    const sourceIndex = i * DECIMATION_FACTOR;
+    let acc = 0;
+
+    for (let t = 0; t < LOWPASS_TAPS.length; t++) {
+      const tapIndex = sourceIndex + t - centerTap;
+      const sample = tapIndex >= 0 && tapIndex < samples24k.length ? samples24k[tapIndex] : 0;
+      acc += sample * LOWPASS_TAPS[t];
+    }
+
+    const clamped = Math.max(-32768, Math.min(32767, Math.round(acc)));
+    samples8k[i] = clamped;
   }
 
   // Wrap the Int16Array's underlying memory in a Buffer.
@@ -111,6 +122,38 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   );
 
   return result;
+}
+
+function createLowpassTaps({
+  cutoffHz,
+  sampleRate,
+  numTaps,
+}: {
+  cutoffHz: number;
+  sampleRate: number;
+  numTaps: number;
+}): Float64Array {
+  const taps = new Float64Array(numTaps);
+  const center = (numTaps - 1) / 2;
+  const fc = cutoffHz / sampleRate; // normalized cutoff (0..0.5)
+
+  for (let i = 0; i < numTaps; i++) {
+    const n = i - center;
+    const window = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (numTaps - 1))); // Hann window
+    const ideal =
+      n === 0
+        ? 2 * fc
+        : (Math.sin(2 * Math.PI * fc * n) / (Math.PI * n)) * 2 * fc;
+    taps[i] = ideal * window;
+  }
+
+  // Normalize to unity gain at DC to preserve level
+  const sum = taps.reduce((acc, v) => acc + v, 0);
+  for (let i = 0; i < numTaps; i++) {
+    taps[i] /= sum || 1;
+  }
+
+  return taps;
 }
 
 /**
