@@ -163,6 +163,19 @@ async function sendTtsResponse(
     return;
   }
 
+  // Print debug links for audio quality testing
+  const textForUrl = encodeURIComponent(aiText);
+  const baseUrl = config.telnyx.streamUrl.replace('wss://', 'https://');
+  console.log("");
+  console.log("🎧 ========== DEBUG AUDIO FILES ==========");
+  console.log("📥 Download these files to test audio quality:");
+  console.log(`   1️⃣  Raw 24kHz: ${baseUrl}/debug/tts-raw-24k?text=${textForUrl}`);
+  console.log(`   2️⃣  Normalized 24kHz: ${baseUrl}/debug/tts-normalized-24k?text=${textForUrl}`);
+  console.log(`   3️⃣  Downsampled 8kHz: ${baseUrl}/debug/tts-8k-wav?text=${textForUrl}`);
+  console.log(`   4️⃣  μ-law Encoded: ${baseUrl}/debug/tts-mulaw-raw?text=${textForUrl}`);
+  console.log("==========================================");
+  console.log("");
+
   // Step 2: Normalize audio to maximize dynamic range for μ-law encoding
   // This is critical because μ-law is logarithmic and works better with higher amplitude
   const normalizeStartTime = Date.now();
