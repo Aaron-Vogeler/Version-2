@@ -10,95 +10,70 @@
  */
 
 /**
- * ITU-T G.711 μ-law encoding lookup table approach.
- * This is the CORRECT implementation per the G.711 standard.
+ * CORRECT ITU-T G.711 μ-law encoder.
  * 
- * μ-law compresses 14-bit dynamic range into 8 bits using logarithmic
- * compression, which matches human hearing perception.
+ * This implementation matches the official G.711 specification exactly.
+ * The algorithm:
+ * 1. Handle sign
+ * 2. Add bias (132)
+ * 3. Find segment by locating MSB position
+ * 4. Extract mantissa
+ * 5. Combine and invert
  */
-
-// Precomputed segment table for fast encoding
-const MULAW_BIAS = 0x84;  // 132 in decimal
-const MULAW_CLIP = 32635; // Maximum value before clipping
-const MULAW_SEGMENT_TABLE = [0, 132, 396, 924, 1980, 4092, 8316, 16764];
-
-/**
- * Standard ITU-T G.711 μ-law encoding.
- * Converts a 16-bit linear PCM sample to 8-bit μ-law.
- * 
- * @param sample - 16-bit signed PCM sample (-32768 to 32767)
- * @returns 8-bit μ-law encoded byte (0-255)
- */
-function encodeSampleMulaw(sample: number): number {
-  // Get the sign bit (1 = positive, 0 = negative in μ-law convention)
+function encodeMulawG711(sample: number): number {
+  const BIAS = 0x84;  // 132
+  const CLIP = 32635; // Maximum before clipping
+  
+  // Step 1: Extract sign
   let sign = 0;
   if (sample < 0) {
     sign = 0x80;
     sample = -sample;
   }
-
-  // Clip to maximum value
-  if (sample > MULAW_CLIP) {
-    sample = MULAW_CLIP;
-  }
-
-  // Add bias for better low-amplitude encoding
-  sample += MULAW_BIAS;
-
-  // Find the segment (exponent) by checking which range the sample falls into
-  let exponent = 7;
-  for (let i = 0; i < 8; i++) {
-    if (sample <= MULAW_SEGMENT_TABLE[i + 1]) {
-      exponent = i;
-      break;
-    }
+  
+  // Step 2: Clip to valid range
+  if (sample > CLIP) {
+    sample = CLIP;
   }
   
-  // Alternative segment finding using bit position (more standard approach)
-  // Find the position of the most significant bit
-  exponent = 0;
-  let shifted = sample >> 7;
-  while (shifted > 0 && exponent < 7) {
-    shifted >>= 1;
-    exponent++;
-  }
-
-  // Extract the 4-bit mantissa from the appropriate position
-  const mantissa = (sample >> (exponent + 3)) & 0x0F;
-
-  // Combine: sign (1 bit) + exponent (3 bits) + mantissa (4 bits)
-  // Then invert all bits (μ-law uses inverted encoding for better noise immunity)
-  const encoded = ~(sign | (exponent << 4) | mantissa);
+  // Step 3: Add bias
+  sample += BIAS;
   
-  return encoded & 0xFF;
-}
-
-/**
- * Alternative: Use the standard μ-law formula directly.
- * This is mathematically equivalent but clearer.
- * 
- * Formula: F(x) = sgn(x) * ln(1 + μ|x|) / ln(1 + μ)
- * where μ = 255 for telephony.
- */
-function encodeSampleMulawPrecise(sample: number): number {
-  const MU = 255;
-  const MAX = 32768;
-
-  // Get sign
-  const sign = sample < 0 ? 1 : 0;
-  sample = Math.abs(sample);
-
-  // Normalize to 0-1 range
-  const normalized = Math.min(sample / MAX, 1.0);
-
-  // Apply μ-law compression formula
-  const compressed = Math.log(1 + MU * normalized) / Math.log(1 + MU);
-
-  // Convert back to 8-bit range (0-127 for magnitude)
-  let magnitude = Math.floor(compressed * 127);
-
-  // Combine sign and magnitude, then invert
-  const encoded = (sign << 7) | magnitude;
+  // Step 4: Find segment (exponent) by finding MSB position
+  // Segments are defined by bit positions after bias is added
+  let exponent = 0;
+  let mantissa = 0;
+  
+  // Find the segment using standard G.711 segment boundaries
+  // After adding bias, sample is at least 132
+  if (sample >= 0x4000) {       // 16384
+    exponent = 7;
+    mantissa = (sample >> 10) & 0x0F;
+  } else if (sample >= 0x2000) { // 8192
+    exponent = 6;
+    mantissa = (sample >> 9) & 0x0F;
+  } else if (sample >= 0x1000) { // 4096
+    exponent = 5;
+    mantissa = (sample >> 8) & 0x0F;
+  } else if (sample >= 0x0800) { // 2048
+    exponent = 4;
+    mantissa = (sample >> 7) & 0x0F;
+  } else if (sample >= 0x0400) { // 1024
+    exponent = 3;
+    mantissa = (sample >> 6) & 0x0F;
+  } else if (sample >= 0x0200) { // 512
+    exponent = 2;
+    mantissa = (sample >> 5) & 0x0F;
+  } else if (sample >= 0x0100) { // 256
+    exponent = 1;
+    mantissa = (sample >> 4) & 0x0F;
+  } else {                       // < 256
+    exponent = 0;
+    mantissa = (sample >> 3) & 0x0F;
+  }
+  
+  // Step 5: Combine sign, exponent, mantissa and invert all bits
+  const encoded = sign | (exponent << 4) | mantissa;
   return (~encoded) & 0xFF;
 }
 
@@ -208,6 +183,45 @@ export function normalizePcm(pcmBuffer: Buffer): Buffer {
   console.log("=========================================");
 
   return Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
+}
+
+/**
+ * Creates FIR low-pass filter coefficients using windowed sinc design.
+ * 
+ * @param cutoffHz - Cutoff frequency in Hz
+ * @param sampleRate - Sample rate in Hz
+ * @param numTaps - Number of filter taps (must be odd)
+ * @returns Filter coefficients (Float64Array)
+ */
+function createLowpassTaps({
+  cutoffHz,
+  sampleRate,
+  numTaps,
+}: {
+  cutoffHz: number;
+  sampleRate: number;
+  numTaps: number;
+}): Float64Array {
+  const taps = new Float64Array(numTaps);
+  const center = (numTaps - 1) / 2;
+  const fc = cutoffHz / sampleRate; // normalized cutoff (0..0.5)
+
+  for (let i = 0; i < numTaps; i++) {
+    const n = i - center;
+    // Hann window for smooth frequency response
+    const window = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (numTaps - 1)));
+    // Ideal sinc filter
+    const sinc = n === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * n) / (Math.PI * n);
+    taps[i] = sinc * window;
+  }
+
+  // Normalize to unity gain at DC
+  const sum = taps.reduce((acc, v) => acc + v, 0);
+  for (let i = 0; i < numTaps; i++) {
+    taps[i] /= sum || 1;
+  }
+
+  return taps;
 }
 
 /**
@@ -323,45 +337,6 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
 }
 
 /**
- * Creates FIR low-pass filter coefficients using windowed sinc design.
- * 
- * @param cutoffHz - Cutoff frequency in Hz
- * @param sampleRate - Sample rate in Hz
- * @param numTaps - Number of filter taps (must be odd)
- * @returns Filter coefficients (Float64Array)
- */
-function createLowpassTaps({
-  cutoffHz,
-  sampleRate,
-  numTaps,
-}: {
-  cutoffHz: number;
-  sampleRate: number;
-  numTaps: number;
-}): Float64Array {
-  const taps = new Float64Array(numTaps);
-  const center = (numTaps - 1) / 2;
-  const fc = cutoffHz / sampleRate; // normalized cutoff (0..0.5)
-
-  for (let i = 0; i < numTaps; i++) {
-    const n = i - center;
-    // Hann window for smooth frequency response
-    const window = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (numTaps - 1)));
-    // Ideal sinc filter
-    const sinc = n === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * n) / (Math.PI * n);
-    taps[i] = sinc * window;
-  }
-
-  // Normalize to unity gain at DC
-  const sum = taps.reduce((acc, v) => acc + v, 0);
-  for (let i = 0; i < numTaps; i++) {
-    taps[i] /= sum || 1;
-  }
-
-  return taps;
-}
-
-/**
  * Final amplitude adjustment before μ-law encoding.
  * 
  * SIMPLIFIED: Removed aggressive boosting. The normalization stage
@@ -459,74 +434,6 @@ export function pcmToMulaw(pcmBuffer: Buffer): Buffer {
   console.log("===========================================");
 
   return mulawBuffer;
-}
-
-/**
- * CORRECT ITU-T G.711 μ-law encoder.
- * 
- * This implementation matches the official G.711 specification exactly.
- * The algorithm:
- * 1. Handle sign
- * 2. Add bias (132)
- * 3. Find segment by locating MSB position
- * 4. Extract mantissa
- * 5. Combine and invert
- */
-function encodeMulawG711(sample: number): number {
-  const BIAS = 0x84;  // 132
-  const CLIP = 32635; // Maximum before clipping
-  
-  // Step 1: Extract sign
-  let sign = 0;
-  if (sample < 0) {
-    sign = 0x80;
-    sample = -sample;
-  }
-  
-  // Step 2: Clip to valid range
-  if (sample > CLIP) {
-    sample = CLIP;
-  }
-  
-  // Step 3: Add bias
-  sample += BIAS;
-  
-  // Step 4: Find segment (exponent) by finding MSB position
-  // Segments are defined by bit positions after bias is added
-  let exponent = 0;
-  let mantissa = 0;
-  
-  // Find the segment using standard G.711 segment boundaries
-  // After adding bias, sample is at least 132
-  if (sample >= 0x4000) {       // 16384
-    exponent = 7;
-    mantissa = (sample >> 10) & 0x0F;
-  } else if (sample >= 0x2000) { // 8192
-    exponent = 6;
-    mantissa = (sample >> 9) & 0x0F;
-  } else if (sample >= 0x1000) { // 4096
-    exponent = 5;
-    mantissa = (sample >> 8) & 0x0F;
-  } else if (sample >= 0x0800) { // 2048
-    exponent = 4;
-    mantissa = (sample >> 7) & 0x0F;
-  } else if (sample >= 0x0400) { // 1024
-    exponent = 3;
-    mantissa = (sample >> 6) & 0x0F;
-  } else if (sample >= 0x0200) { // 512
-    exponent = 2;
-    mantissa = (sample >> 5) & 0x0F;
-  } else if (sample >= 0x0100) { // 256
-    exponent = 1;
-    mantissa = (sample >> 4) & 0x0F;
-  } else {                       // < 256
-    exponent = 0;
-    mantissa = (sample >> 3) & 0x0F;
-  }
-  
-  // Step 5: Combine sign, exponent, mantissa and invert all bits
-  const encoded = sign | (exponent << 4) | mantissa;
-  return (~encoded) & 0xFF;
 }
 
 /**
