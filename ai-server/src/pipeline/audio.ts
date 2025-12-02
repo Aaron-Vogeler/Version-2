@@ -57,6 +57,81 @@ function encodeSampleMulaw(sample: number): number {
 }
 
 /**
+ * Normalizes PCM audio to use the full dynamic range.
+ *
+ * This is critical for μ-law encoding, which is a logarithmic codec.
+ * Low amplitude signals get quantized poorly, losing quality.
+ * Normalization prevents this by scaling the audio to use ~90% of full scale.
+ *
+ * @param pcmBuffer - 16-bit signed PCM audio buffer
+ * @returns Normalized 16-bit signed PCM audio buffer
+ */
+export function normalizePcm(pcmBuffer: Buffer): Buffer {
+  const startTime = Date.now();
+  console.log("📈 ========== AUDIO NORMALIZATION ==========");
+
+  // Create Int16Array view
+  const samples = new Int16Array(
+    pcmBuffer.buffer,
+    pcmBuffer.byteOffset,
+    pcmBuffer.byteLength / 2
+  );
+
+  // Find peak amplitude
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const abs = Math.abs(samples[i]);
+    if (abs > peak) peak = abs;
+  }
+
+  console.log("📊 Input:");
+  console.log("   • Peak amplitude:", peak);
+  console.log("   • Peak utilization:", ((peak / 32767) * 100).toFixed(1) + "%");
+
+  // If audio is too quiet (below 3000 peak), normalize to 90% of full scale
+  const TARGET_PEAK = 32767 * 0.9; // 90% of full scale
+  let scaleFactor = 1.0;
+
+  if (peak > 0 && peak < TARGET_PEAK) {
+    scaleFactor = TARGET_PEAK / peak;
+
+    console.log("   • RMS amplitude before:", samples.reduce((sum, s) => sum + s * s, 0) / samples.length);
+    console.log("🔊 Amplifying audio by", (scaleFactor * 100).toFixed(0) + "%...");
+
+    // Apply scaling with clamping to prevent overflow
+    for (let i = 0; i < samples.length; i++) {
+      const scaled = samples[i] * scaleFactor;
+      samples[i] = Math.max(-32768, Math.min(32767, Math.round(scaled)));
+    }
+  } else if (peak === 0) {
+    console.log("⚠️  No audio data detected!");
+  } else {
+    console.log("✅ Audio already at good level");
+  }
+
+  // Re-calculate peak after scaling
+  let newPeak = 0;
+  let sumSquares = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const abs = Math.abs(samples[i]);
+    if (abs > newPeak) newPeak = abs;
+    sumSquares += samples[i] * samples[i];
+  }
+  const rms = Math.sqrt(sumSquares / samples.length);
+
+  console.log("");
+  console.log("📊 Output:");
+  console.log("   • Peak amplitude:", newPeak);
+  console.log("   • Peak utilization:", ((newPeak / 32767) * 100).toFixed(1) + "%");
+  console.log("   • RMS amplitude:", rms.toFixed(2));
+  console.log("");
+  console.log("✅ Normalization complete in", (Date.now() - startTime), "ms");
+  console.log("=========================================");
+
+  return Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
+}
+
+/**
  * Downsamples 24kHz PCM audio to 8kHz for Telnyx compatibility.
  *
  * OpenAI TTS returns 24kHz PCM (16-bit signed, little-endian) audio.
@@ -70,9 +145,9 @@ function encodeSampleMulaw(sample: number): number {
  */
 const DECIMATION_FACTOR = 3;
 const LOWPASS_TAPS = createLowpassTaps({
-  cutoffHz: 3400,
+  cutoffHz: 3900, // Increased from 3400 to preserve more signal while still avoiding aliasing
   sampleRate: 24000,
-  numTaps: 63,
+  numTaps: 127, // Increased from 63 for better filter response and more aggressive anti-aliasing
 });
 
 export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
