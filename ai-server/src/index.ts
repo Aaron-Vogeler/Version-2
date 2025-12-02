@@ -166,16 +166,13 @@ async function sendTtsResponse(
   const mulawBuffer = pcmToMulaw(audioBuffer8k);
   console.log("🔄 Converted to mulaw, size:", mulawBuffer.length, "bytes");
 
-  // Send to Telnyx
+  // Send to Telnyx using the correct media format
   if (canSpeak(callContext, ws)) {
     ws.send(
       JSON.stringify({
-        event: "playback",
-        payload: {
-          type: "media",
+        event: "media",
+        media: {
           payload: mulawBuffer.toString("base64"),
-          encoding: "mulaw",
-          sample_rate: 8000,
         },
       })
     );
