@@ -52,21 +52,23 @@ export function pcmToMulaw(pcmBuffer: Buffer): Buffer {
   console.log("🔍 Debug pcmToMulaw - First few samples:", Array.from(samples.slice(0, 5)));
 
   // Encode Int16Array to mulaw - returns Uint8Array
-  let mulawArray: any;
+  let mulawArray: Uint8Array;
   try {
     mulawArray = encodeMulaw(samples);
     console.log("🔍 Debug pcmToMulaw - Encode successful, result type:", typeof mulawArray);
-    if (mulawArray instanceof Uint8Array) {
-      console.log("🔍 Debug pcmToMulaw - Result is Uint8Array, length:", mulawArray.length);
-    } else {
-      console.log("🔍 Debug pcmToMulaw - WARNING: Encode returned:", mulawArray);
+
+    // Validate that we got a Uint8Array, not an error code
+    if (!mulawArray || !(mulawArray instanceof Uint8Array)) {
+      throw new Error(`encodeMulaw() returned invalid result: ${mulawArray} (type: ${typeof mulawArray}). Expected Uint8Array.`);
     }
+    console.log("🔍 Debug pcmToMulaw - Result is Uint8Array, length:", mulawArray.length);
   } catch (err) {
-    console.error("🔍 Debug pcmToMulaw - Encode threw error:", err);
+    console.error("🔍 Debug pcmToMulaw - Encode failed:", err);
     throw err;
   }
 
   // Convert Uint8Array to Buffer
   const mulawBuffer = Buffer.from(mulawArray);
+  console.log("🔍 Debug pcmToMulaw - Converted to Buffer, length:", mulawBuffer.length);
   return mulawBuffer;
 }
