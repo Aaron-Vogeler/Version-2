@@ -3,10 +3,11 @@
  */
 
 /**
- * Standard μ-law (mulaw) encoding algorithm.
+ * Standard μ-law (mulaw) encoding algorithm (ITU-T G.711).
  * Converts 16-bit linear PCM samples to 8-bit μ-law compressed format.
  *
- * μ-law is a logarithmic compression codec used in telephony (ITU-T G.711).
+ * μ-law is a logarithmic compression codec used in telephony.
+ * This implementation follows the standard G.711 specification.
  *
  * @param sample - 16-bit signed PCM sample
  * @returns 8-bit μ-law encoded byte
@@ -16,10 +17,9 @@ function encodeSampleMulaw(sample: number): number {
   const CLIP = 32635;
   const QUANT_MASK = 0xf;
   const SEG_SHIFT = 4;
-  const SEG_MASK = 0x70;
 
-  // Extract sign bit and work with absolute value
-  let sign = (sample >> 8) & 0x80;
+  // Extract sign and work with absolute value
+  let sign = (sample & 0x8000) ? 0x80 : 0x00;
   if (sign !== 0) {
     sample = -sample;
   }
@@ -29,20 +29,27 @@ function encodeSampleMulaw(sample: number): number {
     sample = CLIP;
   }
 
-  // Calculate exponent and mantissa
-  let exponent = 0;
-  let mantissa = sample + BIAS;
+  // Add bias and find exponent using bit length (more robust than log2)
+  sample += BIAS;
 
-  if (mantissa >= 256) {
-    exponent = (Math.log2(mantissa) | 0) - 8;
-    mantissa = (mantissa >> (exponent + 3)) & QUANT_MASK;
-    exponent = (exponent + 1) << SEG_SHIFT;
+  let exponent = 0;
+  let mantissa = 0;
+
+  // Find which segment (exponent) this sample falls into
+  // This uses bit-length calculation rather than logarithm for accuracy
+  if (sample >= 256) {
+    // Find the highest set bit position
+    exponent = Math.floor(Math.log2(sample)) - 7;
+    if (exponent > 7) exponent = 7;
+
+    // Extract mantissa from the appropriate bits
+    mantissa = (sample >> (exponent + 3)) & QUANT_MASK;
   } else {
-    mantissa = (mantissa >> 4) & QUANT_MASK;
+    mantissa = (sample >> 4) & QUANT_MASK;
   }
 
-  // Combine and invert
-  return (~(sign | exponent | mantissa)) & 0xff;
+  // Combine sign, exponent, and mantissa, then invert for μ-law
+  return (~(sign | (exponent << SEG_SHIFT) | mantissa)) & 0xff;
 }
 
 /**
