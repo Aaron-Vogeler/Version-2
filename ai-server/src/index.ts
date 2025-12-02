@@ -419,18 +419,28 @@ app.get("/debug/tts-mulaw-raw", async (req, res) => {
     const pcm8kBoosted = boostBeforeMulaw(pcm8k);
     const mulawBuffer = pcmToMulaw(pcm8kBoosted);
 
-    // Also decode back to PCM for listening
+    // Properly decode μ-law back to PCM using ITU-T G.711 decoding
     const decodedPcm = new Int16Array(mulawBuffer.length);
     for (let i = 0; i < mulawBuffer.length; i++) {
       const byte = mulawBuffer[i];
       const inverted = (~byte) & 0xff;
-      const sign = inverted & 0x80;
+      const sign = (inverted & 0x80) >> 7;
       const exponent = (inverted >> 4) & 0x07;
       const mantissa = inverted & 0x0f;
 
-      let sample = (mantissa << (exponent + 3)) + (0x80 << (exponent + 3));
-      if (exponent === 0) sample = (mantissa << 4) + 8;
-      if (sign === 0) sample = -sample;
+      // ITU-T G.711 μ-law decoding formula
+      let sample = (mantissa << (exponent + 3)) + (0x80 << exponent);
+      if (exponent === 0) {
+        sample = mantissa << 4;
+      }
+
+      // Apply sign
+      if (sign === 1) {
+        sample = sample;
+      } else {
+        sample = -sample;
+      }
+
       decodedPcm[i] = sample;
     }
 
