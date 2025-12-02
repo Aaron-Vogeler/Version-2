@@ -48,6 +48,6 @@ export function pcmToMulaw(pcmBuffer: Buffer): Buffer {
   const mulawArray = encodeMulaw(samples);
 
   // Convert Uint8Array to Buffer
-  const mulawBuffer = Buffer.from(mulawArray.buffer, mulawArray.byteOffset, mulawArray.byteLength);
+  const mulawBuffer = Buffer.from(mulawArray);
   return mulawBuffer;
 }
