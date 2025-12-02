@@ -243,8 +243,88 @@ const wss = new WebSocketServer({ server });
 
 app.use(express.json());
 
-// HEALTH CHECK
-app.get("/health", (_, res) => res.status(200).send("Alive"));
+// HELPER: Generate a WAV file header for 8kHz mono 16-bit PCM
+function generateWavHeader(pcmDataLength: number): Buffer {
+  const sampleRate = 8000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * channels * (bitsPerSample / 8);
+  const blockAlign = channels * (bitsPerSample / 8);
+
+  // Total file size: 36 + pcm data length
+  const fileSize = 36 + pcmDataLength;
+
+  const header = Buffer.alloc(44);
+  let offset = 0;
+
+  // RIFF header
+  header.write("RIFF", offset);
+  offset += 4;
+  header.writeUInt32LE(fileSize, offset);
+  offset += 4;
+  header.write("WAVE", offset);
+  offset += 4;
+
+  // fmt subchunk
+  header.write("fmt ", offset);
+  offset += 4;
+  header.writeUInt32LE(16, offset); // Subchunk1Size (16 for PCM)
+  offset += 4;
+  header.writeUInt16LE(1, offset); // AudioFormat (1 = PCM)
+  offset += 2;
+  header.writeUInt16LE(channels, offset);
+  offset += 2;
+  header.writeUInt32LE(sampleRate, offset);
+  offset += 4;
+  header.writeUInt32LE(byteRate, offset);
+  offset += 4;
+  header.writeUInt16LE(blockAlign, offset);
+  offset += 2;
+  header.writeUInt16LE(bitsPerSample, offset);
+  offset += 2;
+
+  // data subchunk
+  header.write("data", offset);
+  offset += 4;
+  header.writeUInt32LE(pcmDataLength, offset);
+
+  return header;
+}
+
+// DEBUG ENDPOINT: Listen to downsampled 8kHz PCM as WAV
+app.get("/debug/tts-8k-wav", async (req, res) => {
+  try {
+    const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
+    console.log("🎵 Debug TTS endpoint called with text:", text);
+
+    // Get 24kHz PCM from OpenAI TTS
+    const pcm24k = await synthesizeSpeech(text);
+    console.log("✓ OpenAI TTS returned:", pcm24k.length, "bytes at 24kHz");
+
+    // Downsample to 8kHz
+    const pcm8k = downsample24kHzTo8kHz(pcm24k);
+    console.log("✓ Downsampled to 8kHz:", pcm8k.length, "bytes");
+
+    // Generate WAV header
+    const wavHeader = generateWavHeader(pcm8k.length);
+
+    // Combine header + PCM data
+    const wavFile = Buffer.concat([wavHeader, pcm8k]);
+    console.log("✓ WAV file generated:", wavFile.length, "bytes total");
+
+    // Send as audio/wav
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Content-Length", wavFile.length);
+    res.send(wavFile);
+  } catch (error) {
+    console.error("❌ Debug TTS endpoint error:", error instanceof Error ? error.message : error);
+    res.status(500).json({
+      error: "Failed to generate TTS audio",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 
 // OUTBOUND CALL ENDPOINT
 app.use("/api/outbound-call", outboundCallRouter);
