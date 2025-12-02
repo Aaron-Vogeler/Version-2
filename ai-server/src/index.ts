@@ -131,17 +131,22 @@ async function sendTtsResponse(
   ws: WebSocket,
   aiText: string
 ): Promise<void> {
+  const pipelineStartTime = Date.now();
+  console.log("");
+  console.log("🎵 ========================================");
+  console.log("🎵 STARTING FULL TTS AUDIO PIPELINE");
+  console.log("🎵 ========================================");
+
   // Double-check we can still speak before calling TTS API
   if (!canSpeak(callContext, ws)) {
     console.log("⚠️ Call ended or WebSocket closed, skipping TTS API call");
     return;
   }
 
-  console.log("🔊 Converting to speech with OpenAI TTS...");
+  // Step 1: TTS Synthesis
   let audioBuffer24k: Buffer;
   try {
     audioBuffer24k = await synthesizeSpeech(aiText);
-    console.log("🔊 Synthesized audio");
   } catch (ttsError) {
     console.error(
       "❌ OpenAI error:",
@@ -158,19 +163,31 @@ async function sendTtsResponse(
     return;
   }
 
-  // Downsample from 24kHz to 8kHz to match Telnyx native format
+  // Step 2: Downsample from 24kHz to 8kHz to match Telnyx native format
+  const downsampleStartTime = Date.now();
   const audioBuffer8k = downsample24kHzTo8kHz(audioBuffer24k);
-  console.log("📉 Downsampled to 8kHz, size:", audioBuffer8k.length, "bytes");
 
-  // Convert from 16-bit linear PCM to 8-bit mulaw (PCMU) for Telnyx
+  // Step 3: Convert from 16-bit linear PCM to 8-bit mulaw (PCMU) for Telnyx
+  const mulawStartTime = Date.now();
   const mulawBuffer = pcmToMulaw(audioBuffer8k);
-  console.log("🔄 Converted to mulaw, size:", mulawBuffer.length, "bytes");
 
-  // Chunk audio into 20ms packets for proper Telnyx streaming
+  // Step 4: Chunk audio into 20ms packets for proper Telnyx streaming
+  const chunkStartTime = Date.now();
   const audioChunks = chunkAudio(mulawBuffer);
+
+  // Step 5: Stream to Telnyx
+  const streamStartTime = Date.now();
+  console.log("");
+  console.log("📡 ========== STREAMING TO TELNYX ==========");
+  console.log("📊 Streaming Info:");
+  console.log("   • Total chunks to send:", audioChunks.length);
+  console.log("   • Packet interval:", "20 ms");
+  console.log("   • Expected streaming duration:", (audioChunks.length * 20), "ms");
+  console.log("   • WebSocket state:", ws.readyState === WebSocket.OPEN ? "OPEN" : "CLOSED");
 
   // Send audio chunks to Telnyx with proper timing (20ms per chunk)
   if (canSpeak(callContext, ws)) {
+    let sentChunks = 0;
     for (let i = 0; i < audioChunks.length; i++) {
       const chunk = audioChunks[i];
 
@@ -181,7 +198,7 @@ async function sendTtsResponse(
 
       // Check if call is still active before sending
       if (!canSpeak(callContext, ws)) {
-        console.log("⚠️ Call ended while sending audio, stopped at chunk", i + 1);
+        console.log("⚠️ Call ended while sending audio, stopped at chunk", i + 1, "of", audioChunks.length);
         break;
       }
 
@@ -193,8 +210,36 @@ async function sendTtsResponse(
           },
         })
       );
+      sentChunks++;
+
+      // Log progress every 25 chunks (every 500ms)
+      if (sentChunks % 25 === 0) {
+        console.log(`📤 Sent ${sentChunks}/${audioChunks.length} chunks (${((sentChunks / audioChunks.length) * 100).toFixed(1)}%)`);
+      }
     }
-    console.log("✅ All audio chunks sent to Telnyx");
+
+    const streamEndTime = Date.now();
+    const actualStreamDuration = streamEndTime - streamStartTime;
+
+    console.log("");
+    console.log("✅ Streaming complete!");
+    console.log("   • Chunks sent:", sentChunks, "of", audioChunks.length);
+    console.log("   • Actual streaming time:", actualStreamDuration, "ms");
+    console.log("   • Expected streaming time:", (audioChunks.length * 20), "ms");
+    console.log("   • Timing accuracy:", ((actualStreamDuration / (audioChunks.length * 20)) * 100).toFixed(1) + "%");
+    console.log("===========================================");
+
+    // Overall pipeline summary
+    console.log("");
+    console.log("⏱️  ========== PIPELINE TIMING SUMMARY ==========");
+    console.log("   • TTS Synthesis:", (downsampleStartTime - pipelineStartTime), "ms");
+    console.log("   • Downsampling:", (mulawStartTime - downsampleStartTime), "ms");
+    console.log("   • μ-law Encoding:", (chunkStartTime - mulawStartTime), "ms");
+    console.log("   • Chunking:", (streamStartTime - chunkStartTime), "ms");
+    console.log("   • Streaming:", actualStreamDuration, "ms");
+    console.log("   • TOTAL PIPELINE:", (Date.now() - pipelineStartTime), "ms");
+    console.log("===============================================");
+    console.log("");
   } else {
     console.log("⚠️ WebSocket not open, cannot send audio");
   }
@@ -295,25 +340,46 @@ function generateWavHeader(pcmDataLength: number): Buffer {
 app.get("/debug/tts-8k-wav", async (req, res) => {
   try {
     const text = (req.query.text as string) || "Hello, this is a test of the AI phone agent.";
-    console.log("🎵 Debug TTS endpoint called with text:", text);
+    console.log("");
+    console.log("🎵 ==========================================");
+    console.log("🎵 DEBUG ENDPOINT: /debug/tts-8k-wav");
+    console.log("🎵 ==========================================");
+    console.log("📝 Input text:", text);
+    console.log("🔧 This endpoint will process the full TTS pipeline and return a WAV file");
+    console.log("");
 
     // Get 24kHz PCM from OpenAI TTS
     const pcm24k = await synthesizeSpeech(text);
-    console.log("✓ OpenAI TTS returned:", pcm24k.length, "bytes at 24kHz");
 
     // Downsample to 8kHz
     const pcm8k = downsample24kHzTo8kHz(pcm24k);
-    console.log("✓ Downsampled to 8kHz:", pcm8k.length, "bytes");
 
     // Generate WAV header
     const wavHeader = generateWavHeader(pcm8k.length);
 
     // Combine header + PCM data
     const wavFile = Buffer.concat([wavHeader, pcm8k]);
-    console.log("✓ WAV file generated:", wavFile.length, "bytes total");
+
+    const durationMs = ((pcm8k.length / 2) / 8000) * 1000; // 16-bit samples at 8kHz
+
+    console.log("");
+    console.log("✅ WAV FILE GENERATED SUCCESSFULLY");
+    console.log("📊 Output Details:");
+    console.log("   • Format: WAV (RIFF)");
+    console.log("   • Sample rate: 8000 Hz");
+    console.log("   • Channels: 1 (mono)");
+    console.log("   • Bit depth: 16-bit PCM");
+    console.log("   • File size:", wavFile.length, "bytes");
+    console.log("   • Audio duration:", durationMs.toFixed(2), "ms");
+    console.log("");
+    console.log("🎧 You can now play this file to hear the processed audio");
+    console.log("   This is the audio AFTER downsampling but BEFORE μ-law encoding");
+    console.log("==========================================");
+    console.log("");
 
     // Send as audio/wav
     res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Content-Disposition", `inline; filename="tts-debug-${Date.now()}.wav"`);
     res.setHeader("Content-Length", wavFile.length);
     res.send(wavFile);
   } catch (error) {
