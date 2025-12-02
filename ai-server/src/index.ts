@@ -254,7 +254,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
           `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
           {
             stream_url: config.telnyx.streamUrl,
-            stream_track: "inbound_track,outbound_track",
+            stream_track: "inbound_track",
           },
           {
             headers: {
@@ -265,6 +265,14 @@ app.post("/webhooks/telnyx", async (req, res) => {
         console.log("✅ Streaming started for call:", callControlId);
       } catch (error) {
         console.error("❌ Failed to start streaming:", error instanceof Error ? error.message : error);
+        if (error instanceof Error && "response" in error) {
+          const err = error as any;
+          console.error("📋 Telnyx API Error Details:", {
+            status: err.response?.status,
+            statusText: err.response?.statusText,
+            data: err.response?.data,
+          });
+        }
       }
     }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
