@@ -77,7 +77,13 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
     downsampledSamples[i] = samples[i * 3];
   }
 
-  const result = Buffer.from(downsampledSamples);
+  // Create a Buffer that wraps the Int16Array's underlying memory
+  // This preserves the 16-bit little-endian sample data
+  const result = Buffer.from(
+    downsampledSamples.buffer,
+    downsampledSamples.byteOffset,
+    downsampledSamples.byteLength
+  );
   console.log("🔍 Debug downsample - Input length:", pcmBuffer.length, "Output length:", result.length);
   return result;
 }
