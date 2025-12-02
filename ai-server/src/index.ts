@@ -5,7 +5,7 @@ import { LiveTranscriptionEvents } from "@deepgram/sdk";
 import axios from "axios";
 import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
-import { downsample24kHzTo8kHz, pcmToMulaw } from "./pipeline/audio";
+import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext } from "./pipeline/llm";
 import { synthesizeSpeech } from "./pipeline/tts";
@@ -166,17 +166,35 @@ async function sendTtsResponse(
   const mulawBuffer = pcmToMulaw(audioBuffer8k);
   console.log("🔄 Converted to mulaw, size:", mulawBuffer.length, "bytes");
 
-  // Send to Telnyx using the correct media format
+  // Chunk audio into 20ms packets for proper Telnyx streaming
+  const audioChunks = chunkAudio(mulawBuffer);
+
+  // Send audio chunks to Telnyx with proper timing (20ms per chunk)
   if (canSpeak(callContext, ws)) {
-    ws.send(
-      JSON.stringify({
-        event: "media",
-        media: {
-          payload: mulawBuffer.toString("base64"),
-        },
-      })
-    );
-    console.log("🔊 Audio sent to Telnyx");
+    for (let i = 0; i < audioChunks.length; i++) {
+      const chunk = audioChunks[i];
+
+      // Delay each chunk by 20ms to match audio playback timing
+      if (i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      // Check if call is still active before sending
+      if (!canSpeak(callContext, ws)) {
+        console.log("⚠️ Call ended while sending audio, stopped at chunk", i + 1);
+        break;
+      }
+
+      ws.send(
+        JSON.stringify({
+          event: "media",
+          media: {
+            payload: chunk.toString("base64"),
+          },
+        })
+      );
+    }
+    console.log("✅ All audio chunks sent to Telnyx");
   } else {
     console.log("⚠️ WebSocket not open, cannot send audio");
   }
