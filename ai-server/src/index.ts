@@ -5,7 +5,7 @@ import { LiveTranscriptionEvents } from "@deepgram/sdk";
 import axios from "axios";
 import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
-import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm } from "./pipeline/audio";
+import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext } from "./pipeline/llm";
 import { synthesizeSpeech } from "./pipeline/tts";
@@ -172,15 +172,20 @@ async function sendTtsResponse(
   const downsampleStartTime = Date.now();
   const audioBuffer8k = downsample24kHzTo8kHz(audioBuffer24kNormalized);
 
-  // Step 4: Convert from 16-bit linear PCM to 8-bit mulaw (PCMU) for Telnyx
-  const mulawStartTime = Date.now();
-  const mulawBuffer = pcmToMulaw(audioBuffer8k);
+  // Step 4: Final boost before μ-law to ensure we're using full codec range
+  // This is critical: μ-law works best with peaks at 24000+ to avoid quantization noise
+  const boostStartTime = Date.now();
+  const audioBuffer8kBoosted = boostBeforeMulaw(audioBuffer8k);
 
-  // Step 5: Chunk audio into 20ms packets for proper Telnyx streaming
+  // Step 5: Convert from 16-bit linear PCM to 8-bit mulaw (PCMU) for Telnyx
+  const mulawStartTime = Date.now();
+  const mulawBuffer = pcmToMulaw(audioBuffer8kBoosted);
+
+  // Step 6: Chunk audio into 20ms packets for proper Telnyx streaming
   const chunkStartTime = Date.now();
   const audioChunks = chunkAudio(mulawBuffer);
 
-  // Step 6: Stream to Telnyx
+  // Step 7: Stream to Telnyx
   const streamStartTime = Date.now();
   console.log("");
   console.log("📡 ========== STREAMING TO TELNYX ==========");
@@ -239,7 +244,8 @@ async function sendTtsResponse(
     console.log("⏱️  ========== PIPELINE TIMING SUMMARY ==========");
     console.log("   • TTS Synthesis:", (normalizeStartTime - pipelineStartTime), "ms");
     console.log("   • Normalization:", (downsampleStartTime - normalizeStartTime), "ms");
-    console.log("   • Downsampling:", (mulawStartTime - downsampleStartTime), "ms");
+    console.log("   • Downsampling:", (boostStartTime - downsampleStartTime), "ms");
+    console.log("   • Pre-μlaw Boost:", (mulawStartTime - boostStartTime), "ms");
     console.log("   • μ-law Encoding:", (chunkStartTime - mulawStartTime), "ms");
     console.log("   • Chunking:", (streamStartTime - chunkStartTime), "ms");
     console.log("   • Streaming:", actualStreamDuration, "ms");
