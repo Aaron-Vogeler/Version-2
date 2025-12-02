@@ -258,7 +258,8 @@ app.post("/webhooks/telnyx", async (req, res) => {
           },
           {
             headers: {
-              Authorization: `Bearer ${config.telnyx.apiKey}`,
+              "Authorization": `Bearer ${config.telnyx.apiKey}`,
+              "Content-Type": "application/json",
             },
           }
         );
