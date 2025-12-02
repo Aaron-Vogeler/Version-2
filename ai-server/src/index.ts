@@ -252,6 +252,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
           {
             stream_url: config.telnyx.streamUrl,
             stream_track: "both_tracks",
+            stream_bidirectional_mode: "rtp",
           },
           {
             headers: {
