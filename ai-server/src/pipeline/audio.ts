@@ -25,7 +25,9 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
     downsampledSamples[i] = samples[i * 3];
   }
 
-  return Buffer.from(downsampledSamples.buffer);
+  const result = Buffer.from(downsampledSamples);
+  console.log("🔍 Debug downsample - Input length:", pcmBuffer.length, "Output length:", result.length);
+  return result;
 }
 
 /**
@@ -38,14 +40,22 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
  * @returns 8-bit mulaw audio buffer
  */
 export function pcmToMulaw(pcmBuffer: Buffer): Buffer {
-  const samples = new Int16Array(
-    pcmBuffer.buffer,
-    pcmBuffer.byteOffset,
-    pcmBuffer.byteLength / 2
-  );
+  // Create Int16Array directly from the buffer
+  const samples = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, pcmBuffer.byteLength / 2);
+
+  console.log("🔍 Debug pcmToMulaw - Input buffer length:", pcmBuffer.length, "bytes");
+  console.log("🔍 Debug pcmToMulaw - Samples count:", samples.length);
+  console.log("🔍 Debug pcmToMulaw - Sample type check:", samples instanceof Int16Array);
 
   // Encode Int16Array to mulaw - returns Uint8Array
-  const mulawArray = encodeMulaw(samples);
+  let mulawArray: any;
+  try {
+    mulawArray = encodeMulaw(samples);
+    console.log("🔍 Debug pcmToMulaw - Encode result type:", typeof mulawArray, "value:", mulawArray instanceof Uint8Array ? "Uint8Array" : mulawArray);
+  } catch (err) {
+    console.error("🔍 Debug pcmToMulaw - Encode threw error:", err);
+    throw err;
+  }
 
   // Convert Uint8Array to Buffer
   const mulawBuffer = Buffer.from(mulawArray);
