@@ -190,13 +190,26 @@ async function sendTtsResponse(
   const boostStartTime = Date.now();
   const audioBuffer8kBoosted = boostBeforeMulaw(audioBuffer8k);
 
-  // Step 5: Convert from 16-bit linear PCM to 8-bit mulaw (PCMU) for Telnyx
+  // IMPORTANT: Try sending RAW 8kHz PCM instead of μ-law
+  // If Telnyx's μ-law decoder is poor quality, raw PCM might sound better
+  // To test: change TTS_USE_MULAW to false
+
+  const TTS_USE_MULAW = true; // Set to false to test raw PCM instead
+
   const mulawStartTime = Date.now();
-  const mulawBuffer = pcmToMulaw(audioBuffer8kBoosted);
+  let audioBuffer = audioBuffer8kBoosted;
+
+  if (TTS_USE_MULAW) {
+    console.log("🔄 Using μ-law encoding (PCMU format)");
+    audioBuffer = pcmToMulaw(audioBuffer8kBoosted);
+  } else {
+    console.log("🔄 Using RAW 8kHz PCM (bypassing μ-law - testing audio quality)");
+    // Keep raw PCM as-is
+  }
 
   // Step 6: Chunk audio into 20ms packets for proper Telnyx streaming
   const chunkStartTime = Date.now();
-  const audioChunks = chunkAudio(mulawBuffer);
+  const audioChunks = chunkAudio(audioBuffer);
 
   // Step 7: Stream to Telnyx
   const streamStartTime = Date.now();
