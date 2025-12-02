@@ -84,46 +84,63 @@ export function normalizePcm(pcmBuffer: Buffer): Buffer {
     if (abs > peak) peak = abs;
   }
 
+  // Also calculate RMS for reference
+  let sumSquares = 0;
+  for (let i = 0; i < samples.length; i++) {
+    sumSquares += samples[i] * samples[i];
+  }
+  const rmsIn = Math.sqrt(sumSquares / samples.length);
+
   console.log("📊 Input:");
   console.log("   • Peak amplitude:", peak);
+  console.log("   • RMS amplitude:", rmsIn.toFixed(2));
   console.log("   • Peak utilization:", ((peak / 32767) * 100).toFixed(1) + "%");
 
-  // If audio is too quiet (below 3000 peak), normalize to 90% of full scale
-  const TARGET_PEAK = 32767 * 0.9; // 90% of full scale
+  // AGGRESSIVE normalization: target 99% of full scale
+  // μ-law is logarithmic and REQUIRES high amplitude to work well
+  // At low amplitudes, quantization noise dominates
+  const TARGET_PEAK = Math.round(32767 * 0.99); // 99% of full scale
   let scaleFactor = 1.0;
+  let clippedSamples = 0;
 
   if (peak > 0 && peak < TARGET_PEAK) {
     scaleFactor = TARGET_PEAK / peak;
 
-    console.log("   • RMS amplitude before:", samples.reduce((sum, s) => sum + s * s, 0) / samples.length);
-    console.log("🔊 Amplifying audio by", (scaleFactor * 100).toFixed(0) + "%...");
+    console.log("🔊 AGGRESSIVE AMPLIFICATION by", (scaleFactor * 100).toFixed(1) + "% (targeting 99% scale)...");
 
-    // Apply scaling with clamping to prevent overflow
+    // Apply scaling with careful clipping tracking
     for (let i = 0; i < samples.length; i++) {
       const scaled = samples[i] * scaleFactor;
-      samples[i] = Math.max(-32768, Math.min(32767, Math.round(scaled)));
+      const clamped = Math.max(-32768, Math.min(32767, Math.round(scaled)));
+      if (Math.round(scaled) !== clamped) clippedSamples++;
+      samples[i] = clamped;
+    }
+
+    if (clippedSamples > 0) {
+      console.log("⚠️  Clipped", clippedSamples, "samples (", ((clippedSamples / samples.length) * 100).toFixed(2) + "%)");
     }
   } else if (peak === 0) {
     console.log("⚠️  No audio data detected!");
   } else {
-    console.log("✅ Audio already at good level");
+    console.log("✅ Audio already near full scale");
   }
 
-  // Re-calculate peak after scaling
+  // Re-calculate peak and RMS after scaling
   let newPeak = 0;
-  let sumSquares = 0;
+  let newSumSquares = 0;
   for (let i = 0; i < samples.length; i++) {
     const abs = Math.abs(samples[i]);
     if (abs > newPeak) newPeak = abs;
-    sumSquares += samples[i] * samples[i];
+    newSumSquares += samples[i] * samples[i];
   }
-  const rms = Math.sqrt(sumSquares / samples.length);
+  const rmsOut = Math.sqrt(newSumSquares / samples.length);
 
   console.log("");
   console.log("📊 Output:");
   console.log("   • Peak amplitude:", newPeak);
+  console.log("   • RMS amplitude:", rmsOut.toFixed(2));
   console.log("   • Peak utilization:", ((newPeak / 32767) * 100).toFixed(1) + "%");
-  console.log("   • RMS amplitude:", rms.toFixed(2));
+  console.log("   • RMS gain:", (scaleFactor * 100).toFixed(1) + "%");
   console.log("");
   console.log("✅ Normalization complete in", (Date.now() - startTime), "ms");
   console.log("=========================================");
@@ -145,9 +162,9 @@ export function normalizePcm(pcmBuffer: Buffer): Buffer {
  */
 const DECIMATION_FACTOR = 3;
 const LOWPASS_TAPS = createLowpassTaps({
-  cutoffHz: 3900, // Increased from 3400 to preserve more signal while still avoiding aliasing
+  cutoffHz: 4100, // Maximally aggressive: just below output Nyquist (4000 Hz) preserves max frequency content
   sampleRate: 24000,
-  numTaps: 127, // Increased from 63 for better filter response and more aggressive anti-aliasing
+  numTaps: 63, // 63 taps balanced for performance; more taps don't help and add complexity
 });
 
 export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
@@ -189,7 +206,7 @@ export function downsample24kHzTo8kHz(pcmBuffer: Buffer): Buffer {
   console.log("   • Filter type: FIR low-pass (Hann-windowed sinc)");
   console.log("   • Number of taps:", LOWPASS_TAPS.length);
   console.log("   • Decimation factor:", DECIMATION_FACTOR);
-  console.log("   • Expected cutoff: 3400 Hz");
+  console.log("   • Expected cutoff: 4100 Hz (maximizes frequency content before 8kHz output)");
 
   let clampedSamples = 0;
   for (let i = 0; i < samples8k.length; i++) {
@@ -276,6 +293,53 @@ function createLowpassTaps({
   }
 
   return taps;
+}
+
+/**
+ * Final amplitude boost before μ-law encoding.
+ * This is CRITICAL: μ-law is logarithmic and requires high amplitude signals.
+ * If the input is below ~24000 peak, μ-law quantization becomes very poor.
+ * This final stage ensures we're using the full range of the μ-law codec.
+ */
+export function boostBeforeMulaw(pcmBuffer: Buffer): Buffer {
+  // Quick peak check
+  const samples = new Int16Array(
+    pcmBuffer.buffer,
+    pcmBuffer.byteOffset,
+    pcmBuffer.byteLength / 2
+  );
+
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const abs = Math.abs(samples[i]);
+    if (abs > peak) peak = abs;
+  }
+
+  // μ-law works best with peaks at 25000+
+  // If we're below that, boost more
+  const MIN_PEAK_FOR_MULAW = 24000;
+
+  if (peak > 0 && peak < MIN_PEAK_FOR_MULAW) {
+    const boost = MIN_PEAK_FOR_MULAW / peak;
+
+    console.log("🔊 ========== FINAL PRE-MULAW BOOST ==========");
+    console.log("📊 Input peak:", peak, `(${((peak / 32767) * 100).toFixed(1)}%)`);
+    console.log("🔊 Applying boost:", (boost * 100).toFixed(1) + "% to reach optimal μ-law range");
+
+    let boostedPeak = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const boosted = samples[i] * boost;
+      const clamped = Math.max(-32768, Math.min(32767, Math.round(boosted)));
+      samples[i] = clamped;
+      const abs = Math.abs(clamped);
+      if (abs > boostedPeak) boostedPeak = abs;
+    }
+
+    console.log("📊 Output peak:", boostedPeak, `(${((boostedPeak / 32767) * 100).toFixed(1)}%)`);
+    console.log("=========================================");
+  }
+
+  return Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
 }
 
 /**
