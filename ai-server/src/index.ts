@@ -8,11 +8,11 @@ import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
-import { synthesizeSpeech } from "./pipeline/tts";
+import { synthesizeSpeech, stopSpeaking } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 
 // Constants
-const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding
+const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -26,11 +26,16 @@ const deepgram = createDeepgramClient();
 /**
  * Queue a user transcript fragment for potential LLM + TTS processing.
  * Resets the debounce timer on each transcript update.
+ * @param callContext - The call context
+ * @param transcript - The user transcript
+ * @param ws - The WebSocket connection
+ * @param onTtsStateChange - Callback to update TTS playing state
  */
 function queueUserTranscript(
   callContext: CallContext,
   transcript: string,
-  ws: WebSocket
+  ws: WebSocket,
+  onTtsStateChange?: (isPlaying: boolean) => void
 ): void {
   // Update the transcript and timestamp
   callContext.lastUserTranscript = transcript;
@@ -43,7 +48,7 @@ function queueUserTranscript(
 
   // Schedule a new TTS response timer
   callContext.ttsDebounceTimer = setTimeout(() => {
-    scheduleTtsResponse(callContext, ws);
+    scheduleTtsResponse(callContext, ws, onTtsStateChange);
   }, TTS_DEBOUNCE_MS);
 }
 
@@ -56,10 +61,14 @@ function canSpeak(callContext: CallContext, ws: WebSocket): boolean {
 
 /**
  * When the debounce timer fires, process the accumulated transcript.
+ * @param callContext - The call context
+ * @param ws - The WebSocket connection
+ * @param onTtsStateChange - Callback to update TTS playing state
  */
 async function scheduleTtsResponse(
   callContext: CallContext,
-  ws: WebSocket
+  ws: WebSocket,
+  onTtsStateChange?: (isPlaying: boolean) => void
 ): Promise<void> {
   try {
     // Guard: Check if we can still speak
@@ -141,7 +150,7 @@ async function scheduleTtsResponse(
     }
 
     // Send to TTS only if we can still speak
-    await sendTtsResponse(callContext, ws, aiText);
+    await sendTtsResponse(callContext, ws, aiText, onTtsStateChange);
 
     // Clear transcript after processing
     callContext.lastUserTranscript = "";
@@ -155,11 +164,16 @@ async function scheduleTtsResponse(
 
 /**
  * Send the AI response as speech via Telnyx TTS.
+ * @param callContext - The call context
+ * @param ws - The WebSocket connection
+ * @param aiText - The text to speak
+ * @param onTtsStateChange - Callback to update TTS playing state
  */
 async function sendTtsResponse(
   callContext: CallContext,
   ws: WebSocket,
-  aiText: string
+  aiText: string,
+  onTtsStateChange?: (isPlaying: boolean) => void
 ): Promise<void> {
   const pipelineStartTime = Date.now();
   console.log("");
@@ -188,12 +202,25 @@ async function sendTtsResponse(
   }
 
   try {
+    // Mark TTS as playing
+    if (onTtsStateChange) {
+      onTtsStateChange(true);
+    }
+
     await synthesizeSpeech(aiText, callContext.callControlId);
+
+    // Mark TTS as no longer playing when synthesis completes
+    if (onTtsStateChange) {
+      onTtsStateChange(false);
+    }
   } catch (ttsError) {
     console.error(
       "❌ Telnyx TTS error:",
       ttsError instanceof Error ? ttsError.message : ttsError
     );
+    if (onTtsStateChange) {
+      onTtsStateChange(false);
+    }
     if (canSpeak(callContext, ws)) {
       ws.send(
         JSON.stringify({
@@ -403,6 +430,9 @@ wss.on("connection", async (ws) => {
   // Initialize call context (populated when "start" message arrives)
   let callContext: CallContext | undefined;
 
+  // Track if TTS is currently playing (for interrupt detection)
+  let isTtsPlaying = false;
+
   // Create a Deepgram live stream
   const dgLive = await deepgram.listen.live({
     model: config.deepgram.model,
@@ -414,7 +444,7 @@ wss.on("connection", async (ws) => {
 
   console.log("🎧 Deepgram stream started");
 
-  // Relay Deepgram transcript → Groq → Telnyx (with 2-second silence debounce)
+  // Relay Deepgram transcript → Groq → Telnyx (with 800ms silence debounce)
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
@@ -438,8 +468,27 @@ wss.on("connection", async (ws) => {
 
       console.log("🗣️ User:", userText);
 
+      // INTERRUPT DETECTION: If TTS is currently playing and caller speaks, stop it
+      if (isTtsPlaying && callContext.callControlId) {
+        console.log("🛑 Caller interrupted TTS playback, stopping speech");
+        isTtsPlaying = false;
+        try {
+          await stopSpeaking(callContext.callControlId);
+        } catch (stopError) {
+          console.warn("⚠️ Error stopping TTS on interrupt:", stopError);
+        }
+
+        // Clear the debounce timer to restart with new transcript
+        if (callContext.ttsDebounceTimer) {
+          clearTimeout(callContext.ttsDebounceTimer);
+          callContext.ttsDebounceTimer = undefined;
+        }
+      }
+
       // Queue the transcript with debounce
-      queueUserTranscript(callContext, userText, ws);
+      queueUserTranscript(callContext, userText, ws, (isPlaying) => {
+        isTtsPlaying = isPlaying;
+      });
     } catch (error) {
       console.error(
         "❌ Unexpected error in transcript handler:",
