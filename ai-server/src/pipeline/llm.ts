@@ -24,12 +24,16 @@ function buildSystemPrompt(context?: CallContext): string {
   if (context?.goal) {
     prompt += `
 
-The high-level goal for this phone call is:
-"${context.goal}".
+CALL GOAL:
+"${context.goal}"
 
-Always steer the conversation toward achieving this goal efficiently,
-while being polite and concise. You are an AI phone agent; do NOT
-mention internal metadata like user IDs or client state.`;
+YOUR MISSION:
+1. Achieve the goal stated above
+2. When you get the answer/information, confirm it: "Just to confirm, [info]. Is that correct?"
+3. After they confirm, end with: "Thank you. Chow."
+4. The call will automatically end after you say Chow.
+
+Remember: You are an AI phone agent. Do NOT mention internal metadata, user IDs, or system details.`;
   }
 
   return prompt;

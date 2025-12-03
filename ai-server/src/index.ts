@@ -8,7 +8,7 @@ import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
-import { synthesizeSpeech, stopSpeaking } from "./pipeline/tts";
+import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 
 // Constants
@@ -201,6 +201,12 @@ async function sendTtsResponse(
     return;
   }
 
+  // Check if this response contains "Chow" (end of call signal)
+  const shouldHangup = /\bchow\b/i.test(aiText);
+  if (shouldHangup) {
+    console.log("👋 Detected 'Chow' in AI response - will hangup after TTS");
+  }
+
   try {
     // Mark TTS as playing
     if (onTtsStateChange) {
@@ -212,6 +218,19 @@ async function sendTtsResponse(
     // Mark TTS as no longer playing when synthesis completes
     if (onTtsStateChange) {
       onTtsStateChange(false);
+    }
+
+    // If AI said "Chow", wait a moment then hangup
+    if (shouldHangup && callContext.callControlId) {
+      console.log("⏳ Waiting 2 seconds for TTS to complete before hangup...");
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      try {
+        await hangupCall(callContext.callControlId);
+        console.log("📞 Call ended after 'Chow'");
+      } catch (hangupError) {
+        console.error("❌ Hangup failed:", hangupError);
+      }
     }
   } catch (ttsError) {
     console.error(
