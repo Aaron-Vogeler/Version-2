@@ -458,37 +458,12 @@ wss.on("connection", async (ws) => {
         return;
       }
 
-      // Debug: Log the full event structure to understand track information
-      console.log("📊 Deepgram event structure:", {
-        channel: dgEvent.channel,
-        metadata: dgEvent.metadata,
-        type: dgEvent.type,
-      });
-
       if (!results || !results.transcript) return;
 
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      console.log("🗣️ Raw transcript:", userText);
-
-      // AUDIO SOURCE DETECTION:
-      // Deepgram should provide track information to distinguish inbound (caller) vs outbound (AI)
-      // In bidirectional RTP mode, even channel = inbound, odd channel = outbound
-      // Or check the dgEvent structure for explicit track/source information
-      const channelIndex = dgEvent.channel?.channel || 0;
-      const isOutboundTrack = channelIndex % 2 === 1; // Odd channels are typically outbound
-
-      console.log(`🔊 Track detection - Channel: ${channelIndex}, Is Outbound: ${isOutboundTrack}`);
-
-      // If this is from the outbound track (AI's own voice), ignore it
-      if (isOutboundTrack) {
-        console.log("🔄 This is AI's own TTS output, ignoring");
-        return;
-      }
-
-      // This is from the inbound track (caller's voice)
-      console.log("✅ This is from caller, processing");
+      console.log("🗣️ Caller transcript:", userText);
 
       // If TTS is currently playing and caller speaks, stop it
       if (isTtsPlaying && callContext.callControlId) {
@@ -586,10 +561,23 @@ wss.on("connection", async (ws) => {
       }
       // Telnyx media packets → Deepgram
       else if (msg.event === "media" && msg.media?.payload) {
+        // CRITICAL: Only process inbound audio (caller's voice), ignore outbound (AI's voice)
+        // Telnyx sends track information: "inbound" = caller, "outbound" = AI
+        const track = msg.media?.track;
+
+        if (track === "outbound") {
+          // This is AI's own speech from TTS, skip it completely
+          if (process.env.LOG_AUDIO_PACKETS === "true") {
+            console.log("🔄 Skipping outbound (AI) audio packet");
+          }
+          return;
+        }
+
+        // Process inbound audio (caller's voice)
         const audio = Buffer.from(msg.media.payload, "base64");
         // Only log packet details if LOG_AUDIO_PACKETS is enabled (reduces noise in logs)
         if (process.env.LOG_AUDIO_PACKETS === "true") {
-          console.log("🎙️ Received Telnyx media packet, bytes:", audio.length);
+          console.log("🎙️ Received Telnyx media packet, track:", track, "bytes:", audio.length);
         }
         dgLive.send(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength));
       } else if (msg.event === "stop") {
