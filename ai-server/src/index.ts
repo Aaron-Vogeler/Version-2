@@ -84,7 +84,7 @@ function canSpeak(callContext: CallContext, ws: WebSocket): boolean {
 async function triggerNoInputGreeting(callContext: CallContext, ws: WebSocket): Promise<void> {
   try {
     // Guard: Check if this is still the first turn (no input yet)
-    if (!callContext.isCallActive || callContext.lastTranscriptAt > 0) {
+    if (!callContext.isCallActive || (callContext.lastTranscriptAt ?? 0) > 0) {
       // Call already has input or is inactive, skip
       return;
     }
@@ -736,7 +736,9 @@ wss.on("connection", async (ws) => {
           // Set up no-input greeting timeout
           // If caller doesn't speak within 4 seconds, trigger a greeting proactively
           const noInputTimer = setTimeout(() => {
-            triggerNoInputGreeting(callContext, ws);
+            if (callContext) {
+              triggerNoInputGreeting(callContext, ws);
+            }
           }, NO_INPUT_TIMEOUT_MS);
 
           // Store timer for cleanup if needed
