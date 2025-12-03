@@ -12,7 +12,7 @@ import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 
 // Constants
-const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
+const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster responses)
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -518,9 +518,11 @@ wss.on("connection", async (ws) => {
     encoding: "mulaw",
     sample_rate: 8000,
     channels: 1,
-    endpointing: 100,
+    endpointing: 50, // Reduced from 100 to 50ms for faster endpointing detection
     vad_events: true,
     interim_results: true,
+    smart_format: false, // Disable for faster processing
+    utterance_end_ms: 800, // Match our debounce time for consistency
   });
 
   console.log("🎧 Deepgram stream started");
@@ -666,6 +668,40 @@ wss.on("connection", async (ws) => {
             goal: callContext.goal,
             userId: callContext.userId,
           });
+
+          // PROACTIVE GREETING: Send initial AI greeting immediately when call starts
+          // This eliminates the delay of waiting for the caller to say "hello"
+          console.log("🚀 Sending proactive greeting...");
+          setTimeout(async () => {
+            try {
+              if (!callContext || !callContext.isCallActive) {
+                console.log("⚠️ Call no longer active, skipping proactive greeting");
+                return;
+              }
+
+              // Generate initial greeting using LLM with the call goal
+              const initialGreeting = await generateAssistantReply("", callContext);
+
+              if (initialGreeting && canSpeak(callContext, ws)) {
+                console.log("🤖 AI (proactive):", initialGreeting);
+
+                // Append initial greeting to conversation history
+                if (callContext.callId) {
+                  contextMgr.appendTurn(callContext.callId, {
+                    speaker: "assistant",
+                    text: initialGreeting,
+                    timestamp: new Date().toISOString(),
+                  });
+                }
+
+                // Increment turn sequence and send TTS
+                callContext.turnSeq = (callContext.turnSeq || 0) + 1;
+                await sendTtsResponse(callContext, ws, initialGreeting, callContext.turnSeq);
+              }
+            } catch (error) {
+              console.error("❌ Failed to send proactive greeting:", error instanceof Error ? error.message : error);
+            }
+          }, 100); // Small delay to ensure WebSocket is fully ready
         } catch (err) {
           console.error("❌ Failed to decode Telnyx client_state:", err instanceof Error ? err.message : err);
           // Do NOT throw; just continue without context

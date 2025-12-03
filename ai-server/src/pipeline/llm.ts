@@ -143,7 +143,7 @@ export async function maybeUpdateSummaryForCall(
 /**
  * Call Groq LLM with user text and return the AI response.
  * Includes rolling summary and recent turns for rich per-call context.
- * @param userText - The user's input text
+ * @param userText - The user's input text (can be empty for proactive greeting)
  * @param context - Call context with goal, call ID, and other metadata
  * @returns The AI-generated response, or an empty string if no response
  */
@@ -173,11 +173,22 @@ export async function generateAssistantReply(
   }
 
   // Add the current user input as the final message
-  messages.push({ role: "user", content: userText });
+  // If userText is empty, this is a proactive greeting (first message)
+  if (userText.trim()) {
+    messages.push({ role: "user", content: userText });
+  } else {
+    // Proactive greeting: No user input yet, AI should initiate the conversation
+    messages.push({
+      role: "user",
+      content: "The call has just been answered. Start the conversation with your introduction and state the purpose of the call."
+    });
+  }
 
   const response = await groq.chat.completions.create({
     model: config.groq.model,
     messages,
+    temperature: 0.7, // Slightly higher for more natural conversation
+    max_tokens: 150, // Limit tokens for concise responses (typical phone conversation)
   });
 
   return response.choices[0]?.message?.content || "";
