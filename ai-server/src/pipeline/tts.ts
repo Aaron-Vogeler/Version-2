@@ -86,3 +86,40 @@ export async function synthesizeSpeech(
     throw error;
   }
 }
+
+/**
+ * Hangs up an active Telnyx call.
+ * Called after the AI says "Chow" to end the conversation.
+ *
+ * @param callControlId - The Telnyx call control ID
+ */
+export async function hangupCall(callControlId: string): Promise<void> {
+  try {
+    console.log("📞 Initiating call hangup...");
+    await axios.post(
+      `https://api.telnyx.com/v2/calls/${callControlId}/actions/hangup`,
+      {},
+      {
+        headers: {
+          "Authorization": `Bearer ${config.telnyx.apiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    console.log("✅ Call hangup initiated successfully");
+  } catch (error) {
+    console.error(
+      "❌ Failed to hangup call:",
+      error instanceof Error ? error.message : error
+    );
+    if (error instanceof Error && "response" in error) {
+      const err = error as any;
+      console.error("📋 Telnyx Hangup Error Details:", {
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data,
+      });
+    }
+    throw error;
+  }
+}
