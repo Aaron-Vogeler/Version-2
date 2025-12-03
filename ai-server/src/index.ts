@@ -15,6 +15,10 @@ import * as contextMgr from "./callContextManager";
 const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
 const TTS_DEBOUNCE_AFTER_INTERRUPT_MS = 200; // Faster response after interrupt
 
+// Global map to track actual TTS playback state per call (from Telnyx webhooks)
+// Maps callControlId -> whether TTS is actually playing on the call
+const activeTtsPlayback = new Map<string, boolean>();
+
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
@@ -216,18 +220,18 @@ async function sendTtsResponse(
 
   try {
     // Mark TTS as playing and record start time
+    // NOTE: We don't immediately set it to false after the API call returns!
+    // The actual playback continues for several seconds. We rely on Telnyx webhooks
+    // (call.speak.started/ended) to track when audio is actually playing.
     callContext.ttsStartedAt = Date.now();
+    if (callContext.callControlId) {
+      activeTtsPlayback.set(callContext.callControlId, true);
+    }
     if (onTtsStateChange) {
       onTtsStateChange(true);
     }
 
     await synthesizeSpeech(aiText, callContext.callControlId);
-
-    // Mark TTS as no longer playing when synthesis completes
-    callContext.ttsStartedAt = undefined;
-    if (onTtsStateChange) {
-      onTtsStateChange(false);
-    }
 
     // If AI said "Chow", wait a moment then hangup
     if (shouldHangup && callContext.callControlId) {
@@ -401,7 +405,7 @@ function decodeMulawG711(mulaw: number): number {
 // OUTBOUND CALL ENDPOINT
 app.use("/api/outbound-call", outboundCallRouter);
 
-// TELNYX WEBHOOKS (Call start/stop)
+// TELNYX WEBHOOKS (Call start/stop, TTS playback tracking)
 app.post("/webhooks/telnyx", async (req, res) => {
   const eventType = req.body?.data?.event_type;
   console.log("📞 Telnyx webhook event:", eventType);
@@ -444,8 +448,27 @@ app.post("/webhooks/telnyx", async (req, res) => {
         }
       }
     }
+  } else if (eventType === "call.speak.started") {
+    // Audio playback has actually started on the call
+    const callControlId = req.body?.data?.payload?.call_control_id;
+    if (callControlId) {
+      activeTtsPlayback.set(callControlId, true);
+      console.log("🔊 TTS playback STARTED on call, interrupt detection enabled");
+    }
+  } else if (eventType === "call.speak.ended") {
+    // Audio playback has completed on the call
+    const callControlId = req.body?.data?.payload?.call_control_id;
+    if (callControlId) {
+      activeTtsPlayback.delete(callControlId);
+      console.log("🔇 TTS playback ENDED on call, interrupt detection disabled");
+    }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
     console.log("📞 Call ended:", eventType);
+    // Clean up TTS playback tracking for this call
+    const callControlId = req.body?.data?.payload?.call_control_id;
+    if (callControlId) {
+      activeTtsPlayback.delete(callControlId);
+    }
     // Note: We don't have access to callContext here, but we mark the call
     // as inactive via the WebSocket close event. Cleanup happens there.
   }
@@ -501,15 +524,19 @@ wss.on("connection", async (ws) => {
       console.log(`🗣️ Caller transcript (${transcriptType}):`, userText);
 
       // Detect interrupts from both interim and final transcripts
-      // Interim transcripts allow faster interrupt detection (~100-200ms earlier)
+      // Use the global activeTtsPlayback map which is updated from Telnyx webhooks
+      // This is more accurate than relying on when the API call returns
       let wasInterrupted = false;
-      if (isTtsPlaying && callContext.callControlId) {
+      const isTtsActuallyPlaying = callContext.callControlId
+        ? activeTtsPlayback.get(callContext.callControlId) ?? false
+        : false;
+
+      if (isTtsActuallyPlaying && callContext.callControlId) {
         const interruptLatency = callContext.ttsStartedAt
           ? Date.now() - callContext.ttsStartedAt
           : 0;
 
         console.log(`🛑 Caller interrupted TTS playback (latency: ${interruptLatency}ms), stopping speech`);
-        isTtsPlaying = false;
         wasInterrupted = true;
         callContext.lastInterruptAt = Date.now();
 
@@ -638,6 +665,10 @@ wss.on("connection", async (ws) => {
   ws.on("close", () => {
     console.log("🔌 Client disconnected");
     if (callContext) {
+      // Clean up TTS playback tracking
+      if (callContext.callControlId) {
+        activeTtsPlayback.delete(callContext.callControlId);
+      }
       cleanupCallState(callContext);
     }
     dgLive.finish();
