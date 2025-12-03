@@ -14,6 +14,9 @@ import * as contextMgr from "./callContextManager";
 // Constants
 const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
 
+// Map to track callControlId -> callContext for webhook event handling
+const callControlIdMap = new Map<string, CallContext>();
+
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
@@ -209,13 +212,10 @@ async function sendTtsResponse(
 
     await synthesizeSpeech(aiText, callContext.callControlId);
 
-    // Check if the AI said "Chow" - if so, end the call
+    // Check if the AI said "Chow" - if so, set flag to hangup after speech finishes
     if (aiText.toLowerCase().includes("chow")) {
-      console.log("🛑 Chow detected! Ending the call...");
-      // Give a moment for the TTS to finish playing
-      setTimeout(() => {
-        hangupCall(callContext.callControlId!);
-      }, 1000);
+      console.log("🛑 Chow detected! Will end call after speech finishes");
+      callContext.shouldHangupAfterSpeak = true;
     }
 
     // Mark TTS as no longer playing when synthesis completes
@@ -421,6 +421,17 @@ app.post("/webhooks/telnyx", async (req, res) => {
         }
       }
     }
+  } else if (eventType === "call.speak.ended") {
+    // Check if we should hangup after this speech
+    const callControlId = req.body?.data?.payload?.call_control_id;
+    if (callControlId) {
+      const context = callControlIdMap.get(callControlId);
+      if (context && context.shouldHangupAfterSpeak) {
+        console.log("📞 Speech finished, hanging up call");
+        context.shouldHangupAfterSpeak = false; // Clear the flag
+        hangupCall(callControlId);
+      }
+    }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
     console.log("📞 Call ended:", eventType);
     // Note: We don't have access to callContext here, but we mark the call
@@ -557,6 +568,11 @@ wss.on("connection", async (ws) => {
           // Create the local callContext reference for backward compatibility
           callContext = managedContext;
 
+          // Store mapping for webhook event handling
+          if (callControlId) {
+            callControlIdMap.set(callControlId, callContext);
+          }
+
           console.log("📋 Call context initialized:", {
             callId: callContext.callId,
             callControlId: callContext.callControlId,
@@ -603,6 +619,10 @@ wss.on("connection", async (ws) => {
   ws.on("close", () => {
     console.log("🔌 Client disconnected");
     if (callContext) {
+      // Remove from callControlId map if present
+      if (callContext.callControlId) {
+        callControlIdMap.delete(callContext.callControlId);
+      }
       cleanupCallState(callContext);
     }
     dgLive.finish();
