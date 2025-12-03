@@ -30,12 +30,14 @@ const deepgram = createDeepgramClient();
  * @param transcript - The user transcript
  * @param ws - The WebSocket connection
  * @param onTtsStateChange - Callback to update TTS playing state
+ * @param getIsTtsPlaying - Getter function to check if TTS is currently playing
  */
 function queueUserTranscript(
   callContext: CallContext,
   transcript: string,
   ws: WebSocket,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  onTtsStateChange?: (isPlaying: boolean) => void,
+  getIsTtsPlaying?: () => boolean
 ): void {
   // Update the transcript and timestamp
   callContext.lastUserTranscript = transcript;
@@ -48,7 +50,7 @@ function queueUserTranscript(
 
   // Schedule a new TTS response timer
   callContext.ttsDebounceTimer = setTimeout(() => {
-    scheduleTtsResponse(callContext, ws, onTtsStateChange);
+    scheduleTtsResponse(callContext, ws, onTtsStateChange, getIsTtsPlaying);
   }, TTS_DEBOUNCE_MS);
 }
 
@@ -64,11 +66,13 @@ function canSpeak(callContext: CallContext, ws: WebSocket): boolean {
  * @param callContext - The call context
  * @param ws - The WebSocket connection
  * @param onTtsStateChange - Callback to update TTS playing state
+ * @param getIsTtsPlaying - Getter function to check if TTS is currently playing
  */
 async function scheduleTtsResponse(
   callContext: CallContext,
   ws: WebSocket,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  onTtsStateChange?: (isPlaying: boolean) => void,
+  getIsTtsPlaying?: () => boolean
 ): Promise<void> {
   try {
     // Guard: Check if we can still speak
@@ -150,7 +154,7 @@ async function scheduleTtsResponse(
     }
 
     // Send to TTS only if we can still speak
-    await sendTtsResponse(callContext, ws, aiText, onTtsStateChange);
+    await sendTtsResponse(callContext, ws, aiText, onTtsStateChange, getIsTtsPlaying);
 
     // Clear transcript after processing
     callContext.lastUserTranscript = "";
@@ -168,12 +172,14 @@ async function scheduleTtsResponse(
  * @param ws - The WebSocket connection
  * @param aiText - The text to speak
  * @param onTtsStateChange - Callback to update TTS playing state
+ * @param getIsTtsPlaying - Getter function to check if TTS is currently playing (for race condition detection)
  */
 async function sendTtsResponse(
   callContext: CallContext,
   ws: WebSocket,
   aiText: string,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  onTtsStateChange?: (isPlaying: boolean) => void,
+  getIsTtsPlaying?: () => boolean
 ): Promise<void> {
   const pipelineStartTime = Date.now();
   console.log("");
@@ -218,7 +224,8 @@ async function sendTtsResponse(
     // RACE CONDITION FIX: Check if we were interrupted while awaiting the API response.
     // If isTtsPlaying was set to false by the VAD listener during the synthesizeSpeech call,
     // we must immediately stop the audio because Telnyx has already started playing it.
-    if (!isTtsPlaying) {
+    const isStillPlaying = getIsTtsPlaying?.() ?? true;
+    if (!isStillPlaying) {
       console.log("🛑 Audio was interrupted during TTS request - stopping now");
       try {
         await stopSpeaking(callContext.callControlId);
@@ -516,7 +523,7 @@ wss.on("connection", async (ws) => {
       // Queue the transcript with debounce
       queueUserTranscript(callContext, userText, ws, (isPlaying) => {
         isTtsPlaying = isPlaying;
-      });
+      }, () => isTtsPlaying);
     } catch (error) {
       console.error(
         "❌ Unexpected error in transcript handler:",
