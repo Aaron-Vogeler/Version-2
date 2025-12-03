@@ -458,60 +458,52 @@ wss.on("connection", async (ws) => {
         return;
       }
 
-      // Log raw transcript only if call is active
-      console.log("📝 Deepgram raw transcript:", results?.transcript);
+      // Debug: Log the full event structure to understand track information
+      console.log("📊 Deepgram event structure:", {
+        channel: dgEvent.channel,
+        metadata: dgEvent.metadata,
+        type: dgEvent.type,
+      });
 
       if (!results || !results.transcript) return;
 
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      console.log("🗣️ User:", userText);
+      console.log("🗣️ Raw transcript:", userText);
 
-      // INTERRUPT DETECTION & ECHO SUPPRESSION:
-      // If TTS is currently playing, we need to determine if this is:
-      // 1. An echo of the AI's own speech (ignore)
-      // 2. The caller interrupting (stop TTS and process)
+      // AUDIO SOURCE DETECTION:
+      // Deepgram should provide track information to distinguish inbound (caller) vs outbound (AI)
+      // In bidirectional RTP mode, even channel = inbound, odd channel = outbound
+      // Or check the dgEvent structure for explicit track/source information
+      const channelIndex = dgEvent.channel?.channel || 0;
+      const isOutboundTrack = channelIndex % 2 === 1; // Odd channels are typically outbound
+
+      console.log(`🔊 Track detection - Channel: ${channelIndex}, Is Outbound: ${isOutboundTrack}`);
+
+      // If this is from the outbound track (AI's own voice), ignore it
+      if (isOutboundTrack) {
+        console.log("🔄 This is AI's own TTS output, ignoring");
+        return;
+      }
+
+      // This is from the inbound track (caller's voice)
+      console.log("✅ This is from caller, processing");
+
+      // If TTS is currently playing and caller speaks, stop it
       if (isTtsPlaying && callContext.callControlId) {
-        const callCtx = contextMgr.getContext(callContext.callId);
-        let isEcho = false;
-
-        // Check if this transcript matches the last assistant message
-        // (indicating it's probably an echo of our own speech)
-        if (callCtx && callCtx.turns.length > 0) {
-          const lastTurn = callCtx.turns[callCtx.turns.length - 1];
-          if (lastTurn.speaker === "assistant") {
-            // Simple echo detection: check if the new transcript is a substring of our last message
-            const lastMessageLower = lastTurn.text.toLowerCase();
-            const userTextLower = userText.toLowerCase();
-            if (
-              lastMessageLower.includes(userTextLower.slice(0, Math.min(10, userTextLower.length))) ||
-              userTextLower.includes(lastMessageLower.slice(0, Math.min(10, lastMessageLower.length)))
-            ) {
-              isEcho = true;
-              console.log("🔄 Detected echo of AI's own speech, ignoring transcript");
-            }
-          }
+        console.log("🛑 Caller interrupted TTS playback, stopping speech");
+        isTtsPlaying = false;
+        try {
+          await stopSpeaking(callContext.callControlId);
+        } catch (stopError) {
+          console.warn("⚠️ Error stopping TTS on interrupt:", stopError);
         }
 
-        if (!isEcho) {
-          // This is a real interrupt from the caller
-          console.log("🛑 Caller interrupted TTS playback, stopping speech");
-          isTtsPlaying = false;
-          try {
-            await stopSpeaking(callContext.callControlId);
-          } catch (stopError) {
-            console.warn("⚠️ Error stopping TTS on interrupt:", stopError);
-          }
-
-          // Clear the debounce timer to restart with new transcript
-          if (callContext.ttsDebounceTimer) {
-            clearTimeout(callContext.ttsDebounceTimer);
-            callContext.ttsDebounceTimer = undefined;
-          }
-        } else {
-          // It's an echo, don't process it
-          return;
+        // Clear the debounce timer to restart with new transcript
+        if (callContext.ttsDebounceTimer) {
+          clearTimeout(callContext.ttsDebounceTimer);
+          callContext.ttsDebounceTimer = undefined;
         }
       }
 
