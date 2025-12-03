@@ -7,8 +7,9 @@ import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
-import { generateAssistantReply, type CallContext } from "./pipeline/llm";
+import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
 import { synthesizeSpeech } from "./pipeline/tts";
+import * as contextMgr from "./callContextManager";
 
 // Constants
 const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding
@@ -75,6 +76,15 @@ async function scheduleTtsResponse(
 
     console.log("🎯 Processing accumulated transcript:", userText);
 
+    // Append user turn to the call context if callId is available
+    if (callContext.callId) {
+      contextMgr.appendTurn(callContext.callId, {
+        speaker: "caller",
+        text: userText,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     // Send to LLM
     let aiText: string;
     try {
@@ -109,6 +119,26 @@ async function scheduleTtsResponse(
     }
 
     console.log("🤖 AI:", aiText);
+
+    // Append assistant turn to the call context if callId is available
+    if (callContext.callId) {
+      contextMgr.appendTurn(callContext.callId, {
+        speaker: "assistant",
+        text: aiText,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Check if we should update the rolling summary
+      try {
+        await maybeUpdateSummaryForCall(callContext.callId);
+      } catch (summaryError) {
+        console.warn(
+          "⚠️ Failed to update rolling summary:",
+          summaryError instanceof Error ? summaryError.message : summaryError
+        );
+        // Continue even if summary update fails
+      }
+    }
 
     // Send to TTS only if we can still speak
     await sendTtsResponse(callContext, ws, aiText);
@@ -182,6 +212,7 @@ async function sendTtsResponse(
 
 /**
  * Cleanup call state (clear timers, mark as inactive, close Deepgram connection).
+ * Also clears the CallContext from the context manager.
  */
 function cleanupCallState(callContext: CallContext): void {
   console.log("🧹 Cleaning up call state");
@@ -211,6 +242,12 @@ function cleanupCallState(callContext: CallContext): void {
       );
     }
     callContext.deepgramSocket = undefined;
+  }
+
+  // Clean up the CallContext from the context manager
+  if (callContext.callId) {
+    console.log(`📋 Clearing CallContext for call ${callContext.callId}`);
+    contextMgr.clearContext(callContext.callId);
   }
 }
 
@@ -448,19 +485,29 @@ wss.on("connection", async (ws) => {
             decoded = JSON.parse(json);
           }
 
-          callContext = {
-            callControlId,
-            streamId,
-            goal: decoded.goal,
-            userId: decoded.userId,
-            initiatedAt: decoded.initiatedAt,
-            isCallActive: true, // Mark call as active
-            lastUserTranscript: "",
-            lastTranscriptAt: 0,
-            deepgramSocket: dgLive, // Store Deepgram connection for cleanup
-          };
+          // Initialize or retrieve the CallContext from the context manager
+          const managedContext = contextMgr.getOrCreateContext(callControlId);
 
-          console.log("📋 Call context initialized:", callContext);
+          // Update with current call information
+          managedContext.callControlId = callControlId;
+          managedContext.streamId = streamId;
+          managedContext.goal = decoded.goal;
+          managedContext.userId = decoded.userId;
+          managedContext.initiatedAt = decoded.initiatedAt;
+          managedContext.isCallActive = true;
+          managedContext.lastUserTranscript = "";
+          managedContext.lastTranscriptAt = 0;
+          managedContext.deepgramSocket = dgLive;
+
+          // Create the local callContext reference for backward compatibility
+          callContext = managedContext;
+
+          console.log("📋 Call context initialized:", {
+            callId: callContext.callId,
+            callControlId: callContext.callControlId,
+            goal: callContext.goal,
+            userId: callContext.userId,
+          });
         } catch (err) {
           console.error("❌ Failed to decode Telnyx client_state:", err instanceof Error ? err.message : err);
           // Do NOT throw; just continue without context
