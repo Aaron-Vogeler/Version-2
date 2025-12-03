@@ -552,21 +552,18 @@ wss.on("connection", async (ws) => {
       if (isTtsPlaying) {
         console.log("⚡ VAD detected speech! Interrupting immediately...");
 
-        // Immediately mark TTS as not playing to prevent race conditions
+        // 1. Immediately mark TTS as not playing to prevent race conditions
         isTtsPlaying = false;
 
-        try {
-          // Stop the current TTS playback on Telnyx
-          await stopSpeaking(callContext.callControlId);
-        } catch (stopError) {
-          console.warn("⚠️ Error stopping TTS on VAD interrupt:", stopError);
-        }
+        // 2. Kill the audio on Telnyx (fire-and-forget for speed)
+        stopSpeaking(callContext.callControlId).catch((err) =>
+          console.warn("⚠️ Error stopping speech:", err.message)
+        );
 
-        // Clear the pending debounce timer to prevent response while user is speaking
+        // 3. Cancel any pending AI thought process so it doesn't speak again
         if (callContext.ttsDebounceTimer) {
           clearTimeout(callContext.ttsDebounceTimer);
           callContext.ttsDebounceTimer = undefined;
-          console.log("🧹 Cleared pending TTS debounce timer due to VAD interrupt");
         }
       }
     } catch (error) {
