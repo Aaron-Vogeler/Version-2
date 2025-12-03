@@ -61,8 +61,8 @@ Follow these instructions:
 CONVERSATION RULES:
 1) Be concise and natural. Stay focused on the goal - don't ask for unnecessary information.
 2) If confronted with IVR menus, listen, then decisively press the correct DTMF option.
-3) Once goal is achieved, confirm the final conclusion by saying "Just to confirm" [and then summarize what was achieved].
-4) After your final conclusion confirmation, say "chow", then end the call.`
+3) Once goal is achieved, ask for confirmation by saying "Just to confirm" [then read back what was achieved], ending with "is that correct?"
+4) Wait for the caller to confirm. Once they confirm, say "chow", then end the call.`
     ),
   },
 
