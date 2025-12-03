@@ -239,10 +239,10 @@ async function sendTtsResponse(
       onTtsStateChange(false);
     }
 
-    // Check if AI said "Chow" - if so, end the call
+    // Check if AI said "Chow" - if so, set flag to hang up after TTS finishes
     if (aiText.toLowerCase().includes("chow")) {
-      console.log("🎯 Detected 'Chow' in AI response, initiating call termination");
-      await hangupCall(callContext.callControlId);
+      console.log("🎯 Detected 'Chow' in AI response, will hang up after TTS completes");
+      callContext.shouldHangupAfterSpeak = true;
     }
   } catch (ttsError) {
     console.error(
@@ -441,6 +441,16 @@ app.post("/webhooks/telnyx", async (req, res) => {
             data: err.response?.data,
           });
         }
+      }
+    }
+  } else if (eventType === "call.speak.ended") {
+    console.log("📞 TTS speak ended, checking if hangup is needed");
+    const callControlId = req.body?.data?.payload?.call_control_id;
+    if (callControlId) {
+      const callContext = contextMgr.getContext(callControlId);
+      if (callContext?.shouldHangupAfterSpeak) {
+        console.log("🎯 Hanging up call after TTS completion");
+        await hangupCall(callControlId);
       }
     }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
