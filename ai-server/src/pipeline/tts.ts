@@ -3,30 +3,69 @@ import config from "../config";
 
 /**
  * Stops the currently playing audio on a Telnyx call.
- * Used for handling caller interrupts.
+ * Gracefully handles expected failures (404 = already ended, 409 = already stopping).
+ * Uses command_id when available for more targeted stops.
  *
  * @param callControlId - The Telnyx call control ID
+ * @param commandId - Optional command_id for targeted stop (from call.speak.started webhook)
+ * @throws Only throws on unexpected errors, not on 404/409 (acceptable race conditions)
  */
-export async function stopSpeaking(callControlId: string): Promise<void> {
+export async function stopSpeaking(
+  callControlId: string,
+  commandId?: string
+): Promise<void> {
   try {
-    console.log("⏹️ Stopping current TTS playback (interrupt detected)");
+    console.log("⏹️ Stopping current TTS playback (interrupt detected)", commandId ? `(cmd: ${commandId})` : "");
+
+    const requestBody: Record<string, any> = {};
+    if (commandId) {
+      requestBody.command_id = commandId;
+    }
+
     await axios.post(
       `https://api.telnyx.com/v2/calls/${callControlId}/actions/stop_speak`,
-      {},
+      requestBody,
       {
         headers: {
           "Authorization": `Bearer ${config.telnyx.apiKey}`,
           "Content-Type": "application/json",
         },
+        timeout: 5000, // 5 second timeout to prevent hanging
       }
     );
-    console.log("✅ TTS playback stopped");
+    console.log("✅ TTS stop command sent successfully");
   } catch (error) {
-    // Log but don't throw - if stop fails, the speak will continue (not critical)
+    // Handle expected race condition responses gracefully
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+
+      // 404: No active speak command (already ended, or never started)
+      // 409: Conflict (speak is already stopping)
+      // Both are acceptable race condition outcomes
+      if (status === 404 || status === 409) {
+        console.log(`⚠️ TTS stop returned ${status} - speak may have already ended (acceptable race condition)`);
+        return; // Don't throw - this is expected
+      }
+
+      // 401/403: Authentication issue
+      if (status === 401 || status === 403) {
+        console.error("❌ TTS stop failed - authentication error:", error.response?.data);
+        throw error;
+      }
+
+      // Network timeout
+      if (error.code === "ECONNABORTED") {
+        console.warn("⚠️ TTS stop request timed out");
+        return; // Don't throw - timeout is not critical
+      }
+    }
+
+    // Log other unexpected errors but don't throw
     console.warn(
       "⚠️ Failed to stop TTS:",
       error instanceof Error ? error.message : error
     );
+    // Continue - don't throw, as TTS will eventually end anyway
   }
 }
 

@@ -11,39 +11,144 @@ import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } f
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 
-// Constants
-const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
-const TTS_DEBOUNCE_AFTER_INTERRUPT_MS = 200; // Faster response after interrupt
+// ============================================================================
+// TYPES & CONSTANTS
+// ============================================================================
+
+// Debounce timing configuration for different scenarios
+const DEBOUNCE_CONFIG = {
+  NORMAL: 800,           // 800ms: Normal pause between utterances
+  POST_INTERRUPT: 200,   // 200ms: Faster response after interrupting AI
+};
+
+// TTS playback tracking from Telnyx webhooks
+interface TtsPlaybackState {
+  startedAt: number;     // Timestamp when webhook said playback started
+  callControlId: string;
+  commandId?: string;    // Optional command_id from Telnyx for targeted stops
+  timeoutId?: NodeJS.Timeout; // Fallback timeout for missing webhooks
+}
 
 // Global map to track actual TTS playback state per call (from Telnyx webhooks)
-// Maps callControlId -> whether TTS is actually playing on the call
-const activeTtsPlayback = new Map<string, boolean>();
+// Maps callControlId -> TtsPlaybackState
+const activeTtsPlayback = new Map<string, TtsPlaybackState>();
 
-// -----------------------------------------------------------------------------
+// Webhook deduplication to prevent processing the same event twice
+const processedWebhooks = new Map<string, number>();  // webhook_id -> timestamp
+const WEBHOOK_DEDUP_TTL_MS = 60000;  // Keep dedup records for 1 minute
+const TTS_WEBHOOK_TIMEOUT_MS = 10000; // 10 seconds to receive call.speak.started
+
+// Deepgram connection health tracking
+let deepgramLastActivity = Date.now();
+const DEEPGRAM_INACTIVITY_THRESHOLD_MS = 30000;
+
+// Stale TTS state cleanup interval
+const TTS_STALE_CLEANUP_INTERVAL_MS = 60000; // Run cleanup every minute
+const TTS_STALE_THRESHOLD_MS = 120000; // Consider state stale after 2 minutes
+
+// ============================================================================
 // CLIENTS
-// -----------------------------------------------------------------------------
+// ============================================================================
+
 const deepgram = createDeepgramClient();
 
-// -----------------------------------------------------------------------------
-// HELPER FUNCTIONS
-// -----------------------------------------------------------------------------
+// ============================================================================
+// HELPER FUNCTIONS - Webhook Management
+// ============================================================================
 
 /**
- * Queue a user transcript fragment for potential LLM + TTS processing.
- * Resets the debounce timer on each transcript update.
- * Uses shorter debounce if this is a post-interrupt response.
- * @param callContext - The call context
- * @param transcript - The user transcript
- * @param ws - The WebSocket connection
- * @param onTtsStateChange - Callback to update TTS playing state
- * @param wasInterrupted - Whether this transcript is from an interrupt
+ * Check if a webhook has already been processed (deduplication).
+ * Returns true if this webhook was already processed recently.
+ */
+function isWebhookDuplicate(webhookId: string | undefined): boolean {
+  if (!webhookId) return false;
+  if (processedWebhooks.has(webhookId)) {
+    console.log(`⚠️ Duplicate webhook ignored: ${webhookId}`);
+    return true;
+  }
+
+  // Mark as processed
+  processedWebhooks.set(webhookId, Date.now());
+
+  // Cleanup old entries periodically
+  const now = Date.now();
+  for (const [id, timestamp] of processedWebhooks) {
+    if (now - timestamp > WEBHOOK_DEDUP_TTL_MS) {
+      processedWebhooks.delete(id);
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Extract call control ID from webhook payload (handles multiple paths).
+ */
+function extractCallControlId(req: any): string | undefined {
+  return (
+    req.body?.data?.payload?.call_control_id ||
+    req.body?.data?.payload?.call_control_id ||
+    req.body?.payload?.call_control_id
+  );
+}
+
+// ============================================================================
+// HELPER FUNCTIONS - TTS State Management
+// ============================================================================
+
+/**
+ * Get the current TTS playback state for a call.
+ * Returns null if TTS is not actively playing.
+ */
+function getTtsPlaybackState(callControlId: string | undefined): TtsPlaybackState | null {
+  if (!callControlId) return null;
+  return activeTtsPlayback.get(callControlId) ?? null;
+}
+
+/**
+ * Check if TTS is actually playing on a call (from webhook confirmation).
+ */
+function isTtsActuallyPlaying(callControlId: string | undefined): boolean {
+  return getTtsPlaybackState(callControlId) !== null;
+}
+
+/**
+ * Clear stale TTS playback entries (prevent memory leak).
+ */
+function cleanupStaleTtsState(): void {
+  const now = Date.now();
+  let cleaned = 0;
+
+  for (const [callControlId, state] of activeTtsPlayback) {
+    if (now - state.startedAt > TTS_STALE_THRESHOLD_MS) {
+      console.warn(`🧹 Cleaning stale TTS state for ${callControlId}`);
+      activeTtsPlayback.delete(callControlId);
+      cleaned++;
+    }
+  }
+
+  if (cleaned > 0) {
+    console.log(`🧹 Cleaned ${cleaned} stale TTS entries`);
+  }
+}
+
+// Start periodic cleanup
+setInterval(cleanupStaleTtsState, TTS_STALE_CLEANUP_INTERVAL_MS);
+
+// ============================================================================
+// HELPER FUNCTIONS - Transcript & Response Handling
+// ============================================================================
+
+/**
+ * Queue a user transcript for processing with debounce.
+ * Only processes FINAL transcripts, but uses interim for interrupt detection.
+ * Applies different debounce times based on context.
  */
 function queueUserTranscript(
   callContext: CallContext,
   transcript: string,
   ws: WebSocket,
-  onTtsStateChange?: (isPlaying: boolean) => void,
-  wasInterrupted?: boolean
+  debounceMs: number = DEBOUNCE_CONFIG.NORMAL
 ): void {
   // Update the transcript and timestamp
   callContext.lastUserTranscript = transcript;
@@ -54,13 +159,12 @@ function queueUserTranscript(
     clearTimeout(callContext.ttsDebounceTimer);
   }
 
-  // Use shorter debounce if this is a post-interrupt response
-  const debounceMs = wasInterrupted ? TTS_DEBOUNCE_AFTER_INTERRUPT_MS : TTS_DEBOUNCE_MS;
-
-  // Schedule a new TTS response timer
+  // Schedule new TTS response with appropriate debounce
   callContext.ttsDebounceTimer = setTimeout(() => {
-    scheduleTtsResponse(callContext, ws, onTtsStateChange);
+    scheduleTtsResponse(callContext, ws);
   }, debounceMs);
+
+  console.log(`⏱️ Response scheduled in ${debounceMs}ms`);
 }
 
 /**
@@ -71,15 +175,47 @@ function canSpeak(callContext: CallContext, ws: WebSocket): boolean {
 }
 
 /**
+ * Handle interrupt: stop TTS, clear debounce, prepare for new response.
+ */
+async function handleInterrupt(callContext: CallContext, latencyMs: number): Promise<void> {
+  console.log(`🛑 Handling interrupt (latency: ${latencyMs}ms)`);
+
+  if (!callContext.callControlId) return;
+
+  // Clear pending debounce timer
+  if (callContext.ttsDebounceTimer) {
+    clearTimeout(callContext.ttsDebounceTimer);
+    callContext.ttsDebounceTimer = undefined;
+  }
+
+  // Get current TTS state and attempt to stop
+  const ttsState = getTtsPlaybackState(callContext.callControlId);
+
+  if (ttsState) {
+    try {
+      // Use command_id if available for targeted stop
+      await stopSpeaking(callContext.callControlId, ttsState.commandId);
+      console.log("✅ Stop command sent successfully");
+    } catch (stopError) {
+      // stopSpeaking handles 404/409 gracefully, so we only log warnings here
+      console.warn("⚠️ Error stopping TTS on interrupt:", stopError);
+    }
+
+    // Clear from map (webhook will confirm with call.speak.ended)
+    // But don't wait for webhook—remove optimistically
+    activeTtsPlayback.delete(callContext.callControlId);
+  }
+
+  // Record interrupt timestamp for analytics
+  callContext.lastInterruptAt = Date.now();
+}
+
+/**
  * When the debounce timer fires, process the accumulated transcript.
- * @param callContext - The call context
- * @param ws - The WebSocket connection
- * @param onTtsStateChange - Callback to update TTS playing state
  */
 async function scheduleTtsResponse(
   callContext: CallContext,
-  ws: WebSocket,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  ws: WebSocket
 ): Promise<void> {
   try {
     // Guard: Check if we can still speak
@@ -96,7 +232,7 @@ async function scheduleTtsResponse(
 
     console.log("🎯 Processing accumulated transcript:", userText);
 
-    // Append user turn to the call context if callId is available
+    // Append user turn to call context
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
         speaker: "caller",
@@ -140,7 +276,7 @@ async function scheduleTtsResponse(
 
     console.log("🤖 AI:", aiText);
 
-    // Append assistant turn to the call context if callId is available
+    // Append assistant turn to call context
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
         speaker: "assistant",
@@ -148,7 +284,7 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // Check if we should update the rolling summary
+      // Try to update rolling summary
       try {
         await maybeUpdateSummaryForCall(callContext.callId);
       } catch (summaryError) {
@@ -156,12 +292,18 @@ async function scheduleTtsResponse(
           "⚠️ Failed to update rolling summary:",
           summaryError instanceof Error ? summaryError.message : summaryError
         );
-        // Continue even if summary update fails
+        // Continue even if summary fails
       }
     }
 
-    // Send to TTS only if we can still speak
-    await sendTtsResponse(callContext, ws, aiText, onTtsStateChange);
+    // Guard again before TTS (race condition prevention)
+    if (!canSpeak(callContext, ws)) {
+      console.log("⚠️ Call ended before TTS, discarding response");
+      return;
+    }
+
+    // Send to TTS
+    await sendTtsResponse(callContext, ws, aiText);
 
     // Clear transcript after processing
     callContext.lastUserTranscript = "";
@@ -175,16 +317,12 @@ async function scheduleTtsResponse(
 
 /**
  * Send the AI response as speech via Telnyx TTS.
- * @param callContext - The call context
- * @param ws - The WebSocket connection
- * @param aiText - The text to speak
- * @param onTtsStateChange - Callback to update TTS playing state
+ * Tracks actual playback state via webhooks, not API response timing.
  */
 async function sendTtsResponse(
   callContext: CallContext,
   ws: WebSocket,
-  aiText: string,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  aiText: string
 ): Promise<void> {
   const pipelineStartTime = Date.now();
   console.log("");
@@ -192,13 +330,12 @@ async function sendTtsResponse(
   console.log("🎵 STARTING TTS SPEAK ACTION");
   console.log("🎵 ========================================");
 
-  // Double-check we can still speak before calling TTS API
+  // Final safety check
   if (!canSpeak(callContext, ws)) {
     console.log("⚠️ Call ended or WebSocket closed, skipping TTS API call");
     return;
   }
 
-  // Call Telnyx Speak API to synthesize and play audio
   if (!callContext.callControlId) {
     console.error("❌ Cannot synthesize speech: callControlId is not set");
     if (canSpeak(callContext, ws)) {
@@ -218,28 +355,42 @@ async function sendTtsResponse(
     console.log("👋 Detected 'Chow' in AI response - will hangup after TTS");
   }
 
+  const callControlId = callContext.callControlId;
+
   try {
-    // Mark TTS as playing and record start time
-    // NOTE: We don't immediately set it to false after the API call returns!
-    // The actual playback continues for several seconds. We rely on Telnyx webhooks
-    // (call.speak.started/ended) to track when audio is actually playing.
-    callContext.ttsStartedAt = Date.now();
-    if (callContext.callControlId) {
-      activeTtsPlayback.set(callContext.callControlId, true);
-    }
-    if (onTtsStateChange) {
-      onTtsStateChange(true);
-    }
+    // Set optimistic state (will be confirmed by webhook)
+    // This allows interrupt detection to work even if webhook is delayed
+    const optimisticState: TtsPlaybackState = {
+      startedAt: Date.now(),
+      callControlId,
+      commandId: undefined, // Will be updated by webhook
+    };
 
-    await synthesizeSpeech(aiText, callContext.callControlId);
+    // Add timeout fallback in case webhook never arrives
+    optimisticState.timeoutId = setTimeout(() => {
+      const current = activeTtsPlayback.get(callControlId);
+      if (current === optimisticState) {
+        console.warn(
+          `⚠️ TTS webhook (call.speak.started) never received for ${callControlId}, clearing optimistic state`
+        );
+        activeTtsPlayback.delete(callControlId);
+      }
+    }, TTS_WEBHOOK_TIMEOUT_MS);
 
-    // If AI said "Chow", wait a moment then hangup
-    if (shouldHangup && callContext.callControlId) {
+    activeTtsPlayback.set(callControlId, optimisticState);
+
+    // Call Telnyx Speak API
+    await synthesizeSpeech(aiText, callControlId);
+
+    console.log("📤 TTS API call sent, waiting for call.speak.started webhook...");
+
+    // If "Chow" was detected, hang up after TTS completes
+    if (shouldHangup) {
       console.log("⏳ Waiting 2 seconds for TTS to complete before hangup...");
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       try {
-        await hangupCall(callContext.callControlId);
+        await hangupCall(callControlId);
         console.log("📞 Call ended after 'Chow'");
       } catch (hangupError) {
         console.error("❌ Hangup failed:", hangupError);
@@ -250,9 +401,10 @@ async function sendTtsResponse(
       "❌ Telnyx TTS error:",
       ttsError instanceof Error ? ttsError.message : ttsError
     );
-    if (onTtsStateChange) {
-      onTtsStateChange(false);
-    }
+
+    // Clear optimistic state on error
+    activeTtsPlayback.delete(callControlId);
+
     if (canSpeak(callContext, ws)) {
       ws.send(
         JSON.stringify({
@@ -270,12 +422,13 @@ async function sendTtsResponse(
 }
 
 /**
- * Cleanup call state (clear timers, mark as inactive, close Deepgram connection).
- * Also clears the CallContext from the context manager.
+ * Cleanup call state (timers, connections, context).
  */
 function cleanupCallState(callContext: CallContext): void {
   console.log("🧹 Cleaning up call state");
   callContext.isCallActive = false;
+
+  // Clear all timers
   if (callContext.ttsDebounceTimer) {
     clearTimeout(callContext.ttsDebounceTimer);
     callContext.ttsDebounceTimer = undefined;
@@ -284,16 +437,24 @@ function cleanupCallState(callContext: CallContext): void {
     clearTimeout(callContext.interruptDebounceTimer);
     callContext.interruptDebounceTimer = undefined;
   }
+
+  // Clear TTS playback tracking and cancel timeout
+  if (callContext.callControlId) {
+    const ttsState = activeTtsPlayback.get(callContext.callControlId);
+    if (ttsState?.timeoutId) {
+      clearTimeout(ttsState.timeoutId);
+    }
+    activeTtsPlayback.delete(callContext.callControlId);
+  }
+
   callContext.lastUserTranscript = "";
 
-  // Close the Deepgram WebSocket if it exists and is open
+  // Close Deepgram WebSocket
   if (callContext.deepgramSocket) {
     try {
-      // Try to send CloseStream if the SDK requires it
       if (typeof callContext.deepgramSocket.finish === "function") {
         callContext.deepgramSocket.finish();
       }
-      // Close the underlying WebSocket
       if (typeof callContext.deepgramSocket.close === "function") {
         callContext.deepgramSocket.close(1000, "Call ended");
       }
@@ -307,32 +468,31 @@ function cleanupCallState(callContext: CallContext): void {
     callContext.deepgramSocket = undefined;
   }
 
-  // Clean up the CallContext from the context manager
+  // Clear call context from manager
   if (callContext.callId) {
     console.log(`📋 Clearing CallContext for call ${callContext.callId}`);
     contextMgr.clearContext(callContext.callId);
   }
 }
 
-// -----------------------------------------------------------------------------
-// APP + SERVER
-// -----------------------------------------------------------------------------
+// ============================================================================
+// APP + SERVER SETUP
+// ============================================================================
+
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
 app.use(express.json());
 
-// HELPER: Generate a WAV file header for 8kHz mono 16-bit PCM
+// Helper: Generate WAV file header for 8kHz mono 16-bit PCM
 function generateWavHeader(pcmDataLength: number, sampleRate: number = 8000): Buffer {
   const channels = 1;
   const bitsPerSample = 16;
   const byteRate = sampleRate * channels * (bitsPerSample / 8);
   const blockAlign = channels * (bitsPerSample / 8);
 
-  // Total file size: 36 + pcm data length
   const fileSize = 36 + pcmDataLength;
-
   const header = Buffer.alloc(44);
   let offset = 0;
 
@@ -347,9 +507,9 @@ function generateWavHeader(pcmDataLength: number, sampleRate: number = 8000): Bu
   // fmt subchunk
   header.write("fmt ", offset);
   offset += 4;
-  header.writeUInt32LE(16, offset); // Subchunk1Size (16 for PCM)
+  header.writeUInt32LE(16, offset);
   offset += 4;
-  header.writeUInt16LE(1, offset); // AudioFormat (1 = PCM)
+  header.writeUInt16LE(1, offset);
   offset += 2;
   header.writeUInt16LE(channels, offset);
   offset += 2;
@@ -370,56 +530,58 @@ function generateWavHeader(pcmDataLength: number, sampleRate: number = 8000): Bu
   return header;
 }
 
-// DEBUG ENDPOINTS REMOVED: These were specific to OpenAI TTS pipeline with manual audio processing.
-// With Telnyx TTS, audio synthesis and playback are handled directly by Telnyx on the call.
-
 /**
- * ITU-T G.711 μ-law decoder.
- * Converts 8-bit μ-law to 16-bit linear PCM.
+ * ITU-T G.711 μ-law decoder (8-bit → 16-bit PCM).
  */
 function decodeMulawG711(mulaw: number): number {
-  // Invert the bits (μ-law uses inverted encoding)
   mulaw = ~mulaw & 0xFF;
-  
-  // Extract sign, exponent, and mantissa
   const sign = (mulaw & 0x80) ? -1 : 1;
   const exponent = (mulaw >> 4) & 0x07;
   const mantissa = mulaw & 0x0F;
-  
-  // Reconstruct the sample
-  // The formula: sample = (mantissa << (exponent + 3)) + (1 << (exponent + 3)) - 132
+
   let sample: number;
   if (exponent === 0) {
     sample = (mantissa << 3) + 132;
   } else {
     sample = ((mantissa << 3) + 132) << exponent;
   }
-  
-  // Remove the bias
+
   sample -= 132;
-  
   return sign * sample;
 }
 
-
+// ============================================================================
 // OUTBOUND CALL ENDPOINT
+// ============================================================================
+
 app.use("/api/outbound-call", outboundCallRouter);
 
-// TELNYX WEBHOOKS (Call start/stop, TTS playback tracking)
+// ============================================================================
+// TELNYX WEBHOOK HANDLER
+// ============================================================================
+
 app.post("/webhooks/telnyx", async (req, res) => {
   const eventType = req.body?.data?.event_type;
+  const webhookId = req.body?.meta?.webhook_id;
+
   console.log("📞 Telnyx webhook event:", eventType);
+
+  // Deduplicate webhooks
+  if (isWebhookDuplicate(webhookId)) {
+    return res.send("ok");
+  }
+
+  const callControlId = extractCallControlId(req);
 
   if (eventType === "call.answered") {
     console.log(
       "📦 Telnyx call.answered payload:",
       JSON.stringify(req.body, null, 2)
     );
-    const callControlId = req.body?.data?.payload?.call_control_id;
+
     if (!callControlId) {
-      console.warn("⚠️ call.answered webhook missing payload.call_control_id");
-    }
-    if (callControlId) {
+      console.warn("⚠️ call.answered webhook missing call_control_id");
+    } else {
       try {
         await axios.post(
           `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
@@ -437,7 +599,10 @@ app.post("/webhooks/telnyx", async (req, res) => {
         );
         console.log("✅ Streaming started for call:", callControlId);
       } catch (error) {
-        console.error("❌ Failed to start streaming:", error instanceof Error ? error.message : error);
+        console.error(
+          "❌ Failed to start streaming:",
+          error instanceof Error ? error.message : error
+        );
         if (error instanceof Error && "response" in error) {
           const err = error as any;
           console.error("📋 Telnyx API Error Details:", {
@@ -448,47 +613,71 @@ app.post("/webhooks/telnyx", async (req, res) => {
         }
       }
     }
-  } else if (eventType === "call.speak.started") {
-    // Audio playback has actually started on the call
-    const callControlId = req.body?.data?.payload?.call_control_id;
+  }
+  // TTS PLAYBACK STARTED: Audio actually playing on the call
+  else if (eventType === "call.speak.started") {
     if (callControlId) {
-      activeTtsPlayback.set(callControlId, true);
-      console.log("🔊 TTS playback STARTED on call, interrupt detection enabled");
+      const existingState = activeTtsPlayback.get(callControlId);
+
+      // Update or create state
+      if (existingState) {
+        // Clear the timeout since we got confirmation
+        if (existingState.timeoutId) {
+          clearTimeout(existingState.timeoutId);
+          existingState.timeoutId = undefined;
+        }
+        // Update command_id if provided
+        if (req.body?.data?.payload?.command_id) {
+          existingState.commandId = req.body.data.payload.command_id;
+        }
+        console.log("🔊 TTS playback CONFIRMED (webhook received)");
+      } else {
+        // Create new state from webhook
+        activeTtsPlayback.set(callControlId, {
+          startedAt: Date.now(),
+          callControlId,
+          commandId: req.body?.data?.payload?.command_id,
+        });
+        console.log("🔊 TTS playback STARTED on call, interrupt detection ENABLED");
+      }
     }
-  } else if (eventType === "call.speak.ended") {
-    // Audio playback has completed on the call
-    const callControlId = req.body?.data?.payload?.call_control_id;
+  }
+  // TTS PLAYBACK ENDED: Audio finished playing
+  else if (eventType === "call.speak.ended") {
     if (callControlId) {
       activeTtsPlayback.delete(callControlId);
-      console.log("🔇 TTS playback ENDED on call, interrupt detection disabled");
+      console.log("🔇 TTS playback ENDED on call, interrupt detection DISABLED");
     }
-  } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
+  }
+  // CALL ENDED: Cleanup TTS tracking
+  else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
     console.log("📞 Call ended:", eventType);
-    // Clean up TTS playback tracking for this call
-    const callControlId = req.body?.data?.payload?.call_control_id;
     if (callControlId) {
       activeTtsPlayback.delete(callControlId);
     }
-    // Note: We don't have access to callContext here, but we mark the call
-    // as inactive via the WebSocket close event. Cleanup happens there.
+  }
+  // Handle Deepgram errors for visibility
+  else if (eventType === "call.streaming.error") {
+    console.error("❌ Telnyx streaming error:", req.body?.data?.payload);
+    if (callControlId) {
+      activeTtsPlayback.delete(callControlId);
+    }
   }
 
   res.send("ok");
 });
 
-// -----------------------------------------------------------------------------
-// WS AUDIO SESSION HANDLER (core of the whole system)
-// -----------------------------------------------------------------------------
+// ============================================================================
+// WEBSOCKET HANDLER (Core Audio Processing)
+// ============================================================================
+
 wss.on("connection", async (ws) => {
   console.log("🔌 Telnyx WebSocket Connected");
 
-  // Initialize call context (populated when "start" message arrives)
+  // Call state
   let callContext: CallContext | undefined;
 
-  // Track if TTS is currently playing (for interrupt detection)
-  let isTtsPlaying = false;
-
-  // Create a Deepgram live stream
+  // Create Deepgram live stream
   const dgLive = await deepgram.listen.live({
     model: config.deepgram.model,
     encoding: "mulaw",
@@ -499,64 +688,86 @@ wss.on("connection", async (ws) => {
 
   console.log("🎧 Deepgram stream started");
 
-  // Relay Deepgram transcript → Groq → Telnyx (with 800ms silence debounce)
+  // Monitor Deepgram connection health
+  dgLive.on(LiveTranscriptionEvents.Transcript, () => {
+    deepgramLastActivity = Date.now();
+  });
+
+  dgLive.on(LiveTranscriptionEvents.Error, (error: any) => {
+    console.error("❌ Deepgram error:", error);
+  });
+
+  dgLive.on(LiveTranscriptionEvents.Close, () => {
+    console.log("🔌 Deepgram connection closed");
+  });
+
+  // ========================================================================
+  // TRANSCRIPT HANDLER
+  // ========================================================================
+
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
       const isFinal = dgEvent.is_final ?? false;
 
-      // Guard: Check if call is still active BEFORE logging raw transcript
+      // Guard: Call must be active
       if (!callContext || !callContext.isCallActive) {
-        // Only log at debug level if call is not active to avoid flooding logs
-        if (results?.transcript) {
-          console.debug("📝 Deepgram raw transcript (call inactive):", results.transcript);
+        if (results?.transcript && process.env.LOG_INACTIVE_TRANSCRIPTS === "true") {
+          console.debug("📝 Deepgram transcript (call inactive):", results.transcript);
         }
         return;
       }
 
-      if (!results || !results.transcript) return;
+      if (!results?.transcript) return;
 
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      // Log whether this is interim or final transcript
+      // Log transcript type for debugging
       const transcriptType = isFinal ? "final" : "interim";
       console.log(`🗣️ Caller transcript (${transcriptType}):`, userText);
 
-      // Detect interrupts from both interim and final transcripts
-      // Use the global activeTtsPlayback map which is updated from Telnyx webhooks
-      // This is more accurate than relying on when the API call returns
-      let wasInterrupted = false;
-      const isTtsActuallyPlaying = callContext.callControlId
-        ? activeTtsPlayback.get(callContext.callControlId) ?? false
-        : false;
+      // =====================================================================
+      // INTERRUPT DETECTION (works on both interim and final)
+      // =====================================================================
 
-      if (isTtsActuallyPlaying && callContext.callControlId) {
-        const interruptLatency = callContext.ttsStartedAt
-          ? Date.now() - callContext.ttsStartedAt
-          : 0;
+      const ttsState = getTtsPlaybackState(callContext.callControlId);
 
-        console.log(`🛑 Caller interrupted TTS playback (latency: ${interruptLatency}ms), stopping speech`);
-        wasInterrupted = true;
-        callContext.lastInterruptAt = Date.now();
+      if (ttsState && callContext.callControlId) {
+        // Caller spoke during active TTS playback → INTERRUPT
+        const latencyMs = Date.now() - ttsState.startedAt;
 
-        try {
-          await stopSpeaking(callContext.callControlId);
-        } catch (stopError) {
-          console.warn("⚠️ Error stopping TTS on interrupt:", stopError);
-        }
+        console.log(
+          `🛑 Caller interrupted TTS playback (${latencyMs}ms into playback), stopping speech`
+        );
 
-        // Clear the debounce timer to restart with new transcript
-        if (callContext.ttsDebounceTimer) {
-          clearTimeout(callContext.ttsDebounceTimer);
-          callContext.ttsDebounceTimer = undefined;
-        }
+        await handleInterrupt(callContext, latencyMs);
+
+        // Queue with shortened debounce for faster response
+        queueUserTranscript(
+          callContext,
+          userText,
+          ws,
+          DEBOUNCE_CONFIG.POST_INTERRUPT
+        );
+        return;
       }
 
-      // Queue the transcript with debounce (use shorter debounce if interrupted)
-      queueUserTranscript(callContext, userText, ws, (isPlaying) => {
-        isTtsPlaying = isPlaying;
-      }, wasInterrupted);
+      // =====================================================================
+      // NORMAL RESPONSE QUEUEING (only process final transcripts)
+      // =====================================================================
+
+      // Skip interim transcripts in normal flow (already used for interrupts above)
+      if (!isFinal) {
+        if (process.env.LOG_INTERIM_TRANSCRIPTS === "true") {
+          console.log(`📝 Interim (not queued): ${userText}`);
+        }
+        return;
+      }
+
+      // Final transcript received → queue with normal debounce
+      queueUserTranscript(callContext, userText, ws, DEBOUNCE_CONFIG.NORMAL);
+
     } catch (error) {
       console.error(
         "❌ Unexpected error in transcript handler:",
@@ -573,20 +784,24 @@ wss.on("connection", async (ws) => {
     }
   });
 
-  //-----------------------------
-  // WebSocket MESSAGE HANDLER
-  //-----------------------------
+  // ========================================================================
+  // WEBSOCKET MESSAGE HANDLER
+  // ========================================================================
+
   ws.on("message", (raw) => {
     let msg: any;
     try {
       msg = JSON.parse(raw.toString());
     } catch (parseError) {
-      console.warn("⚠️ Failed to parse WebSocket message:", parseError instanceof Error ? parseError.message : parseError);
+      console.warn(
+        "⚠️ Failed to parse WebSocket message:",
+        parseError instanceof Error ? parseError.message : parseError
+      );
       return;
     }
 
     try {
-      // Capture Telnyx client_state when call starts
+      // CALL START: Initialize call context
       if (msg.event === "start") {
         console.log("🎬 Call started");
 
@@ -602,10 +817,10 @@ wss.on("connection", async (ws) => {
             decoded = JSON.parse(json);
           }
 
-          // Initialize or retrieve the CallContext from the context manager
+          // Get or create context
           const managedContext = contextMgr.getOrCreateContext(callControlId);
 
-          // Update with current call information
+          // Initialize context
           managedContext.callControlId = callControlId;
           managedContext.streamId = streamId;
           managedContext.goal = decoded.goal;
@@ -616,7 +831,6 @@ wss.on("connection", async (ws) => {
           managedContext.lastTranscriptAt = 0;
           managedContext.deepgramSocket = dgLive;
 
-          // Create the local callContext reference for backward compatibility
           callContext = managedContext;
 
           console.log("📋 Call context initialized:", {
@@ -626,47 +840,59 @@ wss.on("connection", async (ws) => {
             userId: callContext.userId,
           });
         } catch (err) {
-          console.error("❌ Failed to decode Telnyx client_state:", err instanceof Error ? err.message : err);
-          // Do NOT throw; just continue without context
+          console.error(
+            "❌ Failed to decode Telnyx client_state:",
+            err instanceof Error ? err.message : err
+          );
         }
       }
-      // Telnyx media packets → Deepgram
+      // MEDIA: Process audio from Telnyx
       else if (msg.event === "media" && msg.media?.payload) {
-        // CRITICAL: Only process inbound audio (caller's voice), ignore outbound (AI's voice)
-        // Telnyx sends track information: "inbound" = caller, "outbound" = AI
         const track = msg.media?.track;
 
+        // Skip outbound (AI's own speech)
         if (track === "outbound") {
-          // This is AI's own speech from TTS, skip it completely
           if (process.env.LOG_AUDIO_PACKETS === "true") {
             console.log("🔄 Skipping outbound (AI) audio packet");
           }
           return;
         }
 
-        // Process inbound audio (caller's voice)
+        // Process inbound (caller's voice)
         const audio = Buffer.from(msg.media.payload, "base64");
-        // Only log packet details if LOG_AUDIO_PACKETS is enabled (reduces noise in logs)
         if (process.env.LOG_AUDIO_PACKETS === "true") {
           console.log("🎙️ Received Telnyx media packet, track:", track, "bytes:", audio.length);
         }
         dgLive.send(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength));
-      } else if (msg.event === "stop") {
+      }
+      // STOP: Call ended
+      else if (msg.event === "stop") {
         console.log("🛑 Telnyx media stream stopped");
         if (callContext) {
           cleanupCallState(callContext);
         }
       }
     } catch (error) {
-      console.error("❌ Error processing WebSocket message:", error instanceof Error ? error.message : error);
+      console.error(
+        "❌ Error processing WebSocket message:",
+        error instanceof Error ? error.message : error
+      );
     }
   });
+
+  // ========================================================================
+  // WEBSOCKET CLOSE HANDLER
+  // ========================================================================
 
   ws.on("close", () => {
     console.log("🔌 Client disconnected");
     if (callContext) {
-      // Clean up TTS playback tracking
+      // Cleanup TTS tracking
       if (callContext.callControlId) {
+        const ttsState = activeTtsPlayback.get(callContext.callControlId);
+        if (ttsState?.timeoutId) {
+          clearTimeout(ttsState.timeoutId);
+        }
         activeTtsPlayback.delete(callContext.callControlId);
       }
       cleanupCallState(callContext);
@@ -675,9 +901,31 @@ wss.on("connection", async (ws) => {
   });
 });
 
-// -----------------------------------------------------------------------------
+// ============================================================================
+// HEALTH CHECK ENDPOINT
+// ============================================================================
+
+app.get("/health", (req, res) => {
+  const now = Date.now();
+  const deepgramInactivity = now - deepgramLastActivity;
+  const activeCalls = contextMgr.getActiveCallIds().length;
+  const activeTts = activeTtsPlayback.size;
+
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    deepgramInactivityMs: deepgramInactivity,
+    deepgramHealthy: deepgramInactivity < DEEPGRAM_INACTIVITY_THRESHOLD_MS,
+    activeCalls,
+    activeTtsPlayback: activeTts,
+  });
+});
+
+// ============================================================================
 // START SERVER
-// -----------------------------------------------------------------------------
+// ============================================================================
+
 server.listen(config.port, () => {
   console.log(`🚀 AI Server running on port ${config.port}`);
+  console.log(`📊 Health check available at http://localhost:${config.port}/health`);
 });
