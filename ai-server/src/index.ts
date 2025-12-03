@@ -11,7 +11,7 @@ import { generateAssistantReply, type CallContext } from "./pipeline/llm";
 import { synthesizeSpeech } from "./pipeline/tts";
 
 // Constants
-const TTS_DEBOUNCE_MS = 2000; // 2 seconds of silence before responding
+const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding
 
 // -----------------------------------------------------------------------------
 // CLIENTS
