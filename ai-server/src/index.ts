@@ -13,6 +13,7 @@ import * as contextMgr from "./callContextManager";
 
 // Constants
 const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
+const TTS_DEBOUNCE_AFTER_INTERRUPT_MS = 200; // Faster response after interrupt
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -26,16 +27,19 @@ const deepgram = createDeepgramClient();
 /**
  * Queue a user transcript fragment for potential LLM + TTS processing.
  * Resets the debounce timer on each transcript update.
+ * Uses shorter debounce if this is a post-interrupt response.
  * @param callContext - The call context
  * @param transcript - The user transcript
  * @param ws - The WebSocket connection
  * @param onTtsStateChange - Callback to update TTS playing state
+ * @param wasInterrupted - Whether this transcript is from an interrupt
  */
 function queueUserTranscript(
   callContext: CallContext,
   transcript: string,
   ws: WebSocket,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  onTtsStateChange?: (isPlaying: boolean) => void,
+  wasInterrupted?: boolean
 ): void {
   // Update the transcript and timestamp
   callContext.lastUserTranscript = transcript;
@@ -46,10 +50,13 @@ function queueUserTranscript(
     clearTimeout(callContext.ttsDebounceTimer);
   }
 
+  // Use shorter debounce if this is a post-interrupt response
+  const debounceMs = wasInterrupted ? TTS_DEBOUNCE_AFTER_INTERRUPT_MS : TTS_DEBOUNCE_MS;
+
   // Schedule a new TTS response timer
   callContext.ttsDebounceTimer = setTimeout(() => {
     scheduleTtsResponse(callContext, ws, onTtsStateChange);
-  }, TTS_DEBOUNCE_MS);
+  }, debounceMs);
 }
 
 /**
@@ -208,7 +215,8 @@ async function sendTtsResponse(
   }
 
   try {
-    // Mark TTS as playing
+    // Mark TTS as playing and record start time
+    callContext.ttsStartedAt = Date.now();
     if (onTtsStateChange) {
       onTtsStateChange(true);
     }
@@ -216,6 +224,7 @@ async function sendTtsResponse(
     await synthesizeSpeech(aiText, callContext.callControlId);
 
     // Mark TTS as no longer playing when synthesis completes
+    callContext.ttsStartedAt = undefined;
     if (onTtsStateChange) {
       onTtsStateChange(false);
     }
@@ -266,6 +275,10 @@ function cleanupCallState(callContext: CallContext): void {
   if (callContext.ttsDebounceTimer) {
     clearTimeout(callContext.ttsDebounceTimer);
     callContext.ttsDebounceTimer = undefined;
+  }
+  if (callContext.interruptDebounceTimer) {
+    clearTimeout(callContext.interruptDebounceTimer);
+    callContext.interruptDebounceTimer = undefined;
   }
   callContext.lastUserTranscript = "";
 
@@ -467,6 +480,7 @@ wss.on("connection", async (ws) => {
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
+      const isFinal = dgEvent.is_final ?? false;
 
       // Guard: Check if call is still active BEFORE logging raw transcript
       if (!callContext || !callContext.isCallActive) {
@@ -482,12 +496,23 @@ wss.on("connection", async (ws) => {
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      console.log("🗣️ Caller transcript:", userText);
+      // Log whether this is interim or final transcript
+      const transcriptType = isFinal ? "final" : "interim";
+      console.log(`🗣️ Caller transcript (${transcriptType}):`, userText);
 
-      // If TTS is currently playing and caller speaks, stop it
+      // Detect interrupts from both interim and final transcripts
+      // Interim transcripts allow faster interrupt detection (~100-200ms earlier)
+      let wasInterrupted = false;
       if (isTtsPlaying && callContext.callControlId) {
-        console.log("🛑 Caller interrupted TTS playback, stopping speech");
+        const interruptLatency = callContext.ttsStartedAt
+          ? Date.now() - callContext.ttsStartedAt
+          : 0;
+
+        console.log(`🛑 Caller interrupted TTS playback (latency: ${interruptLatency}ms), stopping speech`);
         isTtsPlaying = false;
+        wasInterrupted = true;
+        callContext.lastInterruptAt = Date.now();
+
         try {
           await stopSpeaking(callContext.callControlId);
         } catch (stopError) {
@@ -501,10 +526,10 @@ wss.on("connection", async (ws) => {
         }
       }
 
-      // Queue the transcript with debounce
+      // Queue the transcript with debounce (use shorter debounce if interrupted)
       queueUserTranscript(callContext, userText, ws, (isPlaying) => {
         isTtsPlaying = isPlaying;
-      });
+      }, wasInterrupted);
     } catch (error) {
       console.error(
         "❌ Unexpected error in transcript handler:",

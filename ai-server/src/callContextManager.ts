@@ -38,6 +38,11 @@ export interface CallContext {
   lastTranscriptAt?: number;
   ttsDebounceTimer?: any; // NodeJS.Timeout | ReturnType<typeof setTimeout>
   deepgramSocket?: any;
+
+  // Interrupt tracking
+  ttsStartedAt?: number; // Timestamp when TTS playback started
+  lastInterruptAt?: number; // Timestamp of last interrupt
+  interruptDebounceTimer?: any; // Shortened debounce timer for post-interrupt responses
 }
 
 /**
@@ -174,6 +179,9 @@ export function clearContext(callId: string): void {
     // Clean up timers
     if (context.ttsDebounceTimer) {
       clearTimeout(context.ttsDebounceTimer);
+    }
+    if (context.interruptDebounceTimer) {
+      clearTimeout(context.interruptDebounceTimer);
     }
     // Close Deepgram if needed
     if (context.deepgramSocket) {
