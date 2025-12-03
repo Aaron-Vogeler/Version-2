@@ -38,6 +38,13 @@ export interface CallContext {
   lastTranscriptAt?: number;
   ttsDebounceTimer?: any; // NodeJS.Timeout | ReturnType<typeof setTimeout>
   deepgramSocket?: any;
+
+  // TTS playback state (authoritative, driven by Telnyx webhooks)
+  ttsState?: "idle" | "speaking" | "stopping";
+  // Turn sequence number for cancelling stale LLM/TTS responses
+  turnSeq?: number;
+  // Barge-in cooldown to prevent spamming stop endpoint
+  bargeInCooldownUntil?: number;
 }
 
 /**
@@ -75,6 +82,9 @@ export function getOrCreateContext(
       isCallActive: false,
       lastUserTranscript: "",
       lastTranscriptAt: 0,
+      ttsState: "idle",
+      turnSeq: 0,
+      bargeInCooldownUntil: 0,
     });
   }
   return callContextStore.get(callId)!;
@@ -175,6 +185,8 @@ export function clearContext(callId: string): void {
     if (context.ttsDebounceTimer) {
       clearTimeout(context.ttsDebounceTimer);
     }
+    // Reset TTS state
+    context.ttsState = "idle";
     // Close Deepgram if needed
     if (context.deepgramSocket) {
       try {
