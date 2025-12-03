@@ -521,6 +521,43 @@ wss.on("connection", async (ws) => {
     }
   });
 
+  // VAD (Voice Activity Detection) event listener for immediate interruption
+  // When Deepgram detects the start of speech, stop TTS immediately without waiting for transcript
+  dgLive.on(LiveTranscriptionEvents.SpeechStarted, async () => {
+    try {
+      // Guard: Only interrupt if TTS is currently playing and call context exists
+      if (!callContext || !callContext.isCallActive || !callContext.callControlId) {
+        return;
+      }
+
+      if (isTtsPlaying) {
+        console.log("⚡ VAD detected speech! Interrupting immediately...");
+
+        // Immediately mark TTS as not playing to prevent race conditions
+        isTtsPlaying = false;
+
+        try {
+          // Stop the current TTS playback on Telnyx
+          await stopSpeaking(callContext.callControlId);
+        } catch (stopError) {
+          console.warn("⚠️ Error stopping TTS on VAD interrupt:", stopError);
+        }
+
+        // Clear the pending debounce timer to prevent response while user is speaking
+        if (callContext.ttsDebounceTimer) {
+          clearTimeout(callContext.ttsDebounceTimer);
+          callContext.ttsDebounceTimer = undefined;
+          console.log("🧹 Cleared pending TTS debounce timer due to VAD interrupt");
+        }
+      }
+    } catch (error) {
+      console.error(
+        "❌ Unexpected error in SpeechStarted handler:",
+        error instanceof Error ? error.message : error
+      );
+    }
+  });
+
   //-----------------------------
   // WebSocket MESSAGE HANDLER
   //-----------------------------
