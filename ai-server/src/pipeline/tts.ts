@@ -31,6 +31,44 @@ export async function stopSpeaking(callControlId: string): Promise<void> {
 }
 
 /**
+ * Hangs up an active Telnyx call.
+ * Used when the AI determines the call should be ended (e.g., after saying "Chow").
+ *
+ * @param callControlId - The Telnyx call control ID
+ */
+export async function hangupCall(callControlId: string): Promise<void> {
+  try {
+    console.log("📞 Hanging up call:", callControlId);
+    await axios.post(
+      `https://api.telnyx.com/v2/calls/${callControlId}/actions/hangup`,
+      {},
+      {
+        headers: {
+          "Authorization": `Bearer ${config.telnyx.apiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    console.log("✅ Call hangup successful");
+  } catch (error) {
+    console.error(
+      "❌ Failed to hangup call:",
+      error instanceof Error ? error.message : error
+    );
+    // Log detailed error response if available
+    if (error instanceof Error && "response" in error) {
+      const err = error as any;
+      console.error("📋 Telnyx API Error Details:", {
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data,
+      });
+    }
+    throw error;
+  }
+}
+
+/**
  * Speaks text on an active Telnyx call using the speak endpoint.
  * Telnyx handles TTS synthesis and streaming directly.
  *

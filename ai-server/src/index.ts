@@ -8,7 +8,7 @@ import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
-import { synthesizeSpeech, stopSpeaking } from "./pipeline/tts";
+import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 
 // Constants
@@ -209,9 +209,42 @@ async function sendTtsResponse(
 
     await synthesizeSpeech(aiText, callContext.callControlId);
 
-    // Mark TTS as no longer playing when synthesis completes
-    if (onTtsStateChange) {
-      onTtsStateChange(false);
+    // Check if AI said "Chow" (case-insensitive) - indicating call should end
+    const shouldEndCall = /\bchow\b/i.test(aiText);
+
+    if (shouldEndCall) {
+      console.log("👋 AI said 'Chow' - preparing to end call");
+
+      // Estimate speech duration based on text length (rough: ~150 words per minute, ~2.5 chars per word)
+      // This gives us approximately: (characters / 2.5 / 150) * 60 * 1000 milliseconds
+      const estimatedDurationMs = Math.max(2000, (aiText.length / 2.5 / 150) * 60 * 1000);
+      console.log(`⏳ Waiting ${estimatedDurationMs}ms for speech to complete before hanging up`);
+
+      // Wait for the estimated speech duration to complete
+      await new Promise(resolve => setTimeout(resolve, estimatedDurationMs));
+
+      // Hang up the call
+      try {
+        await hangupCall(callContext.callControlId);
+        console.log("✅ Call ended successfully after saying 'Chow'");
+
+        // Mark call as inactive and cleanup
+        callContext.isCallActive = false;
+        if (onTtsStateChange) {
+          onTtsStateChange(false);
+        }
+      } catch (hangupError) {
+        console.error(
+          "❌ Failed to hang up call:",
+          hangupError instanceof Error ? hangupError.message : hangupError
+        );
+        // Continue even if hangup fails - call may have already ended
+      }
+    } else {
+      // Mark TTS as no longer playing when synthesis completes
+      if (onTtsStateChange) {
+        onTtsStateChange(false);
+      }
     }
   } catch (ttsError) {
     console.error(
