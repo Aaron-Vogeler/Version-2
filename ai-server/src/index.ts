@@ -389,7 +389,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
           `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
           {
             stream_url: config.telnyx.streamUrl,
-            stream_track: "inbound",
+            stream_track: "both_tracks",
             stream_bidirectional_mode: "rtp",
           },
           {
@@ -468,20 +468,50 @@ wss.on("connection", async (ws) => {
 
       console.log("🗣️ User:", userText);
 
-      // INTERRUPT DETECTION: If TTS is currently playing and caller speaks, stop it
+      // INTERRUPT DETECTION & ECHO SUPPRESSION:
+      // If TTS is currently playing, we need to determine if this is:
+      // 1. An echo of the AI's own speech (ignore)
+      // 2. The caller interrupting (stop TTS and process)
       if (isTtsPlaying && callContext.callControlId) {
-        console.log("🛑 Caller interrupted TTS playback, stopping speech");
-        isTtsPlaying = false;
-        try {
-          await stopSpeaking(callContext.callControlId);
-        } catch (stopError) {
-          console.warn("⚠️ Error stopping TTS on interrupt:", stopError);
+        const callCtx = contextMgr.getContext(callContext.callId);
+        let isEcho = false;
+
+        // Check if this transcript matches the last assistant message
+        // (indicating it's probably an echo of our own speech)
+        if (callCtx && callCtx.turns.length > 0) {
+          const lastTurn = callCtx.turns[callCtx.turns.length - 1];
+          if (lastTurn.speaker === "assistant") {
+            // Simple echo detection: check if the new transcript is a substring of our last message
+            const lastMessageLower = lastTurn.text.toLowerCase();
+            const userTextLower = userText.toLowerCase();
+            if (
+              lastMessageLower.includes(userTextLower.slice(0, Math.min(10, userTextLower.length))) ||
+              userTextLower.includes(lastMessageLower.slice(0, Math.min(10, lastMessageLower.length)))
+            ) {
+              isEcho = true;
+              console.log("🔄 Detected echo of AI's own speech, ignoring transcript");
+            }
+          }
         }
 
-        // Clear the debounce timer to restart with new transcript
-        if (callContext.ttsDebounceTimer) {
-          clearTimeout(callContext.ttsDebounceTimer);
-          callContext.ttsDebounceTimer = undefined;
+        if (!isEcho) {
+          // This is a real interrupt from the caller
+          console.log("🛑 Caller interrupted TTS playback, stopping speech");
+          isTtsPlaying = false;
+          try {
+            await stopSpeaking(callContext.callControlId);
+          } catch (stopError) {
+            console.warn("⚠️ Error stopping TTS on interrupt:", stopError);
+          }
+
+          // Clear the debounce timer to restart with new transcript
+          if (callContext.ttsDebounceTimer) {
+            clearTimeout(callContext.ttsDebounceTimer);
+            callContext.ttsDebounceTimer = undefined;
+          }
+        } else {
+          // It's an echo, don't process it
+          return;
         }
       }
 
