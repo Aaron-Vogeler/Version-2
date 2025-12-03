@@ -163,6 +163,31 @@ async function scheduleTtsResponse(
 }
 
 /**
+ * Hangup the call via Telnyx API
+ * @param callControlId - The call control ID from Telnyx
+ */
+async function hangupCall(callControlId: string): Promise<void> {
+  try {
+    await axios.post(
+      `https://api.telnyx.com/v2/calls/${callControlId}/actions/hangup`,
+      {},
+      {
+        headers: {
+          "Authorization": `Bearer ${config.telnyx.apiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    console.log("✅ Call hangup initiated for:", callControlId);
+  } catch (error) {
+    console.error(
+      "❌ Failed to hangup call:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/**
  * Send the AI response as speech via Telnyx TTS.
  * @param callContext - The call context
  * @param ws - The WebSocket connection
@@ -212,6 +237,12 @@ async function sendTtsResponse(
     // Mark TTS as no longer playing when synthesis completes
     if (onTtsStateChange) {
       onTtsStateChange(false);
+    }
+
+    // Check if AI said "Chow" - if so, end the call
+    if (aiText.toLowerCase().includes("chow")) {
+      console.log("🎯 Detected 'Chow' in AI response, initiating call termination");
+      await hangupCall(callContext.callControlId);
     }
   } catch (ttsError) {
     console.error(
