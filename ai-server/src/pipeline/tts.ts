@@ -3,16 +3,17 @@ import config from "../config";
 
 /**
  * Stops the currently playing audio on a Telnyx call.
- * Used for handling caller interrupts.
+ * Used for handling caller interrupts (barge-in).
+ * Uses playback_stop with stop:'all' to halt current playback AND clear queued audio.
  *
  * @param callControlId - The Telnyx call control ID
  */
 export async function stopSpeaking(callControlId: string): Promise<void> {
   try {
-    console.log("⏹️ Stopping current TTS playback (interrupt detected)");
+    console.log("[TTS] ⏹️ Issuing playback_stop(all) - barge-in detected");
     await axios.post(
-      `https://api.telnyx.com/v2/calls/${callControlId}/actions/stop_speak`,
-      {},
+      `https://api.telnyx.com/v2/calls/${callControlId}/actions/playback_stop`,
+      { stop: "all" },
       {
         headers: {
           "Authorization": `Bearer ${config.telnyx.apiKey}`,
@@ -20,11 +21,11 @@ export async function stopSpeaking(callControlId: string): Promise<void> {
         },
       }
     );
-    console.log("✅ TTS playback stopped");
+    console.log("[TTS] ✅ Playback stopped (all queued audio cleared)");
   } catch (error) {
     // Log but don't throw - if stop fails, the speak will continue (not critical)
     console.warn(
-      "⚠️ Failed to stop TTS:",
+      "[TTS] ⚠️ Failed to stop playback:",
       error instanceof Error ? error.message : error
     );
   }
@@ -42,13 +43,15 @@ export async function synthesizeSpeech(
   callControlId: string
 ): Promise<void> {
   const startTime = Date.now();
-  console.log("🎤 ========== TTS SYNTHESIS START ==========");
-  console.log("📝 Text to synthesize:", aiText);
-  console.log("🗣️ TTS Voice:", config.telnyx.ttsVoiceId);
-  console.log("📤 Calling Telnyx Speak API...");
+  console.log("[TTS] 🎤 ========== TTS SYNTHESIS START ==========");
+  console.log(`[TTS] 📝 Text to synthesize (callControlId: ${callControlId}):`, aiText);
+  console.log("[TTS] 🗣️ TTS Voice:", config.telnyx.ttsVoiceId);
+  console.log("[TTS] 📤 Calling Telnyx Speak API...");
 
   try {
     // Call Telnyx Speak API to synthesize and play audio on the call
+    // NOTE: This HTTP response returns BEFORE audio finishes playing.
+    // Actual playback start/end is tracked via webhooks (call.speak.started/ended).
     await axios.post(
       `https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`,
       {
@@ -65,19 +68,17 @@ export async function synthesizeSpeech(
 
     const apiResponseTime = Date.now();
     console.log(
-      "✅ Telnyx Speak API responded in",
-      apiResponseTime - startTime,
-      "ms"
+      `[TTS] ✅ Telnyx Speak API responded in ${apiResponseTime - startTime}ms (callControlId: ${callControlId})`
     );
-    console.log("🔊 Audio is now playing on the call");
-    console.log("⏱️ Total TTS time:", Date.now() - startTime, "ms");
-    console.log("==========================================");
+    console.log("[TTS] 🔊 Speak request submitted (audio will play asynchronously)");
+    console.log("[TTS] ⏱️ Total API call time:", Date.now() - startTime, "ms");
+    console.log("[TTS] ==========================================");
   } catch (error) {
-    console.error("❌ TTS Error:", error);
+    console.error(`[TTS] ❌ TTS Error (callControlId: ${callControlId}):`, error);
     // Log detailed error response if available
     if (error instanceof Error && "response" in error) {
       const err = error as any;
-      console.error("📋 Telnyx API Error Details:", {
+      console.error("[TTS] 📋 Telnyx API Error Details:", {
         status: err.response?.status,
         statusText: err.response?.statusText,
         data: err.response?.data,

@@ -26,20 +26,23 @@ const deepgram = createDeepgramClient();
 /**
  * Queue a user transcript fragment for potential LLM + TTS processing.
  * Resets the debounce timer on each transcript update.
+ * Increments turnSeq to invalidate any in-flight responses from previous turns.
  * @param callContext - The call context
  * @param transcript - The user transcript
  * @param ws - The WebSocket connection
- * @param onTtsStateChange - Callback to update TTS playing state
  */
 function queueUserTranscript(
   callContext: CallContext,
   transcript: string,
-  ws: WebSocket,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  ws: WebSocket
 ): void {
   // Update the transcript and timestamp
   callContext.lastUserTranscript = transcript;
   callContext.lastTranscriptAt = Date.now();
+
+  // Increment turn sequence (invalidates in-flight work from previous turns)
+  callContext.turnSeq = (callContext.turnSeq || 0) + 1;
+  const currentSeq = callContext.turnSeq;
 
   // Clear any existing debounce timer
   if (callContext.ttsDebounceTimer) {
@@ -48,7 +51,7 @@ function queueUserTranscript(
 
   // Schedule a new TTS response timer
   callContext.ttsDebounceTimer = setTimeout(() => {
-    scheduleTtsResponse(callContext, ws, onTtsStateChange);
+    scheduleTtsResponse(callContext, ws, currentSeq);
   }, TTS_DEBOUNCE_MS);
 }
 
@@ -61,16 +64,25 @@ function canSpeak(callContext: CallContext, ws: WebSocket): boolean {
 
 /**
  * When the debounce timer fires, process the accumulated transcript.
+ * Checks turnSeq to ensure this response is still valid (not stale from barge-in).
  * @param callContext - The call context
  * @param ws - The WebSocket connection
- * @param onTtsStateChange - Callback to update TTS playing state
+ * @param expectedSeq - The turn sequence number when this response was scheduled
  */
 async function scheduleTtsResponse(
   callContext: CallContext,
   ws: WebSocket,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  expectedSeq: number
 ): Promise<void> {
   try {
+    // GUARD: Check if this response is stale (turnSeq changed due to barge-in or new speech)
+    if (callContext.turnSeq !== expectedSeq) {
+      console.log(
+        `[TURN] ⏭️ Dropping stale response (expected seq ${expectedSeq}, current ${callContext.turnSeq})`
+      );
+      return;
+    }
+
     // Guard: Check if we can still speak
     if (!canSpeak(callContext, ws)) {
       console.log("⚠️ Call ended or WebSocket closed, skipping TTS response");
@@ -114,6 +126,14 @@ async function scheduleTtsResponse(
       return;
     }
 
+    // GUARD: Check again after LLM call (which may take time)
+    if (callContext.turnSeq !== expectedSeq) {
+      console.log(
+        `[TURN] ⏭️ Dropping stale LLM response (expected seq ${expectedSeq}, current ${callContext.turnSeq})`
+      );
+      return;
+    }
+
     if (!aiText) {
       console.warn("⚠️ Groq returned empty response");
       if (canSpeak(callContext, ws)) {
@@ -149,8 +169,8 @@ async function scheduleTtsResponse(
       }
     }
 
-    // Send to TTS only if we can still speak
-    await sendTtsResponse(callContext, ws, aiText, onTtsStateChange);
+    // Send to TTS only if we can still speak and seq is still valid
+    await sendTtsResponse(callContext, ws, aiText, expectedSeq);
 
     // Clear transcript after processing
     callContext.lastUserTranscript = "";
@@ -164,22 +184,32 @@ async function scheduleTtsResponse(
 
 /**
  * Send the AI response as speech via Telnyx TTS.
+ * Sets ttsState to 'speaking' before TTS call.
+ * Actual playback end is tracked via Telnyx webhooks (call.speak.ended).
  * @param callContext - The call context
  * @param ws - The WebSocket connection
  * @param aiText - The text to speak
- * @param onTtsStateChange - Callback to update TTS playing state
+ * @param expectedSeq - The turn sequence number to validate
  */
 async function sendTtsResponse(
   callContext: CallContext,
   ws: WebSocket,
   aiText: string,
-  onTtsStateChange?: (isPlaying: boolean) => void
+  expectedSeq: number
 ): Promise<void> {
   const pipelineStartTime = Date.now();
   console.log("");
   console.log("🎵 ========================================");
   console.log("🎵 STARTING TTS SPEAK ACTION");
   console.log("🎵 ========================================");
+
+  // GUARD: Final check - is this response still valid?
+  if (callContext.turnSeq !== expectedSeq) {
+    console.log(
+      `[TURN] ⏭️ Dropping stale TTS request (expected seq ${expectedSeq}, current ${callContext.turnSeq})`
+    );
+    return;
+  }
 
   // Double-check we can still speak before calling TTS API
   if (!canSpeak(callContext, ws)) {
@@ -208,17 +238,16 @@ async function sendTtsResponse(
   }
 
   try {
-    // Mark TTS as playing
-    if (onTtsStateChange) {
-      onTtsStateChange(true);
-    }
+    // IMPORTANT: Set ttsState to 'speaking' BEFORE calling synthesizeSpeech
+    // This enables barge-in detection while audio is being queued/played
+    callContext.ttsState = "speaking";
+    console.log(`[TTS] Setting ttsState='speaking' (callControlId: ${callContext.callControlId})`);
 
     await synthesizeSpeech(aiText, callContext.callControlId);
 
-    // Mark TTS as no longer playing when synthesis completes
-    if (onTtsStateChange) {
-      onTtsStateChange(false);
-    }
+    // NOTE: Do NOT set ttsState='idle' here!
+    // The HTTP response returns BEFORE audio finishes playing.
+    // Telnyx webhooks (call.speak.ended) will set ttsState='idle' when playback truly ends.
 
     // If AI said "Chow", wait a moment then hangup
     if (shouldHangup && callContext.callControlId) {
@@ -237,9 +266,8 @@ async function sendTtsResponse(
       "❌ Telnyx TTS error:",
       ttsError instanceof Error ? ttsError.message : ttsError
     );
-    if (onTtsStateChange) {
-      onTtsStateChange(false);
-    }
+    // On error, reset ttsState to idle
+    callContext.ttsState = "idle";
     if (canSpeak(callContext, ws)) {
       ws.send(
         JSON.stringify({
@@ -263,6 +291,7 @@ async function sendTtsResponse(
 function cleanupCallState(callContext: CallContext): void {
   console.log("🧹 Cleaning up call state");
   callContext.isCallActive = false;
+  callContext.ttsState = "idle";
   if (callContext.ttsDebounceTimer) {
     clearTimeout(callContext.ttsDebounceTimer);
     callContext.ttsDebounceTimer = undefined;
@@ -388,17 +417,18 @@ function decodeMulawG711(mulaw: number): number {
 // OUTBOUND CALL ENDPOINT
 app.use("/api/outbound-call", outboundCallRouter);
 
-// TELNYX WEBHOOKS (Call start/stop)
+// TELNYX WEBHOOKS (Call start/stop and TTS playback lifecycle)
 app.post("/webhooks/telnyx", async (req, res) => {
   const eventType = req.body?.data?.event_type;
-  console.log("📞 Telnyx webhook event:", eventType);
+  const callControlId = req.body?.data?.payload?.call_control_id;
+
+  console.log(`📞 Telnyx webhook event: ${eventType} (callControlId: ${callControlId || 'N/A'})`);
 
   if (eventType === "call.answered") {
     console.log(
       "📦 Telnyx call.answered payload:",
       JSON.stringify(req.body, null, 2)
     );
-    const callControlId = req.body?.data?.payload?.call_control_id;
     if (!callControlId) {
       console.warn("⚠️ call.answered webhook missing payload.call_control_id");
     }
@@ -431,6 +461,39 @@ app.post("/webhooks/telnyx", async (req, res) => {
         }
       }
     }
+  } else if (eventType === "call.speak.started") {
+    // TTS playback has started
+    if (callControlId) {
+      const ctx = contextMgr.getContext(callControlId);
+      if (ctx) {
+        ctx.ttsState = "speaking";
+        console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
+      } else {
+        console.warn(`[TTS] ⚠️ call.speak.started for unknown callControlId: ${callControlId}`);
+      }
+    }
+  } else if (eventType === "call.speak.ended") {
+    // TTS playback has ended
+    if (callControlId) {
+      const ctx = contextMgr.getContext(callControlId);
+      if (ctx) {
+        ctx.ttsState = "idle";
+        console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
+      } else {
+        console.warn(`[TTS] ⚠️ call.speak.ended for unknown callControlId: ${callControlId}`);
+      }
+    }
+  } else if (eventType === "call.playback.ended") {
+    // Belt-and-suspenders: Also handle generic playback.ended
+    if (callControlId) {
+      const ctx = contextMgr.getContext(callControlId);
+      if (ctx) {
+        ctx.ttsState = "idle";
+        console.log(`[TTS] ✅ call.playback.ended - ttsState='idle' (callControlId: ${callControlId})`);
+      } else {
+        console.warn(`[TTS] ⚠️ call.playback.ended for unknown callControlId: ${callControlId}`);
+      }
+    }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
     console.log("📞 Call ended:", eventType);
     // Note: We don't have access to callContext here, but we mark the call
@@ -449,19 +512,67 @@ wss.on("connection", async (ws) => {
   // Initialize call context (populated when "start" message arrives)
   let callContext: CallContext | undefined;
 
-  // Track if TTS is currently playing (for interrupt detection)
-  let isTtsPlaying = false;
-
-  // Create a Deepgram live stream
+  // Create a Deepgram live stream with VAD events enabled for instant barge-in
   const dgLive = await deepgram.listen.live({
     model: config.deepgram.model,
     encoding: "mulaw",
     sample_rate: 8000,
     channels: 1,
     endpointing: 100,
+    vad_events: true,
+    interim_results: true,
   });
 
   console.log("🎧 Deepgram stream started");
+
+  // INSTANT BARGE-IN: Handle Deepgram SpeechStarted event (VAD)
+  // This fires as soon as caller starts speaking, BEFORE any transcript is ready
+  dgLive.on(LiveTranscriptionEvents.SpeechStarted, async () => {
+    try {
+      if (!callContext || !callContext.callControlId) {
+        return; // No active call yet
+      }
+
+      // Check if AI is currently speaking
+      if (callContext.ttsState === "speaking") {
+        // Apply cooldown to prevent spamming the stop endpoint
+        const now = Date.now();
+        if (callContext.bargeInCooldownUntil && now < callContext.bargeInCooldownUntil) {
+          console.log(`[BARGE-IN] Cooldown active, skipping (${callContext.bargeInCooldownUntil - now}ms remaining)`);
+          return;
+        }
+
+        console.log(`[BARGE-IN] 🛑 SpeechStarted detected while AI speaking (callControlId: ${callContext.callControlId})`);
+
+        // Set cooldown (200ms) to prevent multiple rapid stops
+        callContext.bargeInCooldownUntil = now + 200;
+
+        // Mark as stopping
+        callContext.ttsState = "stopping";
+
+        // Issue playback stop
+        await stopSpeaking(callContext.callControlId);
+
+        // Clear any pending TTS debounce timer
+        if (callContext.ttsDebounceTimer) {
+          clearTimeout(callContext.ttsDebounceTimer);
+          callContext.ttsDebounceTimer = undefined;
+        }
+
+        // Increment turn sequence to invalidate any in-flight LLM/TTS work
+        callContext.turnSeq = (callContext.turnSeq || 0) + 1;
+        console.log(`[TURN] Turn sequence incremented to ${callContext.turnSeq} (stale responses will be dropped)`);
+
+        // Mark as idle after stop
+        callContext.ttsState = "idle";
+      }
+    } catch (error) {
+      console.error(
+        "[BARGE-IN] ❌ Error handling SpeechStarted:",
+        error instanceof Error ? error.message : error
+      );
+    }
+  });
 
   // Relay Deepgram transcript → Groq → Telnyx (with 800ms silence debounce)
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
@@ -484,27 +595,9 @@ wss.on("connection", async (ws) => {
 
       console.log("🗣️ Caller transcript:", userText);
 
-      // If TTS is currently playing and caller speaks, stop it
-      if (isTtsPlaying && callContext.callControlId) {
-        console.log("🛑 Caller interrupted TTS playback, stopping speech");
-        isTtsPlaying = false;
-        try {
-          await stopSpeaking(callContext.callControlId);
-        } catch (stopError) {
-          console.warn("⚠️ Error stopping TTS on interrupt:", stopError);
-        }
-
-        // Clear the debounce timer to restart with new transcript
-        if (callContext.ttsDebounceTimer) {
-          clearTimeout(callContext.ttsDebounceTimer);
-          callContext.ttsDebounceTimer = undefined;
-        }
-      }
-
       // Queue the transcript with debounce
-      queueUserTranscript(callContext, userText, ws, (isPlaying) => {
-        isTtsPlaying = isPlaying;
-      });
+      // Note: Barge-in is now handled by SpeechStarted event (VAD), not here
+      queueUserTranscript(callContext, userText, ws);
     } catch (error) {
       console.error(
         "❌ Unexpected error in transcript handler:",
