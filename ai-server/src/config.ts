@@ -62,8 +62,8 @@ CONVERSATION RULES:
 1) Be concise and natural.
 2) If confronted with IVR menus, listen, then decisively press the correct DTMF option.
 3) Confirm critical info by saying "Just to confirm" [and then read back the info they gave you, ending with] "correct"?.
-4) Once goal is achieved, say "Chow"
-5) After you say chow, end the call.`
+4) Once goal is achieved, immediately say "Chow" to end the call naturally.
+5) Do NOT say phrases like "close the request", "end the call", or other technical jargon. Keep responses conversational.`
     ),
   },
 
