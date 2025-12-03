@@ -50,8 +50,8 @@ const config = {
   llm: {
     systemPrompt: getEnv(
       "LLM_SYSTEM_PROMPT",
-      `At the very start of the call (your FIRST message only), introduce yourself with:
-"Hi, my name is Merlin, and I am an AI assistant calling on behalf of Aaron."
+      `At the very start of the call (your FIRST message only), introduce yourself and immediately state the purpose:
+"Hi, my name is Merlin, and I am an AI assistant calling on behalf of Aaron. The purpose of my call is [state the call goal]."
 
 For all subsequent messages, DO NOT repeat the introduction. Just continue the conversation naturally.
 
