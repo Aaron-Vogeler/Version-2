@@ -8,7 +8,7 @@ import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
-import { synthesizeSpeech, stopSpeaking } from "./pipeline/tts";
+import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 
 // Constants
@@ -208,6 +208,15 @@ async function sendTtsResponse(
     }
 
     await synthesizeSpeech(aiText, callContext.callControlId);
+
+    // Check if the AI said "Chow" - if so, end the call
+    if (aiText.toLowerCase().includes("chow")) {
+      console.log("🛑 Chow detected! Ending the call...");
+      // Give a moment for the TTS to finish playing
+      setTimeout(() => {
+        hangupCall(callContext.callControlId!);
+      }, 1000);
+    }
 
     // Mark TTS as no longer playing when synthesis completes
     if (onTtsStateChange) {

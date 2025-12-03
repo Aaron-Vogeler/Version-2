@@ -2,6 +2,34 @@ import axios from "axios";
 import config from "../config";
 
 /**
+ * Ends a Telnyx call by invoking the hangup action.
+ * Used when the AI signals to end the call (e.g., by saying "Chow").
+ *
+ * @param callControlId - The Telnyx call control ID
+ */
+export async function hangupCall(callControlId: string): Promise<void> {
+  try {
+    console.log("📞 Ending call (Chow detected)");
+    await axios.post(
+      `https://api.telnyx.com/v2/calls/${callControlId}/actions/hangup`,
+      {},
+      {
+        headers: {
+          "Authorization": `Bearer ${config.telnyx.apiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    console.log("✅ Call ended successfully");
+  } catch (error) {
+    console.warn(
+      "⚠️ Failed to hangup call:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/**
  * Stops the currently playing audio on a Telnyx call.
  * Used for handling caller interrupts.
  *
