@@ -21,7 +21,13 @@ export async function stopSpeaking(callControlId: string): Promise<void> {
       }
     );
     console.log("✅ TTS playback stopped");
-  } catch (error) {
+  } catch (error: any) {
+    // Gracefully ignore 404 (call not found) and 422 (nothing playing or invalid state)
+    // These typically mean the audio is already stopped or the call is no longer active
+    if (error.response && (error.response.status === 404 || error.response.status === 422)) {
+      console.log("📍 TTS already stopped or call not active (no action needed)");
+      return;
+    }
     // Log but don't throw - if stop fails, the speak will continue (not critical)
     console.warn(
       "⚠️ Failed to stop TTS:",

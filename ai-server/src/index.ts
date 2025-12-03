@@ -215,6 +215,18 @@ async function sendTtsResponse(
 
     await synthesizeSpeech(aiText, callContext.callControlId);
 
+    // RACE CONDITION FIX: Check if we were interrupted while awaiting the API response.
+    // If isTtsPlaying was set to false by the VAD listener during the synthesizeSpeech call,
+    // we must immediately stop the audio because Telnyx has already started playing it.
+    if (!isTtsPlaying) {
+      console.log("🛑 Audio was interrupted during TTS request - stopping now");
+      try {
+        await stopSpeaking(callContext.callControlId);
+      } catch (stopError) {
+        console.warn("⚠️ Error stopping interrupted TTS:", stopError);
+      }
+    }
+
     // Mark TTS as no longer playing when synthesis completes
     if (onTtsStateChange) {
       onTtsStateChange(false);
