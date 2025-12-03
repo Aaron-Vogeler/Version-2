@@ -677,19 +677,20 @@ wss.on("connection", async (ws) => {
         // Telnyx sends track information: "inbound" = caller, "outbound" = AI
         const track = msg.media?.track;
 
-        if (track === "outbound") {
-          // This is AI's own speech from TTS, skip it completely
+        // ONLY send inbound audio to Deepgram (caller's voice)
+        // Skip outbound (AI's voice) and any undefined/unknown tracks
+        if (track !== "inbound") {
           if (process.env.LOG_AUDIO_PACKETS === "true") {
-            console.log("🔄 Skipping outbound (AI) audio packet");
+            console.log(`🔄 Skipping non-inbound audio packet (track: ${track || "undefined"})`);
           }
           return;
         }
 
-        // Process inbound audio (caller's voice)
+        // Process inbound audio (caller's voice only)
         const audio = Buffer.from(msg.media.payload, "base64");
         // Only log packet details if LOG_AUDIO_PACKETS is enabled (reduces noise in logs)
         if (process.env.LOG_AUDIO_PACKETS === "true") {
-          console.log("🎙️ Received Telnyx media packet, track:", track, "bytes:", audio.length);
+          console.log("🎙️ Received inbound audio packet, bytes:", audio.length);
         }
         dgLive.send(audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength));
       } else if (msg.event === "stop") {
