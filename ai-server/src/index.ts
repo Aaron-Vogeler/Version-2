@@ -14,6 +14,9 @@ import * as contextMgr from "./callContextManager";
 // Constants
 const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
 
+// Map callControlId -> callId for webhook event handling
+const callControlIdToCallIdMap = new Map<string, string>();
+
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
@@ -205,6 +208,14 @@ async function sendTtsResponse(
     // Mark TTS as playing
     if (onTtsStateChange) {
       onTtsStateChange(true);
+    }
+
+    // Check if AI is saying "Chow" (end of call signal)
+    // Look for "chow" as a word boundary (case-insensitive)
+    const isEndingCall = /\bchow\b/i.test(aiText);
+    if (isEndingCall) {
+      console.log("👋 AI said 'Chow', will hang up after TTS completes");
+      callContext.shouldHangupAfterTts = true;
     }
 
     await synthesizeSpeech(aiText, callContext.callControlId);
@@ -412,8 +423,42 @@ app.post("/webhooks/telnyx", async (req, res) => {
         }
       }
     }
+  } else if (eventType === "call.speak.ended") {
+    // Check if we should hang up after TTS completes
+    const callControlId = req.body?.data?.payload?.call_control_id;
+    if (callControlId) {
+      const callId = callControlIdToCallIdMap.get(callControlId);
+      if (callId) {
+        const context = contextMgr.getContext(callId);
+        if (context?.shouldHangupAfterTts) {
+          console.log("📞 TTS completed and hangup requested, ending call:", callControlId);
+          try {
+            await axios.post(
+              `https://api.telnyx.com/v2/calls/${callControlId}/actions/hangup`,
+              {},
+              {
+                headers: {
+                  "Authorization": `Bearer ${config.telnyx.apiKey}`,
+                  "Content-Type": "application/json",
+                },
+              }
+            );
+            console.log("✅ Call hangup initiated");
+            // Clean up the mapping
+            callControlIdToCallIdMap.delete(callControlId);
+          } catch (error) {
+            console.error("❌ Failed to hang up call:", error instanceof Error ? error.message : error);
+          }
+        }
+      }
+    }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
     console.log("📞 Call ended:", eventType);
+    // Clean up the mapping when call ends
+    const callControlId = req.body?.data?.payload?.call_control_id;
+    if (callControlId) {
+      callControlIdToCallIdMap.delete(callControlId);
+    }
     // Note: We don't have access to callContext here, but we mark the call
     // as inactive via the WebSocket close event. Cleanup happens there.
   }
@@ -547,6 +592,11 @@ wss.on("connection", async (ws) => {
 
           // Create the local callContext reference for backward compatibility
           callContext = managedContext;
+
+          // Map callControlId to callId for webhook event handling
+          if (callControlId && callContext.callId) {
+            callControlIdToCallIdMap.set(callControlId, callContext.callId);
+          }
 
           console.log("📋 Call context initialized:", {
             callId: callContext.callId,

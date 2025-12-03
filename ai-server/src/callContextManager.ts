@@ -38,6 +38,7 @@ export interface CallContext {
   lastTranscriptAt?: number;
   ttsDebounceTimer?: any; // NodeJS.Timeout | ReturnType<typeof setTimeout>
   deepgramSocket?: any;
+  shouldHangupAfterTts?: boolean; // Flag to indicate call should end after TTS completes
 }
 
 /**
