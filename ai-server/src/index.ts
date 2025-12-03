@@ -459,9 +459,36 @@ wss.on("connection", async (ws) => {
     sample_rate: 8000,
     channels: 1,
     endpointing: 100,
+    interim_results: true, // Enable for speech_started events
   });
 
   console.log("🎧 Deepgram stream started");
+
+  // IMMEDIATE INTERRUPT DETECTION: Stop TTS as soon as caller starts speaking
+  // This fires BEFORE transcription completes, providing instant interrupt response
+  dgLive.on(LiveTranscriptionEvents.SpeechStarted, async () => {
+    try {
+      // Only interrupt if TTS is currently playing
+      if (isTtsPlaying && callContext?.callControlId) {
+        console.log("⚡ INSTANT INTERRUPT: Caller started speaking, stopping TTS immediately");
+        isTtsPlaying = false;
+
+        try {
+          await stopSpeaking(callContext.callControlId);
+        } catch (stopError) {
+          console.warn("⚠️ Error stopping TTS on instant interrupt:", stopError);
+        }
+
+        // Clear the debounce timer to restart fresh
+        if (callContext.ttsDebounceTimer) {
+          clearTimeout(callContext.ttsDebounceTimer);
+          callContext.ttsDebounceTimer = undefined;
+        }
+      }
+    } catch (error) {
+      console.error("❌ Error in SpeechStarted handler:", error);
+    }
+  });
 
   // Relay Deepgram transcript → Groq → Telnyx (with 800ms silence debounce)
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
