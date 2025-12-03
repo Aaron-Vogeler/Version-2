@@ -13,6 +13,8 @@ import * as contextMgr from "./callContextManager";
 
 // Constants
 const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
+const FIRST_RESPONSE_DEBOUNCE_MS = 300; // Faster debounce for first response (greeting)
+const NO_INPUT_TIMEOUT_MS = 4000; // 4 seconds - trigger greeting if caller doesn't speak
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -27,6 +29,7 @@ const deepgram = createDeepgramClient();
  * Queue a user transcript fragment for potential LLM + TTS processing.
  * Resets the debounce timer on each transcript update.
  * Increments turnSeq to invalidate any in-flight responses from previous turns.
+ * Uses faster debounce for the first response (greeting) to improve responsiveness.
  * @param callContext - The call context
  * @param transcript - The user transcript
  * @param ws - The WebSocket connection
@@ -40,6 +43,13 @@ function queueUserTranscript(
   callContext.lastUserTranscript = transcript;
   callContext.lastTranscriptAt = Date.now();
 
+  // Cancel no-input timeout since caller has now provided input
+  const noInputTimer = (callContext as any).noInputTimer;
+  if (noInputTimer) {
+    clearTimeout(noInputTimer);
+    (callContext as any).noInputTimer = undefined;
+  }
+
   // Increment turn sequence (invalidates in-flight work from previous turns)
   callContext.turnSeq = (callContext.turnSeq || 0) + 1;
   const currentSeq = callContext.turnSeq;
@@ -49,10 +59,13 @@ function queueUserTranscript(
     clearTimeout(callContext.ttsDebounceTimer);
   }
 
+  // Use faster debounce for first response (greeting), standard debounce for subsequent turns
+  const debounceMs = (callContext.turns && callContext.turns.length > 0) ? TTS_DEBOUNCE_MS : FIRST_RESPONSE_DEBOUNCE_MS;
+
   // Schedule a new TTS response timer
   callContext.ttsDebounceTimer = setTimeout(() => {
     scheduleTtsResponse(callContext, ws, currentSeq);
-  }, TTS_DEBOUNCE_MS);
+  }, debounceMs);
 }
 
 /**
@@ -60,6 +73,53 @@ function queueUserTranscript(
  */
 function canSpeak(callContext: CallContext, ws: WebSocket): boolean {
   return callContext.isCallActive === true && ws.readyState === WebSocket.OPEN;
+}
+
+/**
+ * Trigger a greeting if the caller hasn't spoken (no-input case).
+ * This provides a faster initial response when the caller is silent.
+ * @param callContext - The call context
+ * @param ws - The WebSocket connection
+ */
+async function triggerNoInputGreeting(callContext: CallContext, ws: WebSocket): Promise<void> {
+  try {
+    // Guard: Check if this is still the first turn (no input yet)
+    if (!callContext.isCallActive || callContext.lastTranscriptAt > 0) {
+      // Call already has input or is inactive, skip
+      return;
+    }
+
+    if (!canSpeak(callContext, ws)) {
+      return;
+    }
+
+    console.log("⏱️ No input detected - triggering greeting");
+
+    // Increment turn sequence for this greeting attempt
+    callContext.turnSeq = (callContext.turnSeq || 0) + 1;
+    const currentSeq = callContext.turnSeq;
+
+    // Generate greeting with empty input (triggers system prompt greeting)
+    let aiText: string;
+    try {
+      aiText = await generateAssistantReply("", callContext);
+    } catch (groqError) {
+      console.error("❌ Failed to generate greeting:", groqError instanceof Error ? groqError.message : groqError);
+      return;
+    }
+
+    if (!aiText) {
+      console.warn("⚠️ Groq returned empty response for greeting");
+      return;
+    }
+
+    console.log("🤖 AI (no-input greeting):", aiText);
+
+    // Send TTS response
+    await sendTtsResponse(callContext, ws, aiText, currentSeq);
+  } catch (error) {
+    console.error("❌ Error triggering no-input greeting:", error instanceof Error ? error.message : error);
+  }
 }
 
 /**
@@ -295,6 +355,12 @@ function cleanupCallState(callContext: CallContext): void {
   if (callContext.ttsDebounceTimer) {
     clearTimeout(callContext.ttsDebounceTimer);
     callContext.ttsDebounceTimer = undefined;
+  }
+  // Clear no-input timeout if still active
+  const noInputTimer = (callContext as any).noInputTimer;
+  if (noInputTimer) {
+    clearTimeout(noInputTimer);
+    (callContext as any).noInputTimer = undefined;
   }
   callContext.lastUserTranscript = "";
 
@@ -666,6 +732,15 @@ wss.on("connection", async (ws) => {
             goal: callContext.goal,
             userId: callContext.userId,
           });
+
+          // Set up no-input greeting timeout
+          // If caller doesn't speak within 4 seconds, trigger a greeting proactively
+          const noInputTimer = setTimeout(() => {
+            triggerNoInputGreeting(callContext, ws);
+          }, NO_INPUT_TIMEOUT_MS);
+
+          // Store timer for cleanup if needed
+          (callContext as any).noInputTimer = noInputTimer;
         } catch (err) {
           console.error("❌ Failed to decode Telnyx client_state:", err instanceof Error ? err.message : err);
           // Do NOT throw; just continue without context
