@@ -46,8 +46,9 @@ export interface CallContext {
   // Barge-in cooldown to prevent spamming stop endpoint
   bargeInCooldownUntil?: number;
 
-  // Assistant speech tracking (for logging only fully-spoken text)
+  // Assistant speech tracking (for logging actual spoken text, including partial)
   currentSpeakText?: string; // Text currently being spoken by TTS
+  speakStartedAt?: number; // Timestamp when TTS playback actually started (from call.speak.started webhook)
   speakWasInterrupted?: boolean; // Flag indicating if current speech was interrupted by barge-in
 
   // Transcript logging state (insert-only, final-only approach)

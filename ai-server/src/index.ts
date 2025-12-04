@@ -25,6 +25,39 @@ const deepgram = createDeepgramClient();
 // -----------------------------------------------------------------------------
 
 /**
+ * Estimate what portion of text was actually spoken based on playback duration.
+ * Uses average speaking rate of ~150 words per minute (2.5 words/second).
+ * @param fullText - The complete text that was sent to TTS
+ * @param durationMs - How long the TTS actually played before stopping (in milliseconds)
+ * @returns Estimated text that was actually spoken
+ */
+function estimateSpokenText(fullText: string, durationMs: number): string {
+  // Average speaking rate: ~150 words per minute = 2.5 words per second
+  const WORDS_PER_SECOND = 2.5;
+
+  const words = fullText.split(/\s+/);
+  const totalWords = words.length;
+  const durationSeconds = durationMs / 1000;
+
+  // Estimate how many words were spoken
+  const estimatedWordsSpoken = Math.floor(durationSeconds * WORDS_PER_SECOND);
+
+  // If we estimate more words than exist, return full text
+  if (estimatedWordsSpoken >= totalWords) {
+    return fullText;
+  }
+
+  // If duration is very short (< 0.5s), likely didn't speak anything meaningful
+  if (durationSeconds < 0.5) {
+    return "";
+  }
+
+  // Return estimated portion
+  const spokenWords = words.slice(0, estimatedWordsSpoken);
+  return spokenWords.join(" ");
+}
+
+/**
  * Queue a user transcript fragment for potential LLM + TTS processing.
  * Resets the debounce timer on each transcript update.
  * Increments turnSeq to invalidate any in-flight responses from previous turns.
@@ -281,6 +314,7 @@ async function sendTtsResponse(
     // On error, reset ttsState to idle and clear tracking variables
     callContext.ttsState = "idle";
     callContext.currentSpeakText = undefined;
+    callContext.speakStartedAt = undefined;
     callContext.speakWasInterrupted = undefined;
     if (canSpeak(callContext, ws)) {
       ws.send(
@@ -568,6 +602,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "speaking";
+        ctx.speakStartedAt = Date.now(); // Record when playback actually started
         console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
       } else {
         console.warn(`[TTS] ⚠️ call.speak.started for unknown callControlId: ${callControlId}`);
@@ -581,18 +616,31 @@ app.post("/webhooks/telnyx", async (req, res) => {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
 
-        // Log assistant transcript only if speech completed naturally (not interrupted by barge-in)
-        if (ctx.currentSpeakText && !ctx.speakWasInterrupted) {
-          console.log(`[TRANSCRIPT] Logging assistant speech (completed naturally): "${ctx.currentSpeakText}"`);
+        // Log assistant transcript - estimate actual spoken portion if interrupted
+        if (ctx.currentSpeakText && ctx.speakStartedAt) {
+          const playbackDurationMs = Date.now() - ctx.speakStartedAt;
+          let textToLog = ctx.currentSpeakText;
+          let logMessage = "";
 
-          // Log to database if Supabase is configured
-          if (isSupabaseConfigured()) {
+          if (ctx.speakWasInterrupted) {
+            // Estimate what portion was actually spoken based on duration
+            textToLog = estimateSpokenText(ctx.currentSpeakText, playbackDurationMs);
+            logMessage = `[TRANSCRIPT] Logging assistant speech (interrupted after ${playbackDurationMs}ms, estimated ${textToLog.split(/\s+/).length}/${ctx.currentSpeakText.split(/\s+/).length} words spoken): "${textToLog}"`;
+          } else {
+            // Completed naturally
+            logMessage = `[TRANSCRIPT] Logging assistant speech (completed naturally, ${playbackDurationMs}ms): "${textToLog}"`;
+          }
+
+          console.log(logMessage);
+
+          // Log to database if we have text and Supabase is configured
+          if (textToLog && isSupabaseConfigured()) {
             try {
               await insertTranscriptSegment({
                 call_id: callControlId,
                 speaker: "assistant",
                 track: "outbound",
-                text: ctx.currentSpeakText,
+                text: textToLog,
                 created_at: new Date().toISOString(),
               });
             } catch (error) {
@@ -600,13 +648,9 @@ app.post("/webhooks/telnyx", async (req, res) => {
             }
           }
 
-          // Clear the stored text after logging
+          // Clear the stored text and flags after logging
           ctx.currentSpeakText = undefined;
-          ctx.speakWasInterrupted = undefined;
-        } else if (ctx.speakWasInterrupted) {
-          console.log(`[TRANSCRIPT] Skipping assistant transcript (interrupted by barge-in)`);
-          // Clear flags
-          ctx.currentSpeakText = undefined;
+          ctx.speakStartedAt = undefined;
           ctx.speakWasInterrupted = undefined;
         }
       } else {
