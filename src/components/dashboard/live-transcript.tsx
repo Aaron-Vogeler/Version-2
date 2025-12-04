@@ -37,6 +37,9 @@ export function LiveTranscript({ callId, status }: LiveTranscriptProps) {
   useEffect(() => {
     if (!callId) return;
 
+    let isMounted = true;
+    let channel: any = null;
+
     const initializeTranscript = async () => {
       try {
         // Fetch existing segments
@@ -48,11 +51,13 @@ export function LiveTranscript({ callId, status }: LiveTranscriptProps) {
 
         if (error) throw error;
 
+        if (!isMounted) return;
+
         setSegments(data || []);
         setIsLoading(false);
 
         // Subscribe to new segments
-        const channel = supabase
+        channel = supabase
           .channel(`transcript-${callId}`)
           .on(
             'postgres_changes',
@@ -81,19 +86,23 @@ export function LiveTranscript({ callId, status }: LiveTranscriptProps) {
           .subscribe((subscriptionStatus) => {
             console.log('Transcript realtime subscription status:', subscriptionStatus);
           });
-
-        // Cleanup subscription on unmount
-        return () => {
-          console.log('Cleaning up transcript realtime subscription');
-          supabase.removeChannel(channel);
-        };
       } catch (err) {
         console.error('Error initializing transcript:', err);
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
-    return initializeTranscript();
+    initializeTranscript();
+
+    return () => {
+      isMounted = false;
+      if (channel) {
+        console.log('Cleaning up transcript realtime subscription');
+        supabase.removeChannel(channel);
+      }
+    };
   }, [callId]);
 
   const hasSegments = segments.length > 0;
