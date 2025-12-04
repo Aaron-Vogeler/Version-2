@@ -25,6 +25,39 @@ const deepgram = createDeepgramClient();
 // -----------------------------------------------------------------------------
 
 /**
+ * Estimate what portion of text was actually spoken based on playback duration.
+ * Uses average speaking rate of ~150 words per minute (2.5 words/second).
+ * @param fullText - The complete text that was sent to TTS
+ * @param durationMs - How long the TTS actually played before stopping (in milliseconds)
+ * @returns Estimated text that was actually spoken
+ */
+function estimateSpokenText(fullText: string, durationMs: number): string {
+  // Average speaking rate: ~150 words per minute = 2.5 words per second
+  const WORDS_PER_SECOND = 2.5;
+
+  const words = fullText.split(/\s+/);
+  const totalWords = words.length;
+  const durationSeconds = durationMs / 1000;
+
+  // Estimate how many words were spoken
+  const estimatedWordsSpoken = Math.floor(durationSeconds * WORDS_PER_SECOND);
+
+  // If we estimate more words than exist, return full text
+  if (estimatedWordsSpoken >= totalWords) {
+    return fullText;
+  }
+
+  // If duration is very short (< 0.5s), likely didn't speak anything meaningful
+  if (durationSeconds < 0.5) {
+    return "";
+  }
+
+  // Return estimated portion
+  const spokenWords = words.slice(0, estimatedWordsSpoken);
+  return spokenWords.join(" ");
+}
+
+/**
  * Queue a user transcript fragment for potential LLM + TTS processing.
  * Resets the debounce timer on each transcript update.
  * Increments turnSeq to invalidate any in-flight responses from previous turns.
@@ -248,6 +281,8 @@ async function sendTtsResponse(
     // IMPORTANT: Set ttsState to 'speaking' BEFORE calling synthesizeSpeech
     // This enables barge-in detection while audio is being queued/played
     callContext.ttsState = "speaking";
+    callContext.speakWasInterrupted = false; // Reset interruption flag
+    callContext.currentSpeakText = aiText; // Store text for logging on completion
     console.log(`[TTS] Setting ttsState='speaking' (callControlId: ${callContext.callControlId})`);
 
     await synthesizeSpeech(aiText, callContext.callControlId);
@@ -276,8 +311,11 @@ async function sendTtsResponse(
       "❌ Telnyx TTS error:",
       ttsError instanceof Error ? ttsError.message : ttsError
     );
-    // On error, reset ttsState to idle
+    // On error, reset ttsState to idle and clear tracking variables
     callContext.ttsState = "idle";
+    callContext.currentSpeakText = undefined;
+    callContext.speakStartedAt = undefined;
+    callContext.speakWasInterrupted = undefined;
     if (canSpeak(callContext, ws)) {
       ws.send(
         JSON.stringify({
@@ -564,6 +602,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "speaking";
+        ctx.speakStartedAt = Date.now(); // Record when playback actually started
         console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
       } else {
         console.warn(`[TTS] ⚠️ call.speak.started for unknown callControlId: ${callControlId}`);
@@ -576,6 +615,44 @@ app.post("/webhooks/telnyx", async (req, res) => {
       if (ctx) {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
+
+        // Log assistant transcript - estimate actual spoken portion if interrupted
+        if (ctx.currentSpeakText && ctx.speakStartedAt) {
+          const playbackDurationMs = Date.now() - ctx.speakStartedAt;
+          let textToLog = ctx.currentSpeakText;
+          let logMessage = "";
+
+          if (ctx.speakWasInterrupted) {
+            // Estimate what portion was actually spoken based on duration
+            textToLog = estimateSpokenText(ctx.currentSpeakText, playbackDurationMs);
+            logMessage = `[TRANSCRIPT] Logging assistant speech (interrupted after ${playbackDurationMs}ms, estimated ${textToLog.split(/\s+/).length}/${ctx.currentSpeakText.split(/\s+/).length} words spoken): "${textToLog}"`;
+          } else {
+            // Completed naturally
+            logMessage = `[TRANSCRIPT] Logging assistant speech (completed naturally, ${playbackDurationMs}ms): "${textToLog}"`;
+          }
+
+          console.log(logMessage);
+
+          // Log to database if we have text and Supabase is configured
+          if (textToLog && isSupabaseConfigured()) {
+            try {
+              await insertTranscriptSegment({
+                call_id: callControlId,
+                speaker: "assistant",
+                track: "outbound",
+                text: textToLog,
+                created_at: new Date().toISOString(),
+              });
+            } catch (error) {
+              console.error("[TRANSCRIPT] ❌ Failed to log assistant transcript:", error instanceof Error ? error.message : error);
+            }
+          }
+
+          // Clear the stored text and flags after logging
+          ctx.currentSpeakText = undefined;
+          ctx.speakStartedAt = undefined;
+          ctx.speakWasInterrupted = undefined;
+        }
       } else {
         console.warn(`[TTS] ⚠️ call.speak.ended for unknown callControlId: ${callControlId}`);
       }
@@ -773,6 +850,9 @@ wss.on("connection", async (ws) => {
 
           // Mark as stopping
           callContext.ttsState = "stopping";
+
+          // Mark current speech as interrupted (prevents logging partial speech)
+          callContext.speakWasInterrupted = true;
 
           // Issue playback stop
           try {
