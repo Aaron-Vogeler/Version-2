@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } from '@/lib/utils';
 import { Call } from '@/lib/types/database';
-import { Phone, Eye, Play, Square } from 'lucide-react';
+import { Phone, Eye, Play, Square, Download } from 'lucide-react';
 
 interface CallsTableProps {
   calls: Call[];
@@ -49,6 +49,21 @@ export function CallsTable({ calls, onViewDetails }: CallsTableProps) {
       setAudioElement(audio);
       setPlayingCallId(call.id);
     }
+  };
+
+  const handleDownloadRecording = (call: Call) => {
+    if (!call.recording_url) return;
+
+    const link = document.createElement('a');
+    link.href = call.recording_url;
+    // Create filename from call details
+    const fromNumber = call.from_e164?.replace(/\D/g, '') || 'unknown';
+    const toNumber = call.to_e164?.replace(/\D/g, '') || 'unknown';
+    const timestamp = call.started_at ? new Date(call.started_at).toISOString().slice(0, 10) : 'unknown';
+    link.download = `recording_${fromNumber}-${toNumber}_${timestamp}.wav`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const getStatusBadge = (status: string) => {
@@ -136,18 +151,30 @@ export function CallsTable({ calls, onViewDetails }: CallsTableProps) {
                   </TableCell>
                   <TableCell>
                     {call.recording_url ? (
-                      <Button
-                        variant={playingCallId === call.id ? 'default' : 'ghost'}
-                        size="icon"
-                        onClick={() => handlePlayRecording(call)}
-                        title={playingCallId === call.id ? 'Stop Recording' : 'Play Recording'}
-                      >
-                        {playingCallId === call.id ? (
-                          <Square className="h-4 w-4" />
-                        ) : (
-                          <Play className="h-4 w-4" />
-                        )}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant={playingCallId === call.id ? 'default' : 'ghost'}
+                          size="icon"
+                          onClick={() => handlePlayRecording(call)}
+                          title={playingCallId === call.id ? 'Stop Recording' : 'Play Recording'}
+                          className="h-8 w-8"
+                        >
+                          {playingCallId === call.id ? (
+                            <Square className="h-4 w-4" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDownloadRecording(call)}
+                          title="Download Recording"
+                          className="h-8 w-8"
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      </div>
                     ) : (
                       <span className="text-muted-foreground text-xs">-</span>
                     )}
