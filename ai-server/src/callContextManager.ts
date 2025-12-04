@@ -27,6 +27,13 @@ export interface CallContext {
   goal?: string;
   initiatedAt?: string;
 
+  // Agent metadata (from call initiator payload)
+  agentName?: string; // AI agent name (e.g., "Ferguson")
+  principalName?: string; // Principal/delegator name (e.g., "Aaron")
+  recordingNotice?: boolean; // Whether to announce call recording at start
+  agentScript?: string; // Optional per-call script/tone guidance
+  agentLimits?: string; // Optional per-call limits (e.g., "do not commit to anything over $1000")
+
   // Rolling summary and turn tracking
   rollingSummary: string; // Natural language summary of entire call so far
   turns: Turn[]; // Bounded sliding window of recent turns

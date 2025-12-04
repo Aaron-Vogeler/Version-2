@@ -9,6 +9,11 @@ interface OutboundCallRequest {
   goal: string;
   toNumber: string;
   userId: string;
+  agentName?: string; // AI agent name (e.g., "Ferguson")
+  principalName?: string; // Principal name (e.g., "Aaron")
+  recordingNotice?: boolean; // Whether to announce recording at start
+  agentScript?: string; // Optional per-call script/tone guidance
+  agentLimits?: string; // Optional per-call limits
 }
 
 interface TelnyxCallResponse {
@@ -26,7 +31,16 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId } = req.body as OutboundCallRequest;
+    const {
+      goal,
+      toNumber,
+      userId,
+      agentName,
+      principalName,
+      recordingNotice,
+      agentScript,
+      agentLimits,
+    } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -36,8 +50,16 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId) in base64
-    const clientStatePayload = JSON.stringify({ goal, userId });
+    // Encode client state (all call parameters) in base64
+    const clientStatePayload = JSON.stringify({
+      goal,
+      userId,
+      agentName: agentName || "Ferguson", // Default name
+      principalName: principalName || "Aaron", // Default principal
+      recordingNotice: recordingNotice ?? false, // Default: no recording notice
+      agentScript,
+      agentLimits,
+    });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 
     // Call Telnyx Call Control API
@@ -93,6 +115,9 @@ router.post("/", async (req: Request, res: Response) => {
           call_control_id: callControlId,
           call_session_id: callSessionId,
           initiated_by: "ai-server",
+          agent_name: agentName || "Ferguson",
+          principal_name: principalName || "Aaron",
+          recording_notice: recordingNotice ?? false,
         },
       });
 

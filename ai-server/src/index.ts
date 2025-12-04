@@ -1118,6 +1118,13 @@ wss.on("connection", async (ws) => {
           managedContext.lastTranscriptAt = 0;
           managedContext.deepgramSocket = dgLive;
 
+          // Extract agent metadata from client_state
+          managedContext.agentName = decoded.agentName || "Ferguson";
+          managedContext.principalName = decoded.principalName || "Aaron";
+          managedContext.recordingNotice = decoded.recordingNotice ?? false;
+          managedContext.agentScript = decoded.agentScript;
+          managedContext.agentLimits = decoded.agentLimits;
+
           // Create the local callContext reference for backward compatibility
           callContext = managedContext;
 
@@ -1137,6 +1144,9 @@ wss.on("connection", async (ws) => {
             callControlId: callContext.callControlId,
             goal: callContext.goal,
             userId: callContext.userId,
+            agentName: callContext.agentName,
+            principalName: callContext.principalName,
+            recordingNotice: callContext.recordingNotice,
             customRecordingEnabled: isCustomRecordingEnabled(),
           });
         } catch (err) {
