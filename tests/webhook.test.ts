@@ -1,5 +1,5 @@
 /**
- * Basic webhook integration test test to redploy fly.io worker
+ * Basic webhook integration test test to redploy fly.io worker redeploy
  * Tests the webhook -> event -> DB flow
  */
 
