@@ -48,6 +48,9 @@ router.post("/", async (req: Request, res: Response) => {
         to: toNumber,
         from: config.telnyx.fromNumber,
         client_state: clientStateBase64,
+        record: "record-from-answer",
+        record_format: "mp3",
+        record_channels: "dual",
       },
       {
         headers: {
