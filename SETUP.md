@@ -6,7 +6,7 @@
 
 ```bash
 pnpm install
-cd cloudflare-workers && pnpm install && cd ..
+cd ai-server && pnpm install && cd ..
 ```
 
 ### 2. Supabase Setup
@@ -14,9 +14,11 @@ cd cloudflare-workers && pnpm install && cd ..
 1. Create project at [supabase.com](https://supabase.com)
 2. Open SQL Editor
 3. Run `supabase/migrations/001_initial_schema.sql`
-4. Run `supabase/seed.sql`
-5. Create users in Authentication > Users
-6. Link users to profiles (see README)
+4. Run `supabase/migrations/002_ai_assistant_features.sql`
+5. Run `supabase/migrations/003_add_call_control_id.sql`
+6. Run `supabase/seed.sql`
+7. Create users in Authentication > Users
+8. Link users to profiles (see README)
 
 ### 3. Environment Variables
 
@@ -24,20 +26,19 @@ cd cloudflare-workers && pnpm install && cd ..
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your Supabase credentials.
+Edit `.env.local` with your Supabase and Telnyx credentials.
 
-### 4. Cloudflare Workers
+### 4. AI Server Setup (Fly.io)
 
 ```bash
-cd cloudflare-workers
-wrangler login
-wrangler kv:namespace create "IDEMPOTENCY"
-wrangler queues create telnyx-events-queue
-wrangler secret put SUPABASE_URL
-wrangler secret put SUPABASE_SERVICE_KEY
-wrangler secret put TELNYX_SIGNING_SECRET
-wrangler secret put TELNYX_API_KEY
-pnpm deploy
+cd ai-server
+cp .env.example .env
+# Edit .env with your Deepgram, Groq, Telnyx, and Supabase credentials
+
+# Deploy to Fly.io
+fly launch
+fly secrets set DEEPGRAM_API_KEY=xxx GROQ_API_KEY=xxx TELNYX_API_KEY=xxx TELNYX_SIP_CONNECTION_ID=xxx NEXT_PUBLIC_SUPABASE_URL=xxx SUPABASE_SERVICE_ROLE_KEY=xxx
+fly deploy
 cd ..
 ```
 
@@ -51,16 +52,15 @@ Visit http://localhost:3000
 
 ### 6. Configure Telnyx Webhook
 
-1. Go to Telnyx Portal > Webhooks
-2. Add webhook URL: `https://your-worker.workers.dev/telnyx/webhook`
-3. Enable signature verification
-4. Copy signing secret to worker
+1. Go to Telnyx Portal > Call Control Apps
+2. Add webhook URL: `https://your-fly-app.fly.dev/webhooks/telnyx`
+3. Configure media streaming URL: `wss://your-fly-app.fly.dev`
 
 ## Testing
 
 1. Login with test user credentials
-2. Send test webhook via Postman
-3. Watch dashboard update in realtime
+2. Initiate a call via the AI server API
+3. Watch dashboard update in realtime with live transcripts
 
 ## Production Deployment
 
@@ -68,8 +68,8 @@ Visit http://localhost:3000
 # Deploy Next.js
 vercel --prod
 
-# Deploy Workers
-cd cloudflare-workers && pnpm deploy
+# Deploy AI Server
+cd ai-server && fly deploy
 ```
 
 ---

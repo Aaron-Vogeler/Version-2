@@ -32,18 +32,18 @@ const config = {
     model: getEnv("GROQ_MODEL", "llama-3.1-8b-instant"),
   },
 
-  openai: {
-    apiKey: requireEnv("OPENAI_API_KEY"),
-    ttsModel: getEnv("OPENAI_TTS_MODEL", "tts-1-hd"),
-    ttsVoice: getEnv("OPENAI_TTS_VOICE", "alloy"),
-  },
-
   telnyx: {
     apiKey: requireEnv("TELNYX_API_KEY"),
     sipConnectionId: requireEnv("TELNYX_SIP_CONNECTION_ID"),
     fromNumber: getEnv("TELNYX_FROM_NUMBER") || process.env.NEXT_PUBLIC_MONITOR_NUMBER || requireEnv("TELNYX_FROM_NUMBER"),
     streamUrl: getEnv("TELNYX_STREAM_URL", "wss://version-2-cr4fsa.fly.dev"),
     ttsVoiceId: getEnv("TELNYX_TTS_VOICE_ID", "Telnyx.KokoroTTS.bm_george"),
+  },
+
+  // Supabase config for call logging
+  supabase: {
+    url: getEnv("NEXT_PUBLIC_SUPABASE_URL"),
+    serviceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY"),
   },
 
   // LLM config

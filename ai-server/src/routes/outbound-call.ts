@@ -1,6 +1,7 @@
 import express, { Router, Request, Response } from "express";
 import axios from "axios";
 import config from "../config";
+import { upsertCall, isSupabaseConfigured } from "../utils/supabase";
 
 const router = Router();
 
@@ -56,6 +57,25 @@ router.post("/", async (req: Request, res: Response) => {
 
     // Extract call_control_id from Telnyx response
     const callControlId = telnyxResponse.data.data.id;
+    const timestamp = new Date().toISOString();
+
+    // Log call to Supabase
+    if (isSupabaseConfigured()) {
+      await upsertCall({
+        id: callControlId,
+        user_id: userId,
+        direction: "outbound",
+        from_e164: config.telnyx.fromNumber,
+        to_e164: toNumber,
+        status: "initiated",
+        goal: goal,
+        started_at: timestamp,
+        metadata: {
+          initiated_by: "ai-server",
+        },
+      });
+      console.log("📊 Call logged to Supabase:", callControlId);
+    }
 
     return res.status(200).json({
       status: "outbound_call_created",

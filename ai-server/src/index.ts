@@ -10,6 +10,7 @@ import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
+import { safeUpdateStatus, updateCall, appendTranscript, isSupabaseConfigured } from "./utils/supabase";
 
 // Constants
 const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
@@ -104,6 +105,17 @@ async function scheduleTtsResponse(
         text: userText,
         timestamp: new Date().toISOString(),
       });
+
+      // Log user transcript to Supabase
+      if (callContext.callControlId && isSupabaseConfigured()) {
+        const toNumber = callContext.goal ? "Customer" : "Caller";
+        appendTranscript(
+          callContext.callControlId,
+          userText,
+          "in_progress",
+          toNumber
+        ).catch((err) => console.error("[Supabase] Error logging user transcript:", err));
+      }
     }
 
     // Send to LLM
@@ -156,6 +168,16 @@ async function scheduleTtsResponse(
         text: aiText,
         timestamp: new Date().toISOString(),
       });
+
+      // Log AI transcript to Supabase
+      if (callContext.callControlId && isSupabaseConfigured()) {
+        appendTranscript(
+          callContext.callControlId,
+          aiText,
+          "in_progress",
+          "Merlin"
+        ).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
+      }
 
       // Check if we should update the rolling summary
       try {
@@ -290,6 +312,14 @@ async function sendTtsResponse(
  */
 function cleanupCallState(callContext: CallContext): void {
   console.log("🧹 Cleaning up call state");
+
+  // Mark transcript as completed in Supabase
+  if (callContext.callControlId && isSupabaseConfigured()) {
+    updateCall(callContext.callControlId, {
+      transcript_status: "completed",
+    }).catch((err) => console.error("[Supabase] Error marking transcript complete:", err));
+  }
+
   callContext.isCallActive = false;
   callContext.ttsState = "idle";
   if (callContext.ttsDebounceTimer) {
@@ -421,6 +451,7 @@ app.use("/api/outbound-call", outboundCallRouter);
 app.post("/webhooks/telnyx", async (req, res) => {
   const eventType = req.body?.data?.event_type;
   const callControlId = req.body?.data?.payload?.call_control_id;
+  const payload = req.body?.data?.payload || {};
 
   console.log(`📞 Telnyx webhook event: ${eventType} (callControlId: ${callControlId || 'N/A'})`);
 
@@ -433,6 +464,13 @@ app.post("/webhooks/telnyx", async (req, res) => {
       console.warn("⚠️ call.answered webhook missing payload.call_control_id");
     }
     if (callControlId) {
+      // Log answered status to Supabase
+      if (isSupabaseConfigured()) {
+        safeUpdateStatus(callControlId, "answered", {
+          answered_at: new Date().toISOString(),
+        }).catch((err) => console.error("[Supabase] Error logging answered:", err));
+      }
+
       try {
         await axios.post(
           `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
@@ -496,8 +534,44 @@ app.post("/webhooks/telnyx", async (req, res) => {
     }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
     console.log("📞 Call ended:", eventType);
+
+    // Log call completion to Supabase
+    if (callControlId && isSupabaseConfigured()) {
+      const endedAt = new Date().toISOString();
+      const startTime = payload.start_time ? new Date(payload.start_time) : null;
+      let durationSeconds: number | undefined;
+
+      if (startTime) {
+        durationSeconds = Math.max(
+          0,
+          Math.floor((new Date(endedAt).getTime() - startTime.getTime()) / 1000)
+        );
+      }
+
+      updateCall(callControlId, {
+        status: "completed",
+        ended_at: endedAt,
+        duration_sec: durationSeconds,
+      }).catch((err) => console.error("[Supabase] Error logging hangup:", err));
+    }
+
     // Note: We don't have access to callContext here, but we mark the call
     // as inactive via the WebSocket close event. Cleanup happens there.
+  } else if (eventType === "call.recording.saved") {
+    // Log recording URL to Supabase
+    const recordingUrl =
+      payload.public_recording_urls?.mp3 ||
+      payload.public_recording_urls?.wav ||
+      payload.recording_urls?.mp3 ||
+      payload.recording_url ||
+      null;
+
+    if (callControlId && recordingUrl && isSupabaseConfigured()) {
+      console.log("🎙️ Recording saved:", recordingUrl);
+      updateCall(callControlId, {
+        recording_url: recordingUrl,
+      }).catch((err) => console.error("[Supabase] Error logging recording:", err));
+    }
   }
 
   res.send("ok");

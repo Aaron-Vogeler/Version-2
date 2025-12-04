@@ -115,13 +115,13 @@ POST /api/calls/[id]/feedback         - Submit call feedback
 - `AssistantPerformance`: AI assistant metrics and comparisons
 - `BillingUsage`: Cost breakdown and trend analysis
 
-### 🔄 Cloudflare Workers Updates
+### 🔄 AI Server Updates
 
-The webhook handler now extracts and processes:
+The AI server now handles webhook processing and extracts:
 - `assistant_id` and `assistant_name` from `client_state` or payload
-- Full transcript text from transcription events
-- Machine detection results
-- Enhanced metadata tracking
+- Full transcript text from live transcription
+- Call status updates and duration tracking
+- Enhanced metadata logging to Supabase
 
 ### 🚀 Usage Examples
 
@@ -187,10 +187,10 @@ const handleViewCall = (call: Call) => {
    # Existing config works with new features
    ```
 
-3. **Deploy Cloudflare Workers**:
+3. **Deploy AI Server**:
    ```bash
-   cd cloudflare-workers
-   pnpm deploy
+   cd ai-server
+   fly deploy
    ```
 
 4. **Install New Dependencies**:
@@ -253,7 +253,7 @@ For issues or questions:
 - Check the main README.md for setup instructions
 - Review API documentation in Postman collection
 - Inspect browser console for client-side errors
-- Check Cloudflare Worker logs for webhook issues
+- Check Fly.io logs for AI server issues: `fly logs`
 
 ---
 
