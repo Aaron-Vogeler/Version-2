@@ -14,82 +14,15 @@
  */
 
 /**
- * Apply a simple linear ramp between two values.
- * Used to smooth discontinuities at packet boundaries.
- * @param from - Starting value
- * @param to - Ending value
- * @param steps - Number of steps in the ramp
- * @returns Array of intermediate values
- */
-function linearRamp(from: number, to: number, steps: number): number[] {
-  const result: number[] = [];
-  for (let i = 0; i < steps; i++) {
-    const t = i / (steps - 1);
-    result.push(from + (to - from) * t);
-  }
-  return result;
-}
-
-/**
- * Smooth discontinuities between audio buffers by applying short ramps.
- * Only applies smoothing if there's a significant jump between buffers.
- * @param buffers - Array of Buffer chunks (μ-law encoded)
- * @returns Array of Buffers with discontinuities smoothed
- */
-function smoothDiscontinuities(buffers: Buffer[]): Buffer[] {
-  if (buffers.length <= 1) {
-    return buffers;
-  }
-
-  const smoothed: Buffer[] = [];
-  const RAMP_SAMPLES = 4; // 0.5ms ramp at 8kHz
-  const DISCONTINUITY_THRESHOLD = 30; // Threshold for detecting clicks
-
-  for (let i = 0; i < buffers.length; i++) {
-    const currentBuf = Buffer.from(buffers[i]); // Copy to avoid modifying original
-
-    // Check for discontinuity with previous buffer
-    if (i > 0 && buffers[i - 1].length > 0 && currentBuf.length >= RAMP_SAMPLES) {
-      const prevLastSample = buffers[i - 1][buffers[i - 1].length - 1];
-      const currentFirstSample = currentBuf[0];
-
-      // Detect significant discontinuity (potential click)
-      const diff = Math.abs(prevLastSample - currentFirstSample);
-
-      if (diff > DISCONTINUITY_THRESHOLD) {
-        // Apply a short ramp at the start of this buffer to smooth the transition
-        const rampValues = linearRamp(prevLastSample, currentFirstSample, RAMP_SAMPLES);
-        for (let j = 0; j < RAMP_SAMPLES && j < currentBuf.length; j++) {
-          currentBuf[j] = Math.round(rampValues[j]);
-        }
-      }
-    }
-
-    smoothed.push(currentBuf);
-  }
-
-  return smoothed;
-}
-
-/**
  * Concatenate an array of Buffers into a single Buffer.
- * Applies discontinuity smoothing to eliminate clicking noises.
  * @param buffers - Array of Buffer chunks
- * @returns Single concatenated Buffer with smooth transitions
+ * @returns Single concatenated Buffer
  */
 export function concatTrack(buffers: Buffer[]): Buffer {
   if (!buffers || buffers.length === 0) {
     return Buffer.alloc(0);
   }
-
-  if (buffers.length === 1) {
-    return buffers[0];
-  }
-
-  // Smooth discontinuities between buffers
-  const smoothedBuffers = smoothDiscontinuities(buffers);
-
-  return Buffer.concat(smoothedBuffers);
+  return Buffer.concat(buffers);
 }
 
 /**

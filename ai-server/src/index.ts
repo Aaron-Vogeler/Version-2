@@ -1160,11 +1160,35 @@ wss.on("connection", async (ws) => {
           !callContext.customRecordingDisabledDueToSize
         ) {
           try {
+            // Filter out silence/noise packets to reduce clicks at boundaries
+            // Check if this packet contains mostly silence (0xFF is μ-law silence)
+            const silenceThreshold = 0.95; // 95% of samples must be silence
+            let silenceCount = 0;
+            for (let i = 0; i < audio.length; i++) {
+              // μ-law silence is 0xFF or very close to it (0xFE, 0xFD also near-silence)
+              if (audio[i] >= 0xFD) {
+                silenceCount++;
+              }
+            }
+            const silenceRatio = silenceCount / audio.length;
+            const isSilence = silenceRatio > silenceThreshold;
+
             // Push audio chunk to the appropriate track buffer
+            // For silence packets, push a clean silence buffer instead of noisy silence
             if (track === "inbound") {
-              callContext.recordingBuffers.inbound.push(audio);
+              if (isSilence) {
+                // Replace noisy silence with clean silence
+                callContext.recordingBuffers.inbound.push(Buffer.alloc(audio.length, 0xFF));
+              } else {
+                callContext.recordingBuffers.inbound.push(audio);
+              }
             } else if (track === "outbound") {
-              callContext.recordingBuffers.outbound.push(audio);
+              if (isSilence) {
+                // Replace noisy silence with clean silence
+                callContext.recordingBuffers.outbound.push(Buffer.alloc(audio.length, 0xFF));
+              } else {
+                callContext.recordingBuffers.outbound.push(audio);
+              }
             }
 
             // Check size limit to prevent memory exhaustion
