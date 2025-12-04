@@ -738,7 +738,8 @@ wss.on("connection", async (ws) => {
   // BARGE-IN: Trigger on any transcript (interim or final) for responsiveness
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
-      const results = dgEvent.channel?.alternatives?.[0];
+      const channel = dgEvent.channel;
+      const results = channel?.alternatives?.[0];
 
       // Guard: Check if call is still active BEFORE logging raw transcript
       if (!callContext || !callContext.isCallActive) {
@@ -754,7 +755,11 @@ wss.on("connection", async (ws) => {
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      console.log("🗣️ Caller transcript:", userText, `(is_final: ${results.is_final}, speech_final: ${results.speech_final})`);
+      // Extract is_final and speech_final from channel object (not alternatives)
+      const isFinal = channel?.is_final === true;
+      const isSpeechFinal = channel?.speech_final === true;
+
+      console.log("🗣️ Caller transcript:", userText, `(is_final: ${isFinal}, speech_final: ${isSpeechFinal})`);
 
       // ============================================================================
       // LIVE TRANSCRIPT: Log ALL transcripts (interim + final) for fastest updates
@@ -819,7 +824,7 @@ wss.on("connection", async (ws) => {
       // FINAL TRANSCRIPT: Only log FINAL recognized speech to segments table
       // ============================================================================
       // Only process final transcript chunks (is_final=true) for accurate segment logging
-      if (!results.is_final) {
+      if (!isFinal) {
         // Queue the (interim) transcript with debounce for LLM response
         queueUserTranscript(callContext, userText, ws);
         return;
@@ -837,8 +842,6 @@ wss.on("connection", async (ws) => {
       // ============================================================================
       // UTTERANCE BOUNDARY: Flush on speech_final or with fallback timer
       // ============================================================================
-      const isSpeechFinal = results.speech_final === true;
-
       if (isSpeechFinal) {
         // speech_final flag indicates end of utterance
         console.log("[TRANSCRIPT] speech_final detected, flushing utterance");
