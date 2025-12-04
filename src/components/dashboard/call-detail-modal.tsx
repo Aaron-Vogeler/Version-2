@@ -203,12 +203,7 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
               callId={call.id}
               isCallOngoing={call.status !== 'completed'}
             />
-            <LiveTranscript
-              callId={call.id}
-              initialTranscript={call.transcript}
-              initialLiveTranscript={call.live_transcript}
-              status={call.status}
-            />
+            <LiveTranscript callId={call.id} status={call.status} />
 
             {/* Link to external transcript if available */}
             {(call.transcript_url || call.transcription_url) && (
