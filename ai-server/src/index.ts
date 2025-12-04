@@ -98,25 +98,14 @@ async function scheduleTtsResponse(
 
     console.log("🎯 Processing accumulated transcript:", userText);
 
-    // Append user turn to the call context if callId is available
+    // Append user turn to the call context (needed for LLM context)
+    // Note: We DON'T log to Supabase yet - only after we confirm the response isn't stale
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
         speaker: "caller",
         text: userText,
         timestamp: new Date().toISOString(),
       });
-
-      // Log user transcript to Supabase
-      // Note: transcript_status constraint allows: 'pending', 'processing', 'completed', 'failed', 'none'
-      if (callContext.callControlId && isSupabaseConfigured()) {
-        const toNumber = callContext.goal ? "Customer" : "Caller";
-        appendTranscript(
-          callContext.callControlId,
-          userText,
-          "processing",
-          toNumber
-        ).catch((err) => console.error("[Supabase] Error logging user transcript:", err));
-      }
     }
 
     // Send to LLM
@@ -161,6 +150,20 @@ async function scheduleTtsResponse(
     }
 
     console.log("🤖 AI:", aiText);
+
+    // NOW log user transcript to Supabase - only after confirming the response isn't stale
+    // This prevents duplicate/partial transcripts from being logged
+    if (callContext.callControlId && isSupabaseConfigured()) {
+      const speakerName = callContext.goal ? "Customer" : "Caller";
+      appendTranscript(
+        callContext.callControlId,
+        userText,
+        "processing",
+        speakerName
+      ).then(() => {
+        console.log(`[Transcript] ✅ Logged user speech to transcript (${userText.length} chars)`);
+      }).catch((err) => console.error("[Supabase] Error logging user transcript:", err));
+    }
 
     // Append assistant turn to the call context if callId is available
     if (callContext.callId) {
