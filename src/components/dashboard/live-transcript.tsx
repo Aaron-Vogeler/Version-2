@@ -2,89 +2,101 @@
 
 /**
  * Live Transcript Component
- * Subscribes to Supabase Realtime for live transcript updates
+ * Fetches and displays real-time transcript segments from call_transcript_segments table
  */
 
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { TranscriptSegment } from '@/lib/types/database';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { FileText, Radio } from 'lucide-react';
 
 interface LiveTranscriptProps {
   callId: string;
-  initialTranscript?: string | null;
-  initialLiveTranscript?: string | null;
   status?: string;
 }
 
-export function LiveTranscript({
-  callId,
-  initialTranscript,
-  initialLiveTranscript,
-  status
-}: LiveTranscriptProps) {
-  const [liveTranscript, setLiveTranscript] = useState(initialLiveTranscript || '');
+export function LiveTranscript({ callId, status }: LiveTranscriptProps) {
+  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [isLive, setIsLive] = useState(status === 'answered' || status === 'initiated' || status === 'ringing');
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   // Create supabase client only once
   const supabase = useMemo(() => createClient(), []);
 
-  // Auto-scroll to bottom when transcript updates
+  // Auto-scroll to bottom when segments update
   useEffect(() => {
     if (transcriptEndRef.current) {
       transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [liveTranscript]);
+  }, [segments]);
 
   useEffect(() => {
     if (!callId) return;
 
-    // Subscribe to realtime updates for this specific call
-    const channel = supabase
-      .channel(`call-${callId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'calls',
-          filter: `id=eq.${callId}`,
-        },
-        (payload) => {
-          console.log('Received realtime update:', payload);
+    const initializeTranscript = async () => {
+      try {
+        // Fetch existing segments
+        const { data, error } = await supabase
+          .from('call_transcript_segments')
+          .select('*')
+          .eq('call_id', callId)
+          .order('created_at', { ascending: true });
 
-          const newCall = payload.new as any;
+        if (error) throw error;
 
-          // Update live transcript if it changed
-          if (newCall.live_transcript !== undefined) {
-            setLiveTranscript(newCall.live_transcript || '');
-            setLastUpdate(new Date());
-          }
+        setSegments(data || []);
+        setIsLoading(false);
 
-          // Update live status based on call status
-          if (newCall.status) {
-            const callIsLive = ['initiated', 'ringing', 'answered'].includes(newCall.status);
-            setIsLive(callIsLive);
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log('Realtime subscription status:', status);
-      });
+        // Subscribe to new segments
+        const channel = supabase
+          .channel(`transcript-${callId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'call_transcript_segments',
+              filter: `call_id=eq.${callId}`,
+            },
+            (payload) => {
+              console.log('Received new transcript segment:', payload);
 
-    // Cleanup subscription on unmount
-    return () => {
-      console.log('Cleaning up realtime subscription');
-      supabase.removeChannel(channel);
+              const newSegment = payload.new as TranscriptSegment;
+
+              // Prevent duplicates
+              setSegments((prevSegments) => {
+                if (prevSegments.some((s) => s.id === newSegment.id)) {
+                  return prevSegments;
+                }
+                return [...prevSegments, newSegment];
+              });
+
+              setLastUpdate(new Date());
+            }
+          )
+          .subscribe((subscriptionStatus) => {
+            console.log('Transcript realtime subscription status:', subscriptionStatus);
+          });
+
+        // Cleanup subscription on unmount
+        return () => {
+          console.log('Cleaning up transcript realtime subscription');
+          supabase.removeChannel(channel);
+        };
+      } catch (err) {
+        console.error('Error initializing transcript:', err);
+        setIsLoading(false);
+      }
     };
+
+    return initializeTranscript();
   }, [callId]);
 
-  // Determine what to display
-  const displayTranscript = liveTranscript || initialTranscript;
-  const hasTranscript = displayTranscript && displayTranscript.trim().length > 0;
+  const hasSegments = segments.length > 0;
 
   return (
     <Card>
@@ -110,14 +122,52 @@ export function LiveTranscript({
         </div>
       </CardHeader>
       <CardContent>
-        <div className="max-h-[400px] overflow-y-auto">
-          {hasTranscript ? (
-            <div className="prose prose-sm max-w-none">
-              <pre className="whitespace-pre-wrap font-sans text-sm bg-muted/30 p-4 rounded-md">
-                {displayTranscript}
-              </pre>
-              <div ref={transcriptEndRef} />
+        <div className="max-h-[400px] overflow-y-auto space-y-3">
+          {isLoading ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <div className="flex items-center justify-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-muted-foreground animate-pulse" />
+                <span>Loading transcript...</span>
+              </div>
             </div>
+          ) : hasSegments ? (
+            <>
+              {segments.map((segment) => (
+                <div
+                  key={segment.id}
+                  className={`flex gap-3 ${
+                    segment.speaker === 'assistant' ? 'flex-row-reverse' : ''
+                  }`}
+                >
+                  {/* Speaker Badge */}
+                  <div className="flex-shrink-0 pt-0.5">
+                    <Badge
+                      variant={segment.speaker === 'assistant' ? 'default' : 'secondary'}
+                      className="text-xs whitespace-nowrap"
+                    >
+                      {segment.speaker === 'assistant' ? 'Assistant' : 'Caller'}
+                    </Badge>
+                  </div>
+
+                  {/* Message Bubble */}
+                  <div
+                    className={`flex-1 px-3 py-2 rounded-lg ${
+                      segment.speaker === 'assistant'
+                        ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                    }`}
+                  >
+                    <p className="text-sm leading-relaxed">{segment.text}</p>
+                    {segment.confidence !== null && (
+                      <p className="text-xs opacity-70 mt-1">
+                        Confidence: {(segment.confidence * 100).toFixed(1)}%
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={transcriptEndRef} />
+            </>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               {isLive ? (

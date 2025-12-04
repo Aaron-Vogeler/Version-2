@@ -206,12 +206,7 @@ export default function CallDetailPage() {
             callId={call.id}
             isCallOngoing={call.status !== 'completed'}
           />
-          <LiveTranscript
-            callId={call.id}
-            initialTranscript={call.transcript}
-            initialLiveTranscript={call.live_transcript}
-            status={call.status}
-          />
+          <LiveTranscript callId={call.id} status={call.status} />
         </div>
       </div>
     </div>
