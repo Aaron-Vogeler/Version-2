@@ -41,6 +41,5 @@ next-env.d.ts
 *.swp
 *.swo
 
-# Cloudflare
-cloudflare-workers/.wrangler/
-cloudflare-workers/dist/
+# AI Server
+ai-server/dist/
