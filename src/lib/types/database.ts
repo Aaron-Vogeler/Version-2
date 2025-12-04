@@ -144,6 +144,21 @@ export interface Database {
         Insert: Omit<Database['public']['Tables']['call_events']['Row'], 'created_at'>;
         Update: Partial<Database['public']['Tables']['call_events']['Insert']>;
       };
+      call_transcript_segments: {
+        Row: {
+          id: string;
+          call_id: string;
+          speaker: 'caller' | 'assistant';
+          track: 'inbound' | 'outbound';
+          text: string;
+          start_ms: number | null;
+          end_ms: number | null;
+          confidence: number | null;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['call_transcript_segments']['Row'], 'id' | 'created_at'>;
+        Update: Partial<Database['public']['Tables']['call_transcript_segments']['Insert']>;
+      };
     };
   };
 }
@@ -156,3 +171,4 @@ export type Assistant = Database['public']['Tables']['assistants']['Row'];
 export type Notification = Database['public']['Tables']['notifications']['Row'];
 export type NotificationRule = Database['public']['Tables']['notification_rules']['Row'];
 export type BillingSummary = Database['public']['Tables']['billing_summary']['Row'];
+export type TranscriptSegment = Database['public']['Tables']['call_transcript_segments']['Row'];
