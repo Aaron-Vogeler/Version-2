@@ -572,6 +572,25 @@ app.post("/webhooks/telnyx", async (req, res) => {
         recording_url: recordingUrl,
       }).catch((err) => console.error("[Supabase] Error logging recording:", err));
     }
+  } else if (eventType === "call.cost") {
+    // Log call cost/billing to Supabase
+    const billedSeconds =
+      payload.billed_duration_secs ||
+      payload.billed_duration_seconds ||
+      null;
+    const totalCost =
+      payload.total_cost ||
+      payload.amount_billed_usd ||
+      null;
+    const currency = payload.currency || "USD";
+
+    if (callControlId && isSupabaseConfigured()) {
+      console.log("💰 Call cost received:", totalCost, currency);
+      updateCall(callControlId, {
+        cost_usd: currency === "USD" ? totalCost : null,
+        duration_sec: billedSeconds,
+      }).catch((err) => console.error("[Supabase] Error logging cost:", err));
+    }
   }
 
   res.send("ok");
