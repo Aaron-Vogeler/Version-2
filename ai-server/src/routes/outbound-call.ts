@@ -13,7 +13,9 @@ interface OutboundCallRequest {
 
 interface TelnyxCallResponse {
   data: {
-    id: string;
+    call_control_id?: string;
+    call_session_id?: string;
+    call_leg_id?: string;
     [key: string]: any;
   };
 }
@@ -55,14 +57,28 @@ router.post("/", async (req: Request, res: Response) => {
       }
     );
 
-    // Extract call_control_id from Telnyx response
-    const callControlId = telnyxResponse.data.data.id;
+    // Extract call IDs from Telnyx response (matching Cloudflare worker pattern)
+    const responseData = telnyxResponse.data.data;
+    const callSessionId = responseData?.call_session_id || null;
+    const callControlId = responseData?.call_control_id || null;
+
+    // Use call_control_id as primary ID (consistent with webhooks)
+    const primaryId = callControlId || callSessionId;
+
+    if (!primaryId) {
+      console.error("❌ Telnyx response missing call identifiers:", responseData);
+      return res.status(500).json({
+        status: "error",
+        message: "Telnyx response missing call_control_id",
+      });
+    }
+
     const timestamp = new Date().toISOString();
 
     // Log call to Supabase
     if (isSupabaseConfigured()) {
-      await upsertCall({
-        id: callControlId,
+      const result = await upsertCall({
+        id: primaryId,
         user_id: userId,
         direction: "outbound",
         from_e164: config.telnyx.fromNumber,
@@ -71,15 +87,23 @@ router.post("/", async (req: Request, res: Response) => {
         goal: goal,
         started_at: timestamp,
         metadata: {
+          call_control_id: callControlId,
+          call_session_id: callSessionId,
           initiated_by: "ai-server",
         },
       });
-      console.log("📊 Call logged to Supabase:", callControlId);
+
+      if (result.success) {
+        console.log("📊 Call logged to Supabase:", primaryId);
+      } else {
+        console.error("❌ Failed to log call to Supabase:", result.error);
+      }
     }
 
     return res.status(200).json({
       status: "outbound_call_created",
       call_control_id: callControlId,
+      call_session_id: callSessionId,
     });
   } catch (error: any) {
     console.error("❌ Outbound call error:", error);
