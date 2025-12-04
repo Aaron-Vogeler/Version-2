@@ -868,7 +868,10 @@ wss.on("connection", async (ws) => {
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      console.log("🗣️ Caller transcript:", userText, `(is_final: ${results.is_final}, speech_final: ${results.speech_final})`);
+      // NOTE: is_final and speech_final are on dgEvent, not on alternatives[0]
+      const isFinal = dgEvent.is_final === true;
+      const speechFinal = dgEvent.speech_final === true;
+      console.log("🗣️ Caller transcript:", userText, `(is_final: ${isFinal}, speech_final: ${speechFinal})`);
 
       // ============================================================================
       // BARGE-IN: Trigger on any recognized words (interim or final) for responsiveness
@@ -919,7 +922,7 @@ wss.on("connection", async (ws) => {
       // TRANSCRIPT LOGGING: Only log FINAL recognized speech
       // ============================================================================
       // Only process final transcript chunks (is_final=true)
-      if (!results.is_final) {
+      if (!isFinal) {
         // Don't log interim transcripts to Supabase; only queue for responsiveness
         // Queue the (interim) transcript with debounce for LLM response
         queueUserTranscript(callContext, userText, ws);
@@ -938,9 +941,7 @@ wss.on("connection", async (ws) => {
       // ============================================================================
       // UTTERANCE BOUNDARY: Flush on speech_final or with fallback timer
       // ============================================================================
-      const isSpeechFinal = results.speech_final === true;
-
-      if (isSpeechFinal) {
+      if (speechFinal) {
         // speech_final flag indicates end of utterance
         console.log("[TRANSCRIPT] speech_final detected, flushing utterance");
 
