@@ -390,31 +390,6 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
           </div>
         )}
 
-        {/* Debug Info */}
-        {debugInfo.length > 0 && (
-          <div className="bg-muted/50 border border-border rounded p-3">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-foreground">Debug Log:</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  navigator.clipboard.writeText(debugInfo.join('\n'));
-                  addDebug('📋 Debug log copied to clipboard');
-                }}
-                className="h-6 text-xs"
-              >
-                Copy Log
-              </Button>
-            </div>
-            <div className="bg-background rounded p-2 max-h-60 overflow-y-auto">
-              <pre className="text-xs font-mono whitespace-pre-wrap">
-                {debugInfo.join('\n')}
-              </pre>
-            </div>
-          </div>
-        )}
-
         {/* Controls */}
         <div className="flex gap-2">
           <Button
