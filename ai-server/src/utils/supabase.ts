@@ -305,33 +305,44 @@ export async function insertTranscriptSegment(
   }
 
   // Skip empty text
-  if (segment.text.trim().length === 0) {
+  const trimmedText = segment.text.trim();
+  if (trimmedText.length === 0) {
     return { success: true };
   }
 
+  // Safety: Cap text length to prevent runaway inserts (e.g., 2000 chars per segment)
+  const MAX_TEXT_LENGTH = 2000;
+  const cappedText = trimmedText.length > MAX_TEXT_LENGTH
+    ? trimmedText.substring(0, MAX_TEXT_LENGTH)
+    : trimmedText;
+
   try {
+    const insertRecord = {
+      call_id: segment.call_id,
+      speaker: segment.speaker,
+      track: segment.track,
+      text: cappedText,
+      confidence: segment.confidence,
+      created_at: segment.created_at || new Date().toISOString(),
+    };
+
     const { error } = await supabase
       .from("call_transcript_segments")
-      .insert({
-        call_id: segment.call_id,
-        speaker: segment.speaker,
-        track: segment.track,
-        text: segment.text.trim(),
-        confidence: segment.confidence,
-        created_at: segment.created_at || new Date().toISOString(),
-      });
+      .insert(insertRecord);
 
     if (error) {
-      console.error("[Supabase] Error inserting transcript segment:", error);
+      console.error("[Supabase] Error inserting transcript segment:", error.message);
       return { success: false, error: error.message };
     }
 
+    // Debug-level logging: show speaker, text length, call_id suffix for tracing
+    const callIdSuffix = segment.call_id.substring(Math.max(0, segment.call_id.length - 8));
     console.log(
-      `[Supabase] Transcript segment inserted (${segment.speaker}/${segment.track}): "${segment.text.substring(0, 60)}..."`
+      `[Supabase] Transcript segment inserted (${segment.speaker}/${segment.track}, ${cappedText.length} chars, call: ...${callIdSuffix})`
     );
     return { success: true };
   } catch (error) {
-    console.error("[Supabase] Exception inserting transcript segment:", error);
+    console.error("[Supabase] Exception inserting transcript segment:", error instanceof Error ? error.message : error);
     return {
       success: false,
       error: error instanceof Error ? error.message : String(error),
