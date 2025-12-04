@@ -151,8 +151,6 @@ async function scheduleTtsResponse(
       return;
     }
 
-    console.log("🤖 AI:", aiText);
-
     // Append assistant turn to the call context if callId is available
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
@@ -253,6 +251,9 @@ async function sendTtsResponse(
     console.log(`[TTS] Setting ttsState='speaking' (callControlId: ${callContext.callControlId})`);
 
     await synthesizeSpeech(aiText, callContext.callControlId);
+
+    // Log what TTS will actually speak (only logged after successful TTS API call)
+    console.log("🤖 AI (speaking):", aiText);
 
     // NOTE: Do NOT set ttsState='idle' here!
     // The HTTP response returns BEFORE audio finishes playing.
@@ -739,6 +740,8 @@ wss.on("connection", async (ws) => {
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
+      const isFinal = dgEvent.is_final ?? dgEvent.channel?.is_final ?? false;
+      const speechFinal = dgEvent.speech_final ?? dgEvent.channel?.speech_final ?? false;
 
       // Guard: Check if call is still active BEFORE logging raw transcript
       if (!callContext || !callContext.isCallActive) {
@@ -754,7 +757,7 @@ wss.on("connection", async (ws) => {
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      console.log("🗣️ Caller transcript:", userText, `(is_final: ${results.is_final}, speech_final: ${results.speech_final})`);
+      console.log("🗣️ Caller transcript:", userText, `(is_final: ${isFinal}, speech_final: ${speechFinal})`);
 
       // ============================================================================
       // BARGE-IN: Trigger on any recognized words (interim or final) for responsiveness
@@ -805,7 +808,7 @@ wss.on("connection", async (ws) => {
       // TRANSCRIPT LOGGING: Only log FINAL recognized speech
       // ============================================================================
       // Only process final transcript chunks (is_final=true)
-      if (!results.is_final) {
+      if (!isFinal) {
         // Don't log interim transcripts to Supabase; only queue for responsiveness
         // Queue the (interim) transcript with debounce for LLM response
         queueUserTranscript(callContext, userText, ws);
@@ -824,7 +827,7 @@ wss.on("connection", async (ws) => {
       // ============================================================================
       // UTTERANCE BOUNDARY: Flush on speech_final or with fallback timer
       // ============================================================================
-      const isSpeechFinal = results.speech_final === true;
+      const isSpeechFinal = speechFinal === true;
 
       if (isSpeechFinal) {
         // speech_final flag indicates end of utterance
