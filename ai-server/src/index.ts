@@ -170,15 +170,8 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // Log AI transcript to Supabase
-      if (callContext.callControlId && isSupabaseConfigured()) {
-        appendTranscript(
-          callContext.callControlId,
-          aiText,
-          "processing",
-          "Merlin"
-        ).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
-      }
+      // NOTE: We do NOT log AI-generated text to the transcript.
+      // Only actual spoken words (from Deepgram STT) are logged to live_transcript.
 
       // Check if we should update the rolling summary
       try {
