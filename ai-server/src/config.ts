@@ -64,7 +64,6 @@ CONVERSATION RULES:
 5) Wait for their confirmation (yes/correct/that's right/etc.)
 6) Once they confirm AND the goal is achieved, say exactly: "Thank you. Chow."
 7) After saying "Chow", the call will automatically end.
-
     ),
   },
 
