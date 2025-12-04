@@ -552,25 +552,15 @@ app.post("/webhooks/telnyx", async (req, res) => {
       }
     }
   } else if (eventType === "call.speak.started") {
-    // TTS playback has started
+    // TTS playback has started - log AI transcript now (customer is hearing it)
     if (callControlId) {
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "speaking";
         console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
-      } else {
-        console.warn(`[TTS] ⚠️ call.speak.started for unknown callControlId: ${callControlId}`);
-      }
-    }
-  } else if (eventType === "call.speak.ended") {
-    // TTS playback has ended - NOW we log what was actually spoken
-    if (callControlId) {
-      const ctx = contextMgr.getContext(callControlId);
-      if (ctx) {
-        ctx.ttsState = "idle";
-        console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
 
-        // Log the pending AI transcript now that it was fully spoken
+        // Log AI transcript when TTS STARTS (not ends) - customer is now hearing it
+        // Even if interrupted, the AI started speaking so we should log it
         if (ctx.pendingAiTranscript && isSupabaseConfigured()) {
           const spokenText = ctx.pendingAiTranscript;
           ctx.pendingAiTranscript = undefined; // Clear after logging
@@ -584,6 +574,17 @@ app.post("/webhooks/telnyx", async (req, res) => {
             console.log(`[Transcript] ✅ Logged AI speech to transcript (${spokenText.length} chars)`);
           }).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
         }
+      } else {
+        console.warn(`[TTS] ⚠️ call.speak.started for unknown callControlId: ${callControlId}`);
+      }
+    }
+  } else if (eventType === "call.speak.ended") {
+    // TTS playback has ended
+    if (callControlId) {
+      const ctx = contextMgr.getContext(callControlId);
+      if (ctx) {
+        ctx.ttsState = "idle";
+        console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
       } else {
         console.warn(`[TTS] ⚠️ call.speak.ended for unknown callControlId: ${callControlId}`);
       }
@@ -749,12 +750,6 @@ wss.on("connection", async (ws) => {
           // Increment turn sequence to invalidate any in-flight LLM/TTS work
           callContext.turnSeq = (callContext.turnSeq || 0) + 1;
           console.log(`[TURN] Turn sequence incremented to ${callContext.turnSeq} (stale responses will be dropped)`);
-
-          // Clear pending AI transcript - interrupted speech shouldn't be logged
-          if (callContext.pendingAiTranscript) {
-            console.log(`[Transcript] 🗑️ Clearing interrupted AI transcript (${callContext.pendingAiTranscript.length} chars not logged)`);
-            callContext.pendingAiTranscript = undefined;
-          }
 
           // Mark as idle after stop
           callContext.ttsState = "idle";
