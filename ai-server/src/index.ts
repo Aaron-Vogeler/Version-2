@@ -161,10 +161,28 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // TODO: Assistant transcript logging requires outbound-track STT or confirmed playback text.
-      // Currently, we don't log assistant text because it may not be spoken if barge-in occurs.
-      // To enable assistant logging: implement outbound Deepgram stream + insertTranscriptSegment() with speaker='assistant'.
-      // Feature flag: ENABLE_OUTBOUND_STT (optional scaffolding only at this time).
+      // Log assistant response to live transcript and final transcript segments
+      if (callContext.callControlId && isSupabaseConfigured()) {
+        // Live transcript: Add assistant response immediately (marked as final)
+        updateLiveTranscript(
+          callContext.callControlId,
+          "assistant",
+          aiText,
+          true  // Assistant responses are always final (complete sentences)
+        ).catch((err) => {
+          console.error("[LIVE] Error updating assistant live transcript:", err);
+        });
+
+        // Final transcript: Log to segments table
+        insertTranscriptSegment({
+          call_id: callContext.callControlId,
+          speaker: "assistant",
+          track: "outbound",
+          text: aiText,
+        }).catch((err) => {
+          console.error("[Supabase] Error inserting assistant transcript segment:", err);
+        });
+      }
 
       // Check if we should update the rolling summary
       try {
@@ -763,13 +781,16 @@ wss.on("connection", async (ws) => {
 
       // ============================================================================
       // LIVE TRANSCRIPT: Log ALL transcripts (interim + final) for fastest updates
+      // - Interim: Replace staging area (no duplicates)
+      // - Final: Commit to permanent transcript
       // ============================================================================
       if (callContext.callControlId && isSupabaseConfigured()) {
         // Fire-and-forget: don't await to avoid slowing down the transcript handler
         updateLiveTranscript(
           callContext.callControlId,
           "caller",
-          userText
+          userText,
+          isFinal  // Pass the isFinal flag for smart handling
         ).catch((err) => {
           console.error("[LIVE] Error updating live transcript:", err);
         });

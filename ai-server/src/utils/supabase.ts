@@ -282,17 +282,20 @@ export async function appendTranscript(
 }
 
 /**
- * Update live transcript with interim results (fast, real-time updates)
- * This provides the fastest transcript by updating on every interim result
+ * Update live transcript with smart interim/final handling
+ * - Interim results: Replace the current staging area (no duplicates)
+ * - Final results: Commit to the permanent transcript
  * @param callId - The call control ID
  * @param speaker - Speaker identification ("caller" or "assistant")
- * @param text - The interim transcript text
+ * @param text - The transcript text
+ * @param isFinal - Whether this is a final result (true) or interim (false)
  * @returns Success/error result
  */
 export async function updateLiveTranscript(
   callId: string,
   speaker: TranscriptSpeaker,
-  text: string
+  text: string,
+  isFinal: boolean = false
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseClient();
   if (!supabase) {
@@ -312,15 +315,32 @@ export async function updateLiveTranscript(
       .eq("id", callId)
       .single();
 
-    const existingTranscript = existing?.live_transcript || "";
-
-    // Format: Speaker Name\nText with double newline for separation
+    let existingTranscript = existing?.live_transcript || "";
     const speakerLabel = speaker === "caller" ? "Caller" : "Assistant";
-    const formattedBlock = `${speakerLabel}\n${trimmedText}`;
 
-    const updatedTranscript = existingTranscript
-      ? `${existingTranscript}\n\n${formattedBlock}`
-      : formattedBlock;
+    // Markers to identify interim sections
+    const interimMarkerStart = `[INTERIM-${speaker.toUpperCase()}]`;
+    const interimMarkerEnd = `[/INTERIM-${speaker.toUpperCase()}]`;
+
+    // Remove any existing interim section for this speaker
+    const interimRegex = new RegExp(`${interimMarkerStart}[\\s\\S]*?${interimMarkerEnd}`, 'g');
+    const cleanTranscript = existingTranscript.replace(interimRegex, '').trim();
+
+    let updatedTranscript: string;
+
+    if (isFinal) {
+      // Final result: Add to permanent transcript (no markers)
+      const formattedBlock = `${speakerLabel}\n${trimmedText}`;
+      updatedTranscript = cleanTranscript
+        ? `${cleanTranscript}\n\n${formattedBlock}`
+        : formattedBlock;
+    } else {
+      // Interim result: Add to staging area (with markers)
+      const interimBlock = `${interimMarkerStart}\n${speakerLabel}\n${trimmedText}\n${interimMarkerEnd}`;
+      updatedTranscript = cleanTranscript
+        ? `${cleanTranscript}\n\n${interimBlock}`
+        : interimBlock;
+    }
 
     const { error } = await supabase
       .from("calls")
