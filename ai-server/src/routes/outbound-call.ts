@@ -48,6 +48,7 @@ router.post("/", async (req: Request, res: Response) => {
         to: toNumber,
         from: config.telnyx.fromNumber,
         client_state: clientStateBase64,
+        record: "all", // Enable recording of all call audio
       },
       {
         headers: {
