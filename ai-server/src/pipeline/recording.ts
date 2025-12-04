@@ -117,27 +117,107 @@ function encodeMulawG711(sample: number): number {
 
 /**
  * Linear PCM threshold for "silence" detection.
- * Values below this are considered silence (corresponds to very quiet audio).
+ * Higher threshold (800) to avoid triggering on telephony noise.
+ * Only actual speech (typically 1000+) will be detected as non-silent.
  */
-const SILENCE_THRESHOLD_LINEAR = 100;
+const SILENCE_THRESHOLD_LINEAR = 800;
 
 /**
- * Fade duration in samples at 8kHz.
- * 32 samples = 4ms - long enough to eliminate clicks, short enough to not affect speech
+ * Minimum gap (in samples) between audio to consider it a new segment.
+ * 400 samples = 50ms at 8kHz. Prevents detecting brief pauses as segment boundaries.
  */
-const FADE_SAMPLES = 32;
+const MIN_SILENCE_GAP = 400;
 
 /**
- * Apply fade-in/fade-out smoothing to a μ-law audio track.
- * Detects transitions between silence and audio, then applies short fades
- * to eliminate clicking artifacts.
+ * Fade duration in samples at 8kHz for segment boundaries.
+ * 24 samples = 3ms - quick fade at speech start/end
+ */
+const SEGMENT_FADE_SAMPLES = 24;
+
+/**
+ * Crossfade duration for packet boundaries (in samples).
+ * 8 samples = 1ms - very short crossfade to smooth discontinuities
+ */
+const PACKET_CROSSFADE_SAMPLES = 8;
+
+/**
+ * Concatenate audio buffers with crossfade smoothing at boundaries.
+ * This eliminates clicks caused by discontinuities between packets.
+ *
+ * @param buffers - Array of μ-law audio chunks
+ * @returns Single smoothed μ-law buffer
+ */
+function concatWithCrossfade(buffers: Buffer[]): Buffer {
+  if (!buffers || buffers.length === 0) {
+    return Buffer.alloc(0);
+  }
+
+  if (buffers.length === 1) {
+    return buffers[0];
+  }
+
+  // Calculate total size
+  const totalSize = buffers.reduce((sum, buf) => sum + buf.length, 0);
+  const result = Buffer.alloc(totalSize);
+
+  let offset = 0;
+
+  for (let bufIdx = 0; bufIdx < buffers.length; bufIdx++) {
+    const chunk = buffers[bufIdx];
+
+    if (bufIdx === 0) {
+      // First chunk: copy entirely
+      chunk.copy(result, offset);
+      offset += chunk.length;
+    } else {
+      // Subsequent chunks: apply crossfade at boundary
+      const fadeLen = Math.min(
+        PACKET_CROSSFADE_SAMPLES,
+        chunk.length,
+        offset // Can't fade more than what we've written
+      );
+
+      if (fadeLen > 0) {
+        // Apply crossfade at the boundary
+        for (let i = 0; i < fadeLen; i++) {
+          const fadeOut = 1 - i / fadeLen; // Previous chunk fades out
+          const fadeIn = i / fadeLen; // New chunk fades in
+
+          // Decode both samples to linear PCM
+          const prevSample = decodeMulawG711(result[offset - fadeLen + i]);
+          const newSample = decodeMulawG711(chunk[i]);
+
+          // Crossfade in linear domain
+          const mixed = Math.round(prevSample * fadeOut + newSample * fadeIn);
+
+          // Encode back to μ-law and overwrite
+          result[offset - fadeLen + i] = encodeMulawG711(mixed);
+        }
+
+        // Copy the rest of the chunk (after crossfade region)
+        chunk.copy(result, offset, fadeLen);
+        offset += chunk.length - fadeLen;
+      } else {
+        // No crossfade possible, just copy
+        chunk.copy(result, offset);
+        offset += chunk.length;
+      }
+    }
+  }
+
+  return result.slice(0, offset);
+}
+
+/**
+ * Apply fade-in/fade-out smoothing at major speech segment boundaries.
+ * Uses higher thresholds and longer windows to detect actual speech segments,
+ * not noise fluctuations.
  *
  * @param track - μ-law audio buffer
  * @returns Smoothed μ-law audio buffer
  */
-function smoothTrackBoundaries(track: Buffer): Buffer {
-  if (track.length < FADE_SAMPLES * 2) {
-    // Track too short to smooth meaningfully
+function smoothSegmentBoundaries(track: Buffer): Buffer {
+  if (track.length < MIN_SILENCE_GAP) {
     return track;
   }
 
@@ -147,67 +227,67 @@ function smoothTrackBoundaries(track: Buffer): Buffer {
     pcmSamples[i] = decodeMulawG711(track[i]);
   }
 
-  // Find segments (runs of non-silence audio)
+  // Find major speech segments using RMS energy over windows
+  const WINDOW_SIZE = 80; // 10ms window for energy calculation
   const segments: Array<{ start: number; end: number }> = [];
   let inSegment = false;
   let segmentStart = 0;
+  let silenceCounter = 0;
 
-  // Use a sliding window to detect segment boundaries (avoid triggering on single samples)
-  const WINDOW_SIZE = 4;
+  for (let i = 0; i < pcmSamples.length; i += WINDOW_SIZE) {
+    // Calculate RMS energy for this window
+    let sumSquares = 0;
+    const windowEnd = Math.min(i + WINDOW_SIZE, pcmSamples.length);
+    for (let j = i; j < windowEnd; j++) {
+      sumSquares += pcmSamples[j] * pcmSamples[j];
+    }
+    const rms = Math.sqrt(sumSquares / (windowEnd - i));
 
-  for (let i = 0; i < pcmSamples.length; i++) {
-    const isSilent = Math.abs(pcmSamples[i]) < SILENCE_THRESHOLD_LINEAR;
+    const isActive = rms >= SILENCE_THRESHOLD_LINEAR;
 
-    if (!inSegment && !isSilent) {
-      // Check if this is a real segment start (not just noise)
-      let nonSilentCount = 0;
-      for (let j = i; j < Math.min(i + WINDOW_SIZE, pcmSamples.length); j++) {
-        if (Math.abs(pcmSamples[j]) >= SILENCE_THRESHOLD_LINEAR) {
-          nonSilentCount++;
-        }
-      }
-      if (nonSilentCount >= WINDOW_SIZE / 2) {
-        inSegment = true;
-        segmentStart = i;
-      }
-    } else if (inSegment && isSilent) {
-      // Check if this is a real segment end
-      let silentCount = 0;
-      for (let j = i; j < Math.min(i + WINDOW_SIZE, pcmSamples.length); j++) {
-        if (Math.abs(pcmSamples[j]) < SILENCE_THRESHOLD_LINEAR) {
-          silentCount++;
-        }
-      }
-      if (silentCount >= WINDOW_SIZE / 2) {
+    if (!inSegment && isActive) {
+      // Start of new segment
+      inSegment = true;
+      segmentStart = i;
+      silenceCounter = 0;
+    } else if (inSegment && !isActive) {
+      // Potential end of segment - count silence duration
+      silenceCounter += WINDOW_SIZE;
+      if (silenceCounter >= MIN_SILENCE_GAP) {
+        // Confirmed end of segment
         inSegment = false;
-        segments.push({ start: segmentStart, end: i });
+        segments.push({ start: segmentStart, end: i - silenceCounter + WINDOW_SIZE });
+        silenceCounter = 0;
       }
+    } else if (inSegment && isActive) {
+      // Reset silence counter if we're back to active
+      silenceCounter = 0;
     }
   }
 
-  // Handle case where audio runs to the end
+  // Handle segment that runs to the end
   if (inSegment) {
     segments.push({ start: segmentStart, end: pcmSamples.length });
   }
 
-  // Apply fade-in at segment starts and fade-out at segment ends
+  // Apply fades only at segment boundaries
   for (const segment of segments) {
-    // Fade-in at start of segment
-    const fadeInEnd = Math.min(segment.start + FADE_SAMPLES, segment.end);
+    // Fade-in at start
+    const fadeInEnd = Math.min(segment.start + SEGMENT_FADE_SAMPLES, segment.end);
     for (let i = segment.start; i < fadeInEnd; i++) {
-      const fadePosition = i - segment.start;
-      // Use smooth cosine fade curve
-      const fadeFactor = 0.5 * (1 - Math.cos((Math.PI * fadePosition) / FADE_SAMPLES));
-      pcmSamples[i] = Math.round(pcmSamples[i] * fadeFactor);
+      const t = (i - segment.start) / SEGMENT_FADE_SAMPLES;
+      // Smooth cosine fade
+      const factor = 0.5 * (1 - Math.cos(Math.PI * t));
+      pcmSamples[i] = Math.round(pcmSamples[i] * factor);
     }
 
-    // Fade-out at end of segment
-    const fadeOutStart = Math.max(segment.end - FADE_SAMPLES, segment.start);
+    // Fade-out at end
+    const fadeOutStart = Math.max(segment.end - SEGMENT_FADE_SAMPLES, segment.start);
     for (let i = fadeOutStart; i < segment.end; i++) {
-      const fadePosition = segment.end - i;
-      // Use smooth cosine fade curve
-      const fadeFactor = 0.5 * (1 - Math.cos((Math.PI * fadePosition) / FADE_SAMPLES));
-      pcmSamples[i] = Math.round(pcmSamples[i] * fadeFactor);
+      const t = (segment.end - i) / SEGMENT_FADE_SAMPLES;
+      // Smooth cosine fade
+      const factor = 0.5 * (1 - Math.cos(Math.PI * t));
+      pcmSamples[i] = Math.round(pcmSamples[i] * factor);
     }
   }
 
@@ -219,7 +299,7 @@ function smoothTrackBoundaries(track: Buffer): Buffer {
 
   if (segments.length > 0) {
     console.log(
-      `[CustomRecording] Smoothed ${segments.length} audio segments (fade: ${FADE_SAMPLES} samples = ${(FADE_SAMPLES / 8).toFixed(1)}ms)`
+      `[CustomRecording] Detected ${segments.length} speech segments, applied ${SEGMENT_FADE_SAMPLES / 8}ms fades`
     );
   }
 
@@ -227,15 +307,21 @@ function smoothTrackBoundaries(track: Buffer): Buffer {
 }
 
 /**
- * Concatenate an array of Buffers into a single Buffer.
+ * Concatenate an array of Buffers into a single Buffer with crossfade smoothing.
+ * Applies 1ms crossfade at each packet boundary to eliminate clicks.
  * @param buffers - Array of Buffer chunks
- * @returns Single concatenated Buffer
+ * @returns Single concatenated and smoothed Buffer
  */
 export function concatTrack(buffers: Buffer[]): Buffer {
   if (!buffers || buffers.length === 0) {
     return Buffer.alloc(0);
   }
-  return Buffer.concat(buffers);
+  // Use crossfade concatenation to smooth packet boundaries
+  const result = concatWithCrossfade(buffers);
+  console.log(
+    `[CustomRecording] Concatenated ${buffers.length} chunks with ${PACKET_CROSSFADE_SAMPLES / 8}ms crossfades`
+  );
+  return result;
 }
 
 /**
@@ -355,10 +441,10 @@ export function wavHeaderMulawStereo(
  * @returns Complete WAV file as Buffer (header + interleaved audio data)
  */
 export function createMulawStereoWav(inbound: Buffer, outbound: Buffer): Buffer {
-  // Apply smoothing to eliminate clicking at segment boundaries
-  console.log("[CustomRecording] Applying audio smoothing to eliminate clicks...");
-  const smoothedInbound = smoothTrackBoundaries(inbound);
-  const smoothedOutbound = smoothTrackBoundaries(outbound);
+  // Apply segment boundary smoothing to eliminate clicks at speech start/end
+  console.log("[CustomRecording] Applying segment boundary smoothing...");
+  const smoothedInbound = smoothSegmentBoundaries(inbound);
+  const smoothedOutbound = smoothSegmentBoundaries(outbound);
 
   // Interleave the two smoothed mono tracks into stereo
   const stereoData = interleaveMulawStereo(smoothedInbound, smoothedOutbound);
