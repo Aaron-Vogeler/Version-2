@@ -107,12 +107,13 @@ async function scheduleTtsResponse(
       });
 
       // Log user transcript to Supabase
+      // Note: transcript_status constraint allows: 'pending', 'processing', 'completed', 'failed', 'none'
       if (callContext.callControlId && isSupabaseConfigured()) {
         const toNumber = callContext.goal ? "Customer" : "Caller";
         appendTranscript(
           callContext.callControlId,
           userText,
-          "in_progress",
+          "processing",
           toNumber
         ).catch((err) => console.error("[Supabase] Error logging user transcript:", err));
       }
@@ -174,7 +175,7 @@ async function scheduleTtsResponse(
         appendTranscript(
           callContext.callControlId,
           aiText,
-          "in_progress",
+          "processing",
           "Merlin"
         ).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
       }
