@@ -45,6 +45,9 @@ export interface CallContext {
   turnSeq?: number;
   // Barge-in cooldown to prevent spamming stop endpoint
   bargeInCooldownUntil?: number;
+  // Pending AI transcript - only logged when TTS playback completes (not on generation)
+  // This ensures we only log what the AI actually speaks, not what was interrupted
+  pendingAiTranscript?: string;
 }
 
 /**

@@ -170,14 +170,11 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // Log AI transcript to Supabase
-      if (callContext.callControlId && isSupabaseConfigured()) {
-        appendTranscript(
-          callContext.callControlId,
-          aiText,
-          "processing",
-          "Merlin"
-        ).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
+      // Store AI text as pending - will be logged when TTS playback completes
+      // This ensures we only log what the AI actually speaks (not interrupted speech)
+      if (callContext.callControlId) {
+        callContext.pendingAiTranscript = aiText;
+        console.log(`[Transcript] 📝 Stored pending AI transcript (${aiText.length} chars), will log when spoken`);
       }
 
       // Check if we should update the rolling summary
@@ -563,12 +560,27 @@ app.post("/webhooks/telnyx", async (req, res) => {
       }
     }
   } else if (eventType === "call.speak.ended") {
-    // TTS playback has ended
+    // TTS playback has ended - NOW we log what was actually spoken
     if (callControlId) {
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
+
+        // Log the pending AI transcript now that it was fully spoken
+        if (ctx.pendingAiTranscript && isSupabaseConfigured()) {
+          const spokenText = ctx.pendingAiTranscript;
+          ctx.pendingAiTranscript = undefined; // Clear after logging
+
+          appendTranscript(
+            callControlId,
+            spokenText,
+            "processing",
+            "Merlin"
+          ).then(() => {
+            console.log(`[Transcript] ✅ Logged AI speech to transcript (${spokenText.length} chars)`);
+          }).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
+        }
       } else {
         console.warn(`[TTS] ⚠️ call.speak.ended for unknown callControlId: ${callControlId}`);
       }
@@ -734,6 +746,12 @@ wss.on("connection", async (ws) => {
           // Increment turn sequence to invalidate any in-flight LLM/TTS work
           callContext.turnSeq = (callContext.turnSeq || 0) + 1;
           console.log(`[TURN] Turn sequence incremented to ${callContext.turnSeq} (stale responses will be dropped)`);
+
+          // Clear pending AI transcript - interrupted speech shouldn't be logged
+          if (callContext.pendingAiTranscript) {
+            console.log(`[Transcript] 🗑️ Clearing interrupted AI transcript (${callContext.pendingAiTranscript.length} chars not logged)`);
+            callContext.pendingAiTranscript = undefined;
+          }
 
           // Mark as idle after stop
           callContext.ttsState = "idle";
