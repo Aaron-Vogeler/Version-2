@@ -44,7 +44,8 @@ export function getSupabaseClient(): SupabaseClient | null {
  * Call record interface matching Supabase schema
  */
 export interface CallRecord {
-  id: string; // call_control_id
+  id: string; // UUID primary key
+  call_control_id?: string; // Telnyx call control ID for active call operations
   user_id: string;
   tenant_id?: string;
   direction: "inbound" | "outbound";

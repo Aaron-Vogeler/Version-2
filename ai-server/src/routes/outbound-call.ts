@@ -1,5 +1,6 @@
 import express, { Router, Request, Response } from "express";
 import axios from "axios";
+import { randomUUID } from "crypto";
 import config from "../config";
 import { upsertCall, isSupabaseConfigured } from "../utils/supabase";
 
@@ -57,28 +58,28 @@ router.post("/", async (req: Request, res: Response) => {
       }
     );
 
-    // Extract call IDs from Telnyx response (matching Cloudflare worker pattern)
+    // Extract call IDs from Telnyx response
     const responseData = telnyxResponse.data.data;
     const callSessionId = responseData?.call_session_id || null;
     const callControlId = responseData?.call_control_id || null;
 
-    // Use call_control_id as primary ID (consistent with webhooks)
-    const primaryId = callControlId || callSessionId;
-
-    if (!primaryId) {
-      console.error("❌ Telnyx response missing call identifiers:", responseData);
+    if (!callControlId) {
+      console.error("❌ Telnyx response missing call_control_id:", responseData);
       return res.status(500).json({
         status: "error",
         message: "Telnyx response missing call_control_id",
       });
     }
 
+    // Generate UUID for primary call ID (separate from Telnyx call_control_id)
+    const callId = randomUUID();
     const timestamp = new Date().toISOString();
 
     // Log call to Supabase
     if (isSupabaseConfigured()) {
       const result = await upsertCall({
-        id: primaryId,
+        id: callId,
+        call_control_id: callControlId,
         user_id: userId,
         direction: "outbound",
         from_e164: config.telnyx.fromNumber,
@@ -87,14 +88,13 @@ router.post("/", async (req: Request, res: Response) => {
         goal: goal,
         started_at: timestamp,
         metadata: {
-          call_control_id: callControlId,
           call_session_id: callSessionId,
-          initiated_by: "ai-server",
+          initiated_by: "api",
         },
       });
 
       if (result.success) {
-        console.log("📊 Call logged to Supabase:", primaryId);
+        console.log("📊 Call logged to Supabase:", callId, "(callControlId:", callControlId + ")");
       } else {
         console.error("❌ Failed to log call to Supabase:", result.error);
       }

@@ -3,6 +3,7 @@ import { createServer } from "http";
 import { WebSocket, WebSocketServer } from "ws";
 import { LiveTranscriptionEvents } from "@deepgram/sdk";
 import axios from "axios";
+import { randomUUID } from "crypto";
 import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
@@ -492,8 +493,15 @@ app.post("/webhooks/telnyx", async (req, res) => {
       const toNumber = payload.to || payload.to_number;
       const timestamp = payload.start_time || new Date().toISOString();
 
+      // Generate UUID for primary call ID (separate from Telnyx callControlId)
+      const callId = randomUUID();
+
+      // Register mapping from callControlId to UUID for WebSocket handler
+      contextMgr.registerCallControlIdMapping(callControlId, callId);
+
       upsertCall({
-        id: callControlId,
+        id: callId,
+        call_control_id: callControlId,
         user_id: userId,
         direction: payload.direction === "inbound" ? "inbound" : "outbound",
         from_e164: fromNumber,
@@ -507,7 +515,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
         },
       }).then((result) => {
         if (result.success) {
-          console.log(`📊 Call ${eventType} logged to Supabase:`, callControlId);
+          console.log(`📊 Call ${eventType} logged to Supabase - callId:`, callId, "callControlId:", callControlId);
         } else {
           console.error(`❌ Failed to log ${eventType}:`, result.error);
         }
@@ -686,7 +694,7 @@ async function flushCallerUtterance(callContext: CallContext): Promise<void> {
 
   if (isSupabaseConfigured()) {
     await insertTranscriptSegment({
-      call_id: callContext.callControlId,
+      call_id: callContext.callId,
       speaker: "caller",
       track: "inbound",
       text: utterance,
@@ -906,8 +914,21 @@ wss.on("connection", async (ws) => {
             decoded = JSON.parse(json);
           }
 
-          // Initialize or retrieve the CallContext from the context manager
-          const managedContext = contextMgr.getOrCreateContext(callControlId);
+          // Look up the internal callId (UUID) using the Telnyx callControlId
+          let callId = contextMgr.getCallIdByControlId(callControlId);
+          if (!callId) {
+            console.warn(`⚠️ No callId mapping found for callControlId ${callControlId}, this should have been created by the webhook`);
+            // Fall back to callControlId for backward compatibility (shouldn't happen in normal operation)
+            callId = callControlId;
+          }
+
+          if (!callId) {
+            console.error("❌ Cannot initialize call context: no callId and no callControlId");
+            return;
+          }
+
+          // Initialize or retrieve the CallContext from the context manager using the UUID
+          const managedContext = contextMgr.getOrCreateContext(callId);
 
           // Update with current call information
           managedContext.callControlId = callControlId;

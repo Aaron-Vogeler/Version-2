@@ -73,6 +73,9 @@ const defaultConfig: ContextConfig = {
 // In-memory store: Map of callId -> CallContext
 const callContextStore = new Map<string, CallContext>();
 
+// Mapping from callControlId (Telnyx) to callId (UUID) for easy lookup
+const callControlIdToUuidMap = new Map<string, string>();
+
 /**
  * Get or create a CallContext for a given call ID.
  */
@@ -186,6 +189,25 @@ export function getContext(callId: string): CallContext | undefined {
 }
 
 /**
+ * Register mapping from Telnyx callControlId to internal callId (UUID).
+ * Call this when a new call is created with a generated UUID.
+ */
+export function registerCallControlIdMapping(
+  callControlId: string,
+  callId: string
+): void {
+  callControlIdToUuidMap.set(callControlId, callId);
+}
+
+/**
+ * Look up the internal callId (UUID) using Telnyx callControlId.
+ * Call this in the WebSocket handler when receiving a call start message.
+ */
+export function getCallIdByControlId(callControlId: string): string | undefined {
+  return callControlIdToUuidMap.get(callControlId);
+}
+
+/**
  * Clear a CallContext (call cleanup).
  */
 export function clearContext(callId: string): void {
@@ -209,6 +231,10 @@ export function clearContext(callId: string): void {
       } catch (error) {
         console.warn("Error closing Deepgram in clearContext:", error);
       }
+    }
+    // Clean up callControlId mapping
+    if (context.callControlId) {
+      callControlIdToUuidMap.delete(context.callControlId);
     }
   }
   callContextStore.delete(callId);
