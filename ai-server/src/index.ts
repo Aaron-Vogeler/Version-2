@@ -297,15 +297,19 @@ async function sendTtsResponse(
  * Cleanup call state (clear timers, mark as inactive, close Deepgram connection).
  * Also clears the CallContext from the context manager.
  */
-function cleanupCallState(callContext: CallContext): void {
+async function cleanupCallState(callContext: CallContext): Promise<void> {
   console.log("🧹 Cleaning up call state");
 
   // Flush any pending caller utterance before cleanup
   if (callContext.callerFinalBuf && callContext.callerFinalBuf.length > 0) {
-    console.log("[TRANSCRIPT] Flushing pending caller utterance on cleanup");
-    flushCallerUtterance(callContext).catch((err) => {
-      console.error("[TRANSCRIPT] Error flushing utterance on cleanup:", err);
-    });
+    console.log(`[TRANSCRIPT] 🧹 Flushing ${callContext.callerFinalBuf.length} pending chunks on cleanup`);
+    try {
+      await flushCallerUtterance(callContext);
+    } catch (err) {
+      console.error("[TRANSCRIPT] ❌ Error flushing utterance on cleanup:", err);
+    }
+  } else {
+    console.log("[TRANSCRIPT] No pending utterances to flush on cleanup");
   }
 
   // Mark transcript as completed in Supabase
@@ -662,42 +666,73 @@ app.post("/webhooks/telnyx", async (req, res) => {
  * @param callContext - The call context with buffer
  */
 async function flushCallerUtterance(callContext: CallContext): Promise<void> {
-  if (!callContext || !callContext.callControlId) {
+  console.log("[TRANSCRIPT] flushCallerUtterance() called");
+
+  if (!callContext) {
+    console.log("[TRANSCRIPT] ❌ No callContext");
+    return;
+  }
+
+  if (!callContext.callControlId) {
+    console.log("[TRANSCRIPT] ❌ No callControlId");
     return;
   }
 
   const buffer = callContext.callerFinalBuf || [];
+  console.log(`[TRANSCRIPT] Buffer size: ${buffer.length}`);
+
   if (buffer.length === 0) {
+    console.log("[TRANSCRIPT] ⚠️ Buffer empty, nothing to flush");
     return;
   }
 
   // Join all final chunks with spaces
   const utterance = buffer.join(" ").trim();
+  console.log(`[TRANSCRIPT] Joined utterance: "${utterance}" (${utterance.length} chars)`);
 
   // Skip if empty or already logged (deduplication)
-  if (!utterance || utterance === callContext.lastCallerUtterance) {
-    console.log(`[TRANSCRIPT] Skipping duplicate or empty utterance: "${utterance}"`);
+  if (!utterance) {
+    console.log("[TRANSCRIPT] ⚠️ Utterance is empty after trim");
+    callContext.callerFinalBuf = [];
+    return;
+  }
+
+  if (utterance === callContext.lastCallerUtterance) {
+    console.log(`[TRANSCRIPT] ⚠️ Duplicate utterance (last was: "${callContext.lastCallerUtterance}")`);
     callContext.callerFinalBuf = [];
     return;
   }
 
   // Log via insert-only transcript segment
-  console.log(`[TRANSCRIPT] Flushing caller utterance (${buffer.length} chunks): "${utterance}"`);
+  console.log(`[TRANSCRIPT] 📤 Flushing caller utterance (${buffer.length} chunks, call: ${callContext.callControlId})`);
 
   if (isSupabaseConfigured()) {
-    await insertTranscriptSegment({
+    console.log("[TRANSCRIPT] Supabase configured, inserting segment...");
+    const result = await insertTranscriptSegment({
       call_id: callContext.callControlId,
       speaker: "caller",
       track: "inbound",
       text: utterance,
     }).catch((err) => {
-      console.error("[Supabase] Error inserting caller transcript segment:", err);
+      console.error("[TRANSCRIPT] ❌ Error inserting caller transcript segment:", err);
+      return { success: false, error: String(err) };
     });
+
+    if (result && typeof result === 'object' && 'success' in result) {
+      if (result.success) {
+        console.log("[TRANSCRIPT] ✅ Segment inserted successfully");
+      } else {
+        console.error("[TRANSCRIPT] ❌ Segment insert failed:", result.error);
+      }
+    }
+  } else {
+    console.log("[TRANSCRIPT] ⚠️ Supabase not configured");
   }
 
   // Update dedup state and clear buffer
   callContext.lastCallerUtterance = utterance;
   callContext.callerFinalBuf = [];
+  console.log("[TRANSCRIPT] Buffer cleared");
 }
 
 // WS AUDIO SESSION HANDLER (core of the whole system)
@@ -808,36 +843,42 @@ wss.on("connection", async (ws) => {
       if (!results.is_final) {
         // Don't log interim transcripts to Supabase; only queue for responsiveness
         // Queue the (interim) transcript with debounce for LLM response
+        console.log(`[TRANSCRIPT] Interim (not final): "${userText.substring(0, 40)}..."`);
         queueUserTranscript(callContext, userText, ws);
         return;
       }
 
+      console.log(`[TRANSCRIPT] FINAL chunk received: "${userText}"`);
+
       // Initialize buffer if needed
       if (!callContext.callerFinalBuf) {
         callContext.callerFinalBuf = [];
+        console.log("[TRANSCRIPT] Initialized callerFinalBuf");
       }
 
       // Accumulate final chunks
       callContext.callerFinalBuf.push(userText);
-      console.log(`[TRANSCRIPT] Buffered final chunk #${callContext.callerFinalBuf.length}: "${userText}"`);
+      console.log(`[TRANSCRIPT] ✓ Buffered final chunk #${callContext.callerFinalBuf.length}: "${userText}"`);
 
       // ============================================================================
       // UTTERANCE BOUNDARY: Flush on speech_final or with fallback timer
       // ============================================================================
       const isSpeechFinal = results.speech_final === true;
+      console.log(`[TRANSCRIPT] speech_final=${isSpeechFinal}, buffer size=${callContext.callerFinalBuf.length}`);
 
       if (isSpeechFinal) {
         // speech_final flag indicates end of utterance
-        console.log("[TRANSCRIPT] speech_final detected, flushing utterance");
+        console.log("[TRANSCRIPT] ✨ speech_final detected, flushing utterance NOW");
 
         // Clear any pending flush timer
         if (callContext.callerFinalFlushTimer) {
           clearTimeout(callContext.callerFinalFlushTimer);
           callContext.callerFinalFlushTimer = undefined;
+          console.log("[TRANSCRIPT] Canceled pending flush timer (speech_final fired first)");
         }
 
         // Flush the buffer
-        flushCallerUtterance(callContext);
+        await flushCallerUtterance(callContext);
       } else {
         // No speech_final flag: use fallback timer to detect utterance boundary
         // If no new final chunks arrive within 300ms, consider the utterance complete
@@ -845,18 +886,24 @@ wss.on("connection", async (ws) => {
         // Clear any existing timer
         if (callContext.callerFinalFlushTimer) {
           clearTimeout(callContext.callerFinalFlushTimer);
+          console.log("[TRANSCRIPT] Reset flush timer (new final chunk arrived)");
         }
 
         // Schedule flush timer (300ms of silence = utterance boundary)
         // Capture callContext in local variable to avoid closure issues with TypeScript
         const ctx = callContext;
-        callContext.callerFinalFlushTimer = setTimeout(() => {
-          console.log("[TRANSCRIPT] Flush timer fired (300ms with no new final chunks)");
+        callContext.callerFinalFlushTimer = setTimeout(async () => {
+          console.log("[TRANSCRIPT] ⏱️ Flush timer fired (300ms with no new final chunks)");
           if (ctx) {
-            flushCallerUtterance(ctx);
+            try {
+              await flushCallerUtterance(ctx);
+            } catch (err) {
+              console.error("[TRANSCRIPT] ❌ Error in flush timer:", err);
+            }
             ctx.callerFinalFlushTimer = undefined;
           }
         }, 300);
+        console.log("[TRANSCRIPT] Set 300ms flush timer");
       }
 
       // Queue the transcript with debounce for LLM response
@@ -880,7 +927,7 @@ wss.on("connection", async (ws) => {
   //-----------------------------
   // WebSocket MESSAGE HANDLER
   //-----------------------------
-  ws.on("message", (raw) => {
+  ws.on("message", async (raw) => {
     let msg: any;
     try {
       msg = JSON.parse(raw.toString());
@@ -959,7 +1006,7 @@ wss.on("connection", async (ws) => {
       } else if (msg.event === "stop") {
         console.log("🛑 Telnyx media stream stopped");
         if (callContext) {
-          cleanupCallState(callContext);
+          await cleanupCallState(callContext);
         }
       }
     } catch (error) {
@@ -967,10 +1014,14 @@ wss.on("connection", async (ws) => {
     }
   });
 
-  ws.on("close", () => {
+  ws.on("close", async () => {
     console.log("🔌 Client disconnected");
     if (callContext) {
-      cleanupCallState(callContext);
+      try {
+        await cleanupCallState(callContext);
+      } catch (err) {
+        console.error("❌ Error in close handler cleanup:", err);
+      }
     }
     dgLive.finish();
   });
