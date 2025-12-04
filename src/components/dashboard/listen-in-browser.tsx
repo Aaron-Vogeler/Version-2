@@ -25,7 +25,6 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [isMuted, setIsMuted] = useState(true); // Start muted by default for monitoring
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const telnyxClientRef = useRef<any>(null);
   const currentCallRef = useRef<any>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -44,12 +43,10 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
     }, indent);
   };
 
-  // Helper to add debug messages
+  // Helper to add debug messages (logs to browser console)
   const addDebug = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
-    const debugMsg = `[${timestamp}] ${message}`;
-    console.log(debugMsg);
-    setDebugInfo(prev => [...prev, debugMsg].slice(-20)); // Keep last 20 messages
+    console.log(`[${timestamp}] ${message}`);
   };
 
   // Disconnect handler - defined before useEffect so notification handler can access it
@@ -387,31 +384,6 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
             <pre className="whitespace-pre-wrap font-mono text-xs overflow-auto max-h-40">
               {errorMessage}
             </pre>
-          </div>
-        )}
-
-        {/* Debug Info */}
-        {debugInfo.length > 0 && (
-          <div className="bg-muted/50 border border-border rounded p-3">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-foreground">Debug Log:</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  navigator.clipboard.writeText(debugInfo.join('\n'));
-                  addDebug('📋 Debug log copied to clipboard');
-                }}
-                className="h-6 text-xs"
-              >
-                Copy Log
-              </Button>
-            </div>
-            <div className="bg-background rounded p-2 max-h-60 overflow-y-auto">
-              <pre className="text-xs font-mono whitespace-pre-wrap">
-                {debugInfo.join('\n')}
-              </pre>
-            </div>
           </div>
         )}
 
