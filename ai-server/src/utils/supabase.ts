@@ -351,6 +351,116 @@ export async function insertTranscriptSegment(
 }
 
 /**
+ * Update the live_transcript field for real-time browser display
+ * This is the human-only transcript text that the frontend subscribes to
+ * @param callId - The call ID (call_control_id)
+ * @param transcriptText - The full human-only transcript text
+ * @returns Success/error result
+ */
+export async function updateLiveTranscript(
+  callId: string,
+  transcriptText: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    console.log("[Supabase] Not configured, skipping live transcript update");
+    return { success: true };
+  }
+
+  if (!callId) {
+    return { success: false, error: "callId is required" };
+  }
+
+  try {
+    const { error } = await supabase
+      .from("calls")
+      .update({
+        live_transcript: transcriptText,
+        transcript_status: "processing",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", callId);
+
+    if (error) {
+      console.error("[Supabase] Error updating live transcript:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    // Debug logging (truncated for long transcripts)
+    const displayText = transcriptText.length > 100
+      ? `${transcriptText.substring(0, 100)}...`
+      : transcriptText;
+    console.log(`[Supabase] Live transcript updated (${transcriptText.length} chars): "${displayText}"`);
+
+    return { success: true };
+  } catch (error) {
+    console.error("[Supabase] Exception updating live transcript:", error instanceof Error ? error.message : error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Finalize the transcript when the call ends
+ * Copies live_transcript to final transcript field and marks status as completed
+ * @param callId - The call ID (call_control_id)
+ * @param finalTranscriptText - Optional final processed transcript (if not provided, uses live_transcript)
+ * @returns Success/error result
+ */
+export async function finalizeTranscript(
+  callId: string,
+  finalTranscriptText?: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    console.log("[Supabase] Not configured, skipping transcript finalization");
+    return { success: true };
+  }
+
+  if (!callId) {
+    return { success: false, error: "callId is required" };
+  }
+
+  try {
+    // If no final text provided, fetch the current live_transcript
+    let transcript = finalTranscriptText;
+    if (!transcript) {
+      const { data } = await supabase
+        .from("calls")
+        .select("live_transcript")
+        .eq("id", callId)
+        .single();
+      transcript = data?.live_transcript || "";
+    }
+
+    const { error } = await supabase
+      .from("calls")
+      .update({
+        transcript: transcript,
+        transcript_status: "completed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", callId);
+
+    if (error) {
+      console.error("[Supabase] Error finalizing transcript:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    console.log(`[Supabase] Transcript finalized for call ${callId.substring(callId.length - 8)}`);
+    return { success: true };
+  } catch (error) {
+    console.error("[Supabase] Exception finalizing transcript:", error instanceof Error ? error.message : error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
  * Terminal status check - prevents status regressions
  */
 export function isTerminalStatus(status: string | undefined): boolean {

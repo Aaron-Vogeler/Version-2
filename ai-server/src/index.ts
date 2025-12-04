@@ -10,7 +10,8 @@ import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
-import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment } from "./utils/supabase";
+import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, updateLiveTranscript, finalizeTranscript } from "./utils/supabase";
+import { processTranscript, type TranscriptSegment as EngineSegment } from "./transcript-engine";
 
 // Constants
 const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
@@ -308,12 +309,10 @@ function cleanupCallState(callContext: CallContext): void {
     });
   }
 
-  // Mark transcript as completed in Supabase
-  if (callContext.callControlId && isSupabaseConfigured()) {
-    updateCall(callContext.callControlId, {
-      transcript_status: "completed",
-    }).catch((err) => console.error("[Supabase] Error marking transcript complete:", err));
-  }
+  // Process final transcript through transcript engine
+  processFinalTranscript(callContext).catch((err) => {
+    console.error("[TRANSCRIPT-ENGINE] Error processing final transcript on cleanup:", err);
+  });
 
   callContext.isCallActive = false;
   callContext.ttsState = "idle";
@@ -695,9 +694,124 @@ async function flushCallerUtterance(callContext: CallContext): Promise<void> {
     });
   }
 
+  // Process through transcript engine and update live_transcript in Supabase
+  await processLiveTranscriptUpdate(callContext, utterance);
+
   // Update dedup state and clear buffer
   callContext.lastCallerUtterance = utterance;
   callContext.callerFinalBuf = [];
+}
+
+// -----------------------------------------------------------------------------
+/**
+ * Process a caller utterance through the transcript engine and update live_transcript
+ * Called when a final utterance is flushed from the buffer
+ * @param callContext - The call context
+ * @param utteranceText - The flushed caller utterance text
+ */
+async function processLiveTranscriptUpdate(
+  callContext: CallContext,
+  utteranceText: string
+): Promise<void> {
+  if (!callContext || !callContext.callControlId) {
+    return;
+  }
+
+  const trimmedText = utteranceText.trim();
+  if (!trimmedText) {
+    return;
+  }
+
+  // Generate a unique segment ID
+  const segmentCounter = (callContext.transcriptSegmentCounter || 0) + 1;
+  callContext.transcriptSegmentCounter = segmentCounter;
+  const segmentId = `${callContext.callControlId}-seg-${segmentCounter}`;
+
+  // Create segment for transcript engine
+  const segment: EngineSegment = {
+    id: segmentId,
+    text: trimmedText,
+    speaker_type: "human",
+    direction: "inbound",
+    start_ms: null,
+    end_ms: null,
+    is_final: true,
+    speech_final: true,
+  };
+
+  try {
+    // Process through transcript engine (live mode)
+    const result = processTranscript({
+      mode: "live",
+      call_id: callContext.callControlId,
+      segments: [segment],
+      existing_transcript_text: callContext.runningTranscriptText || "",
+    });
+
+    if (result.mode === "live") {
+      // Update the running transcript text in context
+      callContext.runningTranscriptText = result.transcript_text;
+
+      // Update Supabase with the new live_transcript
+      if (isSupabaseConfigured()) {
+        await updateLiveTranscript(callContext.callControlId, result.transcript_text);
+      }
+
+      console.log(`[TRANSCRIPT-ENGINE] Live transcript updated (${result.transcript_text.length} chars)`);
+    }
+  } catch (error) {
+    console.error("[TRANSCRIPT-ENGINE] Error processing live transcript:", error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Generate the final transcript when a call ends
+ * Processes all accumulated transcript text through the transcript engine in final mode
+ * @param callContext - The call context
+ */
+async function processFinalTranscript(callContext: CallContext): Promise<void> {
+  if (!callContext || !callContext.callControlId) {
+    return;
+  }
+
+  const transcriptText = callContext.runningTranscriptText || "";
+  if (!transcriptText.trim()) {
+    console.log("[TRANSCRIPT-ENGINE] No transcript text to finalize");
+    return;
+  }
+
+  try {
+    // For final mode, we create a single segment with all the accumulated text
+    // This maintains compatibility with the transcript engine's expected input
+    const segment: EngineSegment = {
+      id: `${callContext.callControlId}-final`,
+      text: transcriptText,
+      speaker_type: "human",
+      direction: "inbound",
+      start_ms: null,
+      end_ms: null,
+      is_final: true,
+      speech_final: true,
+    };
+
+    // Process through transcript engine (final mode)
+    const result = processTranscript({
+      mode: "final",
+      call_id: callContext.callControlId,
+      segments: [segment],
+    });
+
+    if (result.mode === "final") {
+      // Finalize the transcript in Supabase
+      if (isSupabaseConfigured()) {
+        await finalizeTranscript(callContext.callControlId, result.transcript_text);
+      }
+
+      console.log(`[TRANSCRIPT-ENGINE] Final transcript processed (${result.transcript_text.length} chars)`);
+    }
+  } catch (error) {
+    console.error("[TRANSCRIPT-ENGINE] Error processing final transcript:", error instanceof Error ? error.message : error);
+  }
 }
 
 // WS AUDIO SESSION HANDLER (core of the whole system)

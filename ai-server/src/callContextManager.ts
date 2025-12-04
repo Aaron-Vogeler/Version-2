@@ -52,6 +52,10 @@ export interface CallContext {
   lastCallerUtterance?: string; // Last flushed caller utterance (for deduplication)
   assistantFinalBuf?: string[]; // Buffer of final assistant utterances (if outbound STT enabled)
   assistantFinalFlushTimer?: any; // Timer for flushing buffered assistant utterance (NodeJS.Timeout | ReturnType<typeof setTimeout>)
+
+  // Transcript engine state (human-only transcript for browser display)
+  runningTranscriptText?: string; // Accumulated human-only transcript text
+  transcriptSegmentCounter?: number; // Counter for generating unique segment IDs
 }
 
 /**
@@ -95,6 +99,8 @@ export function getOrCreateContext(
       callerFinalBuf: [],
       lastCallerUtterance: "",
       assistantFinalBuf: [],
+      runningTranscriptText: "",
+      transcriptSegmentCounter: 0,
     });
   }
   return callContextStore.get(callId)!;
