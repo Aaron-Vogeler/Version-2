@@ -248,6 +248,8 @@ async function sendTtsResponse(
     // IMPORTANT: Set ttsState to 'speaking' BEFORE calling synthesizeSpeech
     // This enables barge-in detection while audio is being queued/played
     callContext.ttsState = "speaking";
+    callContext.speakWasInterrupted = false; // Reset interruption flag
+    callContext.currentSpeakText = aiText; // Store text for logging on completion
     console.log(`[TTS] Setting ttsState='speaking' (callControlId: ${callContext.callControlId})`);
 
     await synthesizeSpeech(aiText, callContext.callControlId);
@@ -276,8 +278,10 @@ async function sendTtsResponse(
       "❌ Telnyx TTS error:",
       ttsError instanceof Error ? ttsError.message : ttsError
     );
-    // On error, reset ttsState to idle
+    // On error, reset ttsState to idle and clear tracking variables
     callContext.ttsState = "idle";
+    callContext.currentSpeakText = undefined;
+    callContext.speakWasInterrupted = undefined;
     if (canSpeak(callContext, ws)) {
       ws.send(
         JSON.stringify({
@@ -576,6 +580,35 @@ app.post("/webhooks/telnyx", async (req, res) => {
       if (ctx) {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
+
+        // Log assistant transcript only if speech completed naturally (not interrupted by barge-in)
+        if (ctx.currentSpeakText && !ctx.speakWasInterrupted) {
+          console.log(`[TRANSCRIPT] Logging assistant speech (completed naturally): "${ctx.currentSpeakText}"`);
+
+          // Log to database if Supabase is configured
+          if (isSupabaseConfigured()) {
+            try {
+              await insertTranscriptSegment({
+                call_id: callControlId,
+                speaker: "assistant",
+                track: "outbound",
+                text: ctx.currentSpeakText,
+                created_at: new Date().toISOString(),
+              });
+            } catch (error) {
+              console.error("[TRANSCRIPT] ❌ Failed to log assistant transcript:", error instanceof Error ? error.message : error);
+            }
+          }
+
+          // Clear the stored text after logging
+          ctx.currentSpeakText = undefined;
+          ctx.speakWasInterrupted = undefined;
+        } else if (ctx.speakWasInterrupted) {
+          console.log(`[TRANSCRIPT] Skipping assistant transcript (interrupted by barge-in)`);
+          // Clear flags
+          ctx.currentSpeakText = undefined;
+          ctx.speakWasInterrupted = undefined;
+        }
       } else {
         console.warn(`[TTS] ⚠️ call.speak.ended for unknown callControlId: ${callControlId}`);
       }
@@ -773,6 +806,9 @@ wss.on("connection", async (ws) => {
 
           // Mark as stopping
           callContext.ttsState = "stopping";
+
+          // Mark current speech as interrupted (prevents logging partial speech)
+          callContext.speakWasInterrupted = true;
 
           // Issue playback stop
           try {
