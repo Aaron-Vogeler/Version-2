@@ -151,8 +151,6 @@ async function scheduleTtsResponse(
       return;
     }
 
-    console.log("🤖 AI:", aiText);
-
     // Append assistant turn to the call context if callId is available
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
@@ -253,6 +251,9 @@ async function sendTtsResponse(
     console.log(`[TTS] Setting ttsState='speaking' (callControlId: ${callContext.callControlId})`);
 
     await synthesizeSpeech(aiText, callContext.callControlId);
+
+    // Log what TTS will actually speak (only logged after successful TTS API call)
+    console.log("🤖 AI (speaking):", aiText);
 
     // NOTE: Do NOT set ttsState='idle' here!
     // The HTTP response returns BEFORE audio finishes playing.
