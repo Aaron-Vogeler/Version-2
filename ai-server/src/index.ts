@@ -10,7 +10,14 @@ import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
-import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment } from "./utils/supabase";
+import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording } from "./utils/supabase";
+import {
+  createMulawStereoWav,
+  concatTrack,
+  getBufferedSize,
+  isCustomRecordingEnabled,
+  getCustomRecordingMaxBytes,
+} from "./pipeline/recording";
 
 // Constants
 const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
@@ -333,6 +340,92 @@ async function sendTtsResponse(
 }
 
 /**
+ * Finalize and upload custom call recording to Supabase Storage.
+ * Creates a stereo WAV file from the buffered audio and uploads it.
+ * Updates the calls table with custom_recording_url.
+ *
+ * This function is designed to never throw - all errors are caught and logged.
+ *
+ * @param callContext - The call context with recording buffers
+ */
+async function finalizeCustomRecording(callContext: CallContext): Promise<void> {
+  // Skip if custom recording is disabled or no call control ID
+  if (!isCustomRecordingEnabled()) {
+    return;
+  }
+
+  const callControlId = callContext.callControlId;
+  if (!callControlId) {
+    console.log("[CustomRecording] No callControlId, skipping finalization");
+    return;
+  }
+
+  // Skip if recording was disabled due to size limit
+  if (callContext.customRecordingDisabledDueToSize) {
+    console.log("[CustomRecording] Recording was disabled due to size limit, skipping finalization");
+    return;
+  }
+
+  // Skip if no recording buffers
+  const buffers = callContext.recordingBuffers;
+  if (!buffers) {
+    console.log("[CustomRecording] No recording buffers, skipping finalization");
+    return;
+  }
+
+  // Skip if no audio data captured
+  if (buffers.inbound.length === 0 && buffers.outbound.length === 0) {
+    console.log("[CustomRecording] No audio data captured, skipping finalization");
+    return;
+  }
+
+  try {
+    console.log(
+      `[CustomRecording] Finalizing recording for ${callControlId} (inbound chunks: ${buffers.inbound.length}, outbound chunks: ${buffers.outbound.length})`
+    );
+
+    // Concatenate all chunks for each track
+    const inboundAudio = concatTrack(buffers.inbound);
+    const outboundAudio = concatTrack(buffers.outbound);
+
+    console.log(
+      `[CustomRecording] Track sizes: inbound=${inboundAudio.length}B, outbound=${outboundAudio.length}B`
+    );
+
+    // Create stereo WAV file
+    const wavFile = createMulawStereoWav(inboundAudio, outboundAudio);
+
+    // Upload to Supabase Storage
+    const result = await uploadCustomCallRecording(callControlId, wavFile);
+
+    if (result.ok && result.url) {
+      // Update the call record with custom_recording_url
+      // NOTE: This does NOT overwrite recording_url (Telnyx native recording)
+      if (isSupabaseConfigured()) {
+        await updateCall(callControlId, {
+          custom_recording_url: result.url,
+        });
+        console.log(`[CustomRecording] Updated call ${callControlId} with custom_recording_url`);
+      }
+    } else {
+      console.error(`[CustomRecording] Upload failed for ${callControlId}:`, result.error);
+    }
+  } catch (error) {
+    // Never throw from finalization - just log and continue
+    console.error(
+      "[CustomRecording] Error during finalization:",
+      error instanceof Error ? error.message : error
+    );
+  } finally {
+    // Clear buffers to free memory regardless of success/failure
+    if (buffers) {
+      buffers.inbound = [];
+      buffers.outbound = [];
+    }
+  }
+}
+
+/**
  * Cleanup call state (clear timers, mark as inactive, close Deepgram connection).
  * Also clears the CallContext from the context manager.
  */
@@ -346,6 +439,11 @@ function cleanupCallState(callContext: CallContext): void {
       console.error("[TRANSCRIPT] Error flushing utterance on cleanup:", err);
     });
   }
+
+  // Finalize and upload custom recording (async, fire-and-forget with error handling)
+  finalizeCustomRecording(callContext).catch((err) => {
+    console.error("[CustomRecording] Error in cleanup finalization:", err);
+  });
 
   // Mark transcript as completed in Supabase
   if (callContext.callControlId && isSupabaseConfigured()) {
@@ -1023,34 +1121,84 @@ wss.on("connection", async (ws) => {
           // Create the local callContext reference for backward compatibility
           callContext = managedContext;
 
+          // Initialize custom recording buffers if enabled
+          if (isCustomRecordingEnabled() && !managedContext.recordingBuffers) {
+            managedContext.recordingBuffers = {
+              inbound: [],
+              outbound: [],
+              startedAtMs: Date.now(),
+            };
+            managedContext.customRecordingDisabledDueToSize = false;
+            console.log("[CustomRecording] Buffers initialized for call:", callControlId);
+          }
+
           console.log("📋 Call context initialized:", {
             callId: callContext.callId,
             callControlId: callContext.callControlId,
             goal: callContext.goal,
             userId: callContext.userId,
+            customRecordingEnabled: isCustomRecordingEnabled(),
           });
         } catch (err) {
           console.error("❌ Failed to decode Telnyx client_state:", err instanceof Error ? err.message : err);
           // Do NOT throw; just continue without context
         }
       }
-      // Telnyx media packets → Deepgram
+      // Telnyx media packets → Deepgram + Custom Recording
       else if (msg.event === "media" && msg.media?.payload) {
-        // CRITICAL: Only process inbound audio (caller's voice), ignore outbound (AI's voice)
         // Telnyx sends track information: "inbound" = caller, "outbound" = AI
         const track = msg.media?.track;
+        const audio = Buffer.from(msg.media.payload, "base64");
 
-        // ONLY send inbound audio to Deepgram (caller's voice)
+        // ============================================================================
+        // CUSTOM RECORDING: Capture BOTH tracks (inbound + outbound) for self-hosted recording
+        // This runs regardless of which track we're processing for STT
+        // ============================================================================
+        if (
+          callContext &&
+          callContext.recordingBuffers &&
+          !callContext.customRecordingDisabledDueToSize
+        ) {
+          try {
+            // Push audio chunk to the appropriate track buffer
+            if (track === "inbound") {
+              callContext.recordingBuffers.inbound.push(audio);
+            } else if (track === "outbound") {
+              callContext.recordingBuffers.outbound.push(audio);
+            }
+
+            // Check size limit to prevent memory exhaustion
+            const currentSize = getBufferedSize(callContext.recordingBuffers);
+            const maxBytes = getCustomRecordingMaxBytes();
+            if (currentSize > maxBytes) {
+              console.warn(
+                `[CustomRecording] Size limit exceeded (${currentSize} > ${maxBytes}), disabling for this call`
+              );
+              callContext.customRecordingDisabledDueToSize = true;
+              // Clear buffers to free memory
+              callContext.recordingBuffers.inbound = [];
+              callContext.recordingBuffers.outbound = [];
+            }
+          } catch (recordingError) {
+            // Never throw from recording logic - just log and continue
+            console.error(
+              "[CustomRecording] Error buffering audio:",
+              recordingError instanceof Error ? recordingError.message : recordingError
+            );
+          }
+        }
+
+        // ============================================================================
+        // STT: ONLY send inbound audio to Deepgram (caller's voice)
         // Skip outbound (AI's voice) and any undefined/unknown tracks
+        // ============================================================================
         if (track !== "inbound") {
           if (process.env.LOG_AUDIO_PACKETS === "true") {
-            console.log(`🔄 Skipping non-inbound audio packet (track: ${track || "undefined"})`);
+            console.log(`🔄 Skipping non-inbound audio packet for STT (track: ${track || "undefined"})`);
           }
           return;
         }
 
-        // Process inbound audio (caller's voice only)
-        const audio = Buffer.from(msg.media.payload, "base64");
         // Only log packet details if LOG_AUDIO_PACKETS is enabled (reduces noise in logs)
         if (process.env.LOG_AUDIO_PACKETS === "true") {
           console.log("🎙️ Received inbound audio packet, bytes:", audio.length);
