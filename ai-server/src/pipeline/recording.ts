@@ -14,15 +14,118 @@
  */
 
 /**
+ * Check if a buffer is mostly silence.
+ * @param buffer - Audio buffer to check
+ * @param threshold - Ratio of silence samples required (0-1)
+ * @returns true if buffer is mostly silence
+ */
+function isSilenceBuffer(buffer: Buffer, threshold: number = 0.9): boolean {
+  if (buffer.length === 0) return true;
+
+  let silenceCount = 0;
+  for (let i = 0; i < buffer.length; i++) {
+    // μ-law silence is 0xFF or very close to it
+    if (buffer[i] >= 0xFD) {
+      silenceCount++;
+    }
+  }
+
+  return (silenceCount / buffer.length) >= threshold;
+}
+
+/**
+ * Apply a fade-out to the end of a buffer (linear fade to 0xFF).
+ * @param buffer - Buffer to fade
+ * @param fadeSamples - Number of samples to fade
+ * @returns Faded buffer
+ */
+function applyFadeOut(buffer: Buffer, fadeSamples: number): Buffer {
+  if (buffer.length < fadeSamples) {
+    fadeSamples = buffer.length;
+  }
+
+  const faded = Buffer.from(buffer);
+  const startIdx = buffer.length - fadeSamples;
+
+  for (let i = 0; i < fadeSamples; i++) {
+    const fadePos = i / fadeSamples; // 0 to 1
+    const currentSample = buffer[startIdx + i];
+    // Linear fade towards silence (0xFF)
+    faded[startIdx + i] = Math.round(currentSample + (0xFF - currentSample) * fadePos);
+  }
+
+  return faded;
+}
+
+/**
+ * Apply a fade-in from the start of a buffer (linear fade from 0xFF).
+ * @param buffer - Buffer to fade
+ * @param fadeSamples - Number of samples to fade
+ * @returns Faded buffer
+ */
+function applyFadeIn(buffer: Buffer, fadeSamples: number): Buffer {
+  if (buffer.length < fadeSamples) {
+    fadeSamples = buffer.length;
+  }
+
+  const faded = Buffer.from(buffer);
+
+  for (let i = 0; i < fadeSamples; i++) {
+    const fadePos = i / fadeSamples; // 0 to 1
+    const currentSample = buffer[i];
+    // Linear fade from silence (0xFF) to actual sample
+    faded[i] = Math.round(0xFF + (currentSample - 0xFF) * fadePos);
+  }
+
+  return faded;
+}
+
+/**
  * Concatenate an array of Buffers into a single Buffer.
+ * Applies fade-in/fade-out at speech boundaries to eliminate clicks.
  * @param buffers - Array of Buffer chunks
- * @returns Single concatenated Buffer
+ * @returns Single concatenated Buffer with smooth speech transitions
  */
 export function concatTrack(buffers: Buffer[]): Buffer {
   if (!buffers || buffers.length === 0) {
     return Buffer.alloc(0);
   }
-  return Buffer.concat(buffers);
+
+  if (buffers.length === 1) {
+    return buffers[0];
+  }
+
+  const FADE_SAMPLES = 8; // 1ms fade at 8kHz
+  const processedBuffers: Buffer[] = [];
+
+  // Track previous packet state
+  let prevWasSilence = true;
+
+  for (let i = 0; i < buffers.length; i++) {
+    const currentBuffer = buffers[i];
+    const currentIsSilence = isSilenceBuffer(currentBuffer);
+
+    let processedBuffer = currentBuffer;
+
+    // Detect speech start (silence -> speech transition)
+    if (prevWasSilence && !currentIsSilence) {
+      // Apply fade-in to smooth the speech onset
+      processedBuffer = applyFadeIn(currentBuffer, FADE_SAMPLES);
+    }
+    // Detect speech end (speech -> silence transition)
+    else if (!prevWasSilence && currentIsSilence) {
+      // Apply fade-out to the previous buffer (if we can still modify it)
+      if (processedBuffers.length > 0) {
+        const lastIdx = processedBuffers.length - 1;
+        processedBuffers[lastIdx] = applyFadeOut(processedBuffers[lastIdx], FADE_SAMPLES);
+      }
+    }
+
+    processedBuffers.push(processedBuffer);
+    prevWasSilence = currentIsSilence;
+  }
+
+  return Buffer.concat(processedBuffers);
 }
 
 /**
