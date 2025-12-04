@@ -173,11 +173,17 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // Store AI text as pending - will be logged when TTS playback completes
-      // This ensures we only log what the AI actually speaks (not interrupted speech)
-      if (callContext.callControlId) {
-        callContext.pendingAiTranscript = aiText;
-        console.log(`[Transcript] 📝 Stored pending AI transcript (${aiText.length} chars), will log when spoken`);
+      // Log AI transcript immediately - simple and reliable
+      // This logs the full AI response as part of the conversation flow
+      if (callContext.callControlId && isSupabaseConfigured()) {
+        appendTranscript(
+          callContext.callControlId,
+          aiText,
+          "processing",
+          "Merlin"
+        ).then(() => {
+          console.log(`[Transcript] ✅ Logged AI response to transcript (${aiText.length} chars)`);
+        }).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
       }
 
       // Check if we should update the rolling summary
@@ -552,28 +558,12 @@ app.post("/webhooks/telnyx", async (req, res) => {
       }
     }
   } else if (eventType === "call.speak.started") {
-    // TTS playback has started - log AI transcript now (customer is hearing it)
+    // TTS playback has started
     if (callControlId) {
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "speaking";
         console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
-
-        // Log AI transcript when TTS STARTS (not ends) - customer is now hearing it
-        // Even if interrupted, the AI started speaking so we should log it
-        if (ctx.pendingAiTranscript && isSupabaseConfigured()) {
-          const spokenText = ctx.pendingAiTranscript;
-          ctx.pendingAiTranscript = undefined; // Clear after logging
-
-          appendTranscript(
-            callControlId,
-            spokenText,
-            "processing",
-            "Merlin"
-          ).then(() => {
-            console.log(`[Transcript] ✅ Logged AI speech to transcript (${spokenText.length} chars)`);
-          }).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
-        }
       } else {
         console.warn(`[TTS] ⚠️ call.speak.started for unknown callControlId: ${callControlId}`);
       }
