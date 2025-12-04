@@ -77,6 +77,28 @@ export interface CallEventRecord {
 }
 
 /**
+ * Transcript speaker type: 'caller' or 'assistant'
+ */
+export type TranscriptSpeaker = "caller" | "assistant";
+
+/**
+ * Transcript track type: 'inbound' (caller) or 'outbound' (assistant)
+ */
+export type TranscriptTrack = "inbound" | "outbound";
+
+/**
+ * Transcript segment record for insert-only logging
+ */
+export interface TranscriptSegment {
+  call_id: string;
+  speaker: TranscriptSpeaker;
+  track: TranscriptTrack;
+  text: string;
+  confidence?: number;
+  created_at?: string;
+}
+
+/**
  * Upsert a call record (create or update)
  */
 export async function upsertCall(
@@ -204,6 +226,7 @@ export async function upsertCallEvent(
 /**
  * Append transcript text with speaker identification
  * Mirrors the Cloudflare worker appendTranscript functionality
+ * @deprecated Use insertTranscriptSegment instead for robust, insert-only logging
  */
 export async function appendTranscript(
   callId: string,
@@ -251,6 +274,75 @@ export async function appendTranscript(
     return { success: true };
   } catch (error) {
     console.error("[Supabase] Exception appending transcript:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Insert a transcript segment (insert-only, no reads)
+ * Robust logging for only final/confirmed speech from caller or assistant
+ * @param segment - The transcript segment to insert
+ * @returns Success/error result
+ */
+export async function insertTranscriptSegment(
+  segment: TranscriptSegment
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    console.log("[Supabase] Not configured, skipping transcript segment insert");
+    return { success: true };
+  }
+
+  // Validate required fields
+  if (!segment.call_id || !segment.text || !segment.speaker || !segment.track) {
+    return {
+      success: false,
+      error: "Missing required fields: call_id, text, speaker, track",
+    };
+  }
+
+  // Skip empty text
+  const trimmedText = segment.text.trim();
+  if (trimmedText.length === 0) {
+    return { success: true };
+  }
+
+  // Safety: Cap text length to prevent runaway inserts (e.g., 2000 chars per segment)
+  const MAX_TEXT_LENGTH = 2000;
+  const cappedText = trimmedText.length > MAX_TEXT_LENGTH
+    ? trimmedText.substring(0, MAX_TEXT_LENGTH)
+    : trimmedText;
+
+  try {
+    const insertRecord = {
+      call_id: segment.call_id,
+      speaker: segment.speaker,
+      track: segment.track,
+      text: cappedText,
+      confidence: segment.confidence,
+      created_at: segment.created_at || new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from("call_transcript_segments")
+      .insert(insertRecord);
+
+    if (error) {
+      console.error("[Supabase] Error inserting transcript segment:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    // Debug-level logging: show speaker, text length, call_id suffix for tracing
+    const callIdSuffix = segment.call_id.substring(Math.max(0, segment.call_id.length - 8));
+    console.log(
+      `[Supabase] Transcript segment inserted (${segment.speaker}/${segment.track}, ${cappedText.length} chars, call: ...${callIdSuffix})`
+    );
+    return { success: true };
+  } catch (error) {
+    console.error("[Supabase] Exception inserting transcript segment:", error instanceof Error ? error.message : error);
     return {
       success: false,
       error: error instanceof Error ? error.message : String(error),
