@@ -208,8 +208,6 @@ export default function CallDetailPage() {
           />
           <LiveTranscript
             callId={call.id}
-            initialTranscript={call.transcript}
-            initialLiveTranscript={call.live_transcript}
             status={call.status}
           />
         </div>
