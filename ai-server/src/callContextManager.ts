@@ -45,6 +45,13 @@ export interface CallContext {
   turnSeq?: number;
   // Barge-in cooldown to prevent spamming stop endpoint
   bargeInCooldownUntil?: number;
+
+  // Transcript logging state (insert-only, final-only approach)
+  callerFinalBuf?: string[]; // Buffer of final transcript chunks awaiting utterance flush
+  callerFinalFlushTimer?: any; // Timer for flushing buffered caller utterance (NodeJS.Timeout | ReturnType<typeof setTimeout>)
+  lastCallerUtterance?: string; // Last flushed caller utterance (for deduplication)
+  assistantFinalBuf?: string[]; // Buffer of final assistant utterances (if outbound STT enabled)
+  assistantFinalFlushTimer?: any; // Timer for flushing buffered assistant utterance (NodeJS.Timeout | ReturnType<typeof setTimeout>)
 }
 
 /**
@@ -85,6 +92,9 @@ export function getOrCreateContext(
       ttsState: "idle",
       turnSeq: 0,
       bargeInCooldownUntil: 0,
+      callerFinalBuf: [],
+      lastCallerUtterance: "",
+      assistantFinalBuf: [],
     });
   }
   return callContextStore.get(callId)!;

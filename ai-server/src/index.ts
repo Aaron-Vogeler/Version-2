@@ -10,7 +10,7 @@ import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
-import { upsertCall, safeUpdateStatus, updateCall, appendTranscript, isSupabaseConfigured } from "./utils/supabase";
+import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment } from "./utils/supabase";
 
 // Constants
 const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
@@ -106,17 +106,8 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // Log user transcript to Supabase
-      // Note: transcript_status constraint allows: 'pending', 'processing', 'completed', 'failed', 'none'
-      if (callContext.callControlId && isSupabaseConfigured()) {
-        const toNumber = callContext.goal ? "Customer" : "Caller";
-        appendTranscript(
-          callContext.callControlId,
-          userText,
-          "processing",
-          toNumber
-        ).catch((err) => console.error("[Supabase] Error logging user transcript:", err));
-      }
+      // NOTE: User transcript logging is now handled in Deepgram Transcript handler
+      // Only final recognized speech (is_final=true) is logged via insertTranscriptSegment()
     }
 
     // Send to LLM
@@ -170,15 +161,10 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // Log AI transcript to Supabase
-      if (callContext.callControlId && isSupabaseConfigured()) {
-        appendTranscript(
-          callContext.callControlId,
-          aiText,
-          "processing",
-          "Merlin"
-        ).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
-      }
+      // TODO: Assistant transcript logging requires outbound-track STT or confirmed playback text.
+      // Currently, we don't log assistant text because it may not be spoken if barge-in occurs.
+      // To enable assistant logging: implement outbound Deepgram stream + insertTranscriptSegment() with speaker='assistant'.
+      // Feature flag: ENABLE_OUTBOUND_STT (optional scaffolding only at this time).
 
       // Check if we should update the rolling summary
       try {
@@ -314,6 +300,14 @@ async function sendTtsResponse(
 function cleanupCallState(callContext: CallContext): void {
   console.log("🧹 Cleaning up call state");
 
+  // Flush any pending caller utterance before cleanup
+  if (callContext.callerFinalBuf && callContext.callerFinalBuf.length > 0) {
+    console.log("[TRANSCRIPT] Flushing pending caller utterance on cleanup");
+    flushCallerUtterance(callContext).catch((err) => {
+      console.error("[TRANSCRIPT] Error flushing utterance on cleanup:", err);
+    });
+  }
+
   // Mark transcript as completed in Supabase
   if (callContext.callControlId && isSupabaseConfigured()) {
     updateCall(callContext.callControlId, {
@@ -327,6 +321,18 @@ function cleanupCallState(callContext: CallContext): void {
     clearTimeout(callContext.ttsDebounceTimer);
     callContext.ttsDebounceTimer = undefined;
   }
+
+  // Clear transcript logging timers and buffers
+  if (callContext.callerFinalFlushTimer) {
+    clearTimeout(callContext.callerFinalFlushTimer);
+    callContext.callerFinalFlushTimer = undefined;
+  }
+  if (callContext.assistantFinalFlushTimer) {
+    clearTimeout(callContext.assistantFinalFlushTimer);
+    callContext.assistantFinalFlushTimer = undefined;
+  }
+  callContext.callerFinalBuf = [];
+  callContext.assistantFinalBuf = [];
   callContext.lastUserTranscript = "";
 
   // Close the Deepgram WebSocket if it exists and is open
@@ -649,6 +655,51 @@ app.post("/webhooks/telnyx", async (req, res) => {
 });
 
 // -----------------------------------------------------------------------------
+/**
+ * Flush accumulated caller utterance to Supabase (insert-only)
+ * Joins all final chunks in buffer into a single utterance and logs via insertTranscriptSegment
+ * Skips if utterance is empty or already logged
+ * @param callContext - The call context with buffer
+ */
+async function flushCallerUtterance(callContext: CallContext): Promise<void> {
+  if (!callContext || !callContext.callControlId) {
+    return;
+  }
+
+  const buffer = callContext.callerFinalBuf || [];
+  if (buffer.length === 0) {
+    return;
+  }
+
+  // Join all final chunks with spaces
+  const utterance = buffer.join(" ").trim();
+
+  // Skip if empty or already logged (deduplication)
+  if (!utterance || utterance === callContext.lastCallerUtterance) {
+    console.log(`[TRANSCRIPT] Skipping duplicate or empty utterance: "${utterance}"`);
+    callContext.callerFinalBuf = [];
+    return;
+  }
+
+  // Log via insert-only transcript segment
+  console.log(`[TRANSCRIPT] Flushing caller utterance (${buffer.length} chunks): "${utterance}"`);
+
+  if (isSupabaseConfigured()) {
+    await insertTranscriptSegment({
+      call_id: callContext.callControlId,
+      speaker: "caller",
+      track: "inbound",
+      text: utterance,
+    }).catch((err) => {
+      console.error("[Supabase] Error inserting caller transcript segment:", err);
+    });
+  }
+
+  // Update dedup state and clear buffer
+  callContext.lastCallerUtterance = utterance;
+  callContext.callerFinalBuf = [];
+}
+
 // WS AUDIO SESSION HANDLER (core of the whole system)
 // -----------------------------------------------------------------------------
 wss.on("connection", async (ws) => {
@@ -682,8 +733,9 @@ wss.on("connection", async (ws) => {
   });
 
   // Relay Deepgram transcript → Groq → Telnyx (with debounce)
-  // BARGE-IN: Now handled here instead of SpeechStarted, so we only interrupt
-  // when actual words are detected (not just sounds/noise)
+  // STRICT-FINAL-ONLY: Only log final recognized speech (is_final=true)
+  // BARGE-IN: Trigger on any transcript (interim or final) for responsiveness
+  // LOGGING: Only log to Supabase when speech completes (speech_final or timer flush)
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
@@ -702,10 +754,11 @@ wss.on("connection", async (ws) => {
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      console.log("🗣️ Caller transcript:", userText);
+      console.log("🗣️ Caller transcript:", userText, `(is_final: ${results.is_final}, speech_final: ${results.speech_final})`);
 
-      // BARGE-IN: If AI is speaking and we got actual words, interrupt it
-      // This is more reliable than VAD because it only triggers on recognized speech
+      // ============================================================================
+      // BARGE-IN: Trigger on any recognized words (interim or final) for responsiveness
+      // ============================================================================
       if (callContext.ttsState === "speaking" && callContext.callControlId) {
         // Apply cooldown to prevent spamming the stop endpoint
         const now = Date.now();
@@ -731,6 +784,12 @@ wss.on("connection", async (ws) => {
             callContext.ttsDebounceTimer = undefined;
           }
 
+          // Clear any pending caller utterance flush (we'll start fresh)
+          if (callContext.callerFinalFlushTimer) {
+            clearTimeout(callContext.callerFinalFlushTimer);
+            callContext.callerFinalFlushTimer = undefined;
+          }
+
           // Increment turn sequence to invalidate any in-flight LLM/TTS work
           callContext.turnSeq = (callContext.turnSeq || 0) + 1;
           console.log(`[TURN] Turn sequence incremented to ${callContext.turnSeq} (stale responses will be dropped)`);
@@ -742,7 +801,65 @@ wss.on("connection", async (ws) => {
         }
       }
 
-      // Queue the transcript with debounce
+      // ============================================================================
+      // TRANSCRIPT LOGGING: Only log FINAL recognized speech
+      // ============================================================================
+      // Only process final transcript chunks (is_final=true)
+      if (!results.is_final) {
+        // Don't log interim transcripts to Supabase; only queue for responsiveness
+        // Queue the (interim) transcript with debounce for LLM response
+        queueUserTranscript(callContext, userText, ws);
+        return;
+      }
+
+      // Initialize buffer if needed
+      if (!callContext.callerFinalBuf) {
+        callContext.callerFinalBuf = [];
+      }
+
+      // Accumulate final chunks
+      callContext.callerFinalBuf.push(userText);
+      console.log(`[TRANSCRIPT] Buffered final chunk #${callContext.callerFinalBuf.length}: "${userText}"`);
+
+      // ============================================================================
+      // UTTERANCE BOUNDARY: Flush on speech_final or with fallback timer
+      // ============================================================================
+      const isSpeechFinal = results.speech_final === true;
+
+      if (isSpeechFinal) {
+        // speech_final flag indicates end of utterance
+        console.log("[TRANSCRIPT] speech_final detected, flushing utterance");
+
+        // Clear any pending flush timer
+        if (callContext.callerFinalFlushTimer) {
+          clearTimeout(callContext.callerFinalFlushTimer);
+          callContext.callerFinalFlushTimer = undefined;
+        }
+
+        // Flush the buffer
+        flushCallerUtterance(callContext);
+      } else {
+        // No speech_final flag: use fallback timer to detect utterance boundary
+        // If no new final chunks arrive within 300ms, consider the utterance complete
+
+        // Clear any existing timer
+        if (callContext.callerFinalFlushTimer) {
+          clearTimeout(callContext.callerFinalFlushTimer);
+        }
+
+        // Schedule flush timer (300ms of silence = utterance boundary)
+        // Capture callContext in local variable to avoid closure issues with TypeScript
+        const ctx = callContext;
+        callContext.callerFinalFlushTimer = setTimeout(() => {
+          console.log("[TRANSCRIPT] Flush timer fired (300ms with no new final chunks)");
+          if (ctx) {
+            flushCallerUtterance(ctx);
+            ctx.callerFinalFlushTimer = undefined;
+          }
+        }, 300);
+      }
+
+      // Queue the transcript with debounce for LLM response
       queueUserTranscript(callContext, userText, ws);
     } catch (error) {
       console.error(
