@@ -55,21 +55,19 @@ export function processTranscript(
 
 /**
  * Process transcript for live/real-time mode
- * Prioritizes SPEED over polish
+ * Prioritizes SPEED - simple newline-separated format, NO grammar cleanup
  *
  * @param input - The transcript engine input
- * @returns Live mode output with appended human speech
+ * @returns Live mode output with appended speech on new lines
  */
 function processLiveTranscript(
   input: TranscriptEngineInput
 ): TranscriptEngineLiveOutput {
-  // Filter to human-only segments
-  const humanSegments = input.segments.filter((seg) =>
-    isHumanSpeaker(seg.speaker_type, seg.direction)
-  );
+  // Get all segments (both human and assistant for full transcript)
+  const segments = input.segments;
 
-  // If no human segments, return existing transcript or empty
-  if (humanSegments.length === 0) {
+  // If no segments, return existing transcript or empty
+  if (segments.length === 0) {
     return {
       mode: "live",
       call_id: input.call_id,
@@ -77,23 +75,29 @@ function processLiveTranscript(
     };
   }
 
-  // Extract text from human segments (minimal processing)
-  const newHumanText = humanSegments
-    .map((seg) => seg.text.trim())
-    .filter((text) => text.length > 0)
-    .join(" ");
+  // Format each segment as a new line with speaker label
+  // NO grammar cleanup - just raw text with speaker prefix
+  const newLines = segments
+    .map((seg) => {
+      const text = seg.text.trim();
+      if (!text) return null;
 
-  // Combine with existing transcript
+      // Determine speaker label
+      const isHuman = isHumanSpeaker(seg.speaker_type, seg.direction);
+      const speaker = isHuman ? "Caller" : "Assistant";
+
+      return `${speaker}: ${text}`;
+    })
+    .filter((line): line is string => line !== null);
+
+  // Combine with existing transcript using newlines
   let fullTranscript: string;
   if (input.existing_transcript_text && input.existing_transcript_text.trim()) {
-    // Add space between existing and new text
-    fullTranscript = `${input.existing_transcript_text.trim()} ${newHumanText}`;
+    // Add newline between existing and new text
+    fullTranscript = `${input.existing_transcript_text.trim()}\n${newLines.join("\n")}`;
   } else {
-    fullTranscript = newHumanText;
+    fullTranscript = newLines.join("\n");
   }
-
-  // Minimal punctuation cleanup (don't change words)
-  fullTranscript = minimalPunctuationCleanup(fullTranscript);
 
   return {
     mode: "live",

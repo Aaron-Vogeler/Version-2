@@ -404,14 +404,14 @@ export async function updateLiveTranscript(
 
 /**
  * Finalize the transcript when the call ends
- * Copies live_transcript to final transcript field and marks status as completed
+ * Marks transcript_status as completed (live_transcript already has the final text)
  * @param callId - The call ID (call_control_id)
- * @param finalTranscriptText - Optional final processed transcript (if not provided, uses live_transcript)
+ * @param _finalTranscriptText - Unused, kept for API compatibility
  * @returns Success/error result
  */
 export async function finalizeTranscript(
   callId: string,
-  finalTranscriptText?: string
+  _finalTranscriptText?: string
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseClient();
   if (!supabase) {
@@ -424,21 +424,10 @@ export async function finalizeTranscript(
   }
 
   try {
-    // If no final text provided, fetch the current live_transcript
-    let transcript = finalTranscriptText;
-    if (!transcript) {
-      const { data } = await supabase
-        .from("calls")
-        .select("live_transcript")
-        .eq("id", callId)
-        .single();
-      transcript = data?.live_transcript || "";
-    }
-
+    // Just mark as completed - live_transcript already has the final text
     const { error } = await supabase
       .from("calls")
       .update({
-        transcript: transcript,
         transcript_status: "completed",
         updated_at: new Date().toISOString(),
       })

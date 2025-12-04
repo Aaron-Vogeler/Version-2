@@ -162,10 +162,8 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // TODO: Assistant transcript logging requires outbound-track STT or confirmed playback text.
-      // Currently, we don't log assistant text because it may not be spoken if barge-in occurs.
-      // To enable assistant logging: implement outbound Deepgram stream + insertTranscriptSegment() with speaker='assistant'.
-      // Feature flag: ENABLE_OUTBOUND_STT (optional scaffolding only at this time).
+      // Log assistant speech to live transcript
+      await processAssistantTranscriptUpdate(callContext, aiText);
 
       // Check if we should update the rolling summary
       try {
@@ -761,6 +759,67 @@ async function processLiveTranscriptUpdate(
     }
   } catch (error) {
     console.error("[TRANSCRIPT-ENGINE] Error processing live transcript:", error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Process assistant (AI) speech and update live_transcript
+ * Called when AI generates a response
+ * @param callContext - The call context
+ * @param aiText - The AI's response text
+ */
+async function processAssistantTranscriptUpdate(
+  callContext: CallContext,
+  aiText: string
+): Promise<void> {
+  if (!callContext || !callContext.callControlId) {
+    return;
+  }
+
+  const trimmedText = aiText.trim();
+  if (!trimmedText) {
+    return;
+  }
+
+  // Generate a unique segment ID
+  const segmentCounter = (callContext.transcriptSegmentCounter || 0) + 1;
+  callContext.transcriptSegmentCounter = segmentCounter;
+  const segmentId = `${callContext.callControlId}-assistant-${segmentCounter}`;
+
+  // Create segment for transcript engine (assistant = outbound)
+  const segment: EngineSegment = {
+    id: segmentId,
+    text: trimmedText,
+    speaker_type: "assistant",
+    direction: "outbound",
+    start_ms: null,
+    end_ms: null,
+    is_final: true,
+    speech_final: true,
+  };
+
+  try {
+    // Process through transcript engine (live mode)
+    const result = processTranscript({
+      mode: "live",
+      call_id: callContext.callControlId,
+      segments: [segment],
+      existing_transcript_text: callContext.runningTranscriptText || "",
+    });
+
+    if (result.mode === "live") {
+      // Update the running transcript text in context
+      callContext.runningTranscriptText = result.transcript_text;
+
+      // Update Supabase with the new live_transcript
+      if (isSupabaseConfigured()) {
+        await updateLiveTranscript(callContext.callControlId, result.transcript_text);
+      }
+
+      console.log(`[TRANSCRIPT-ENGINE] Assistant transcript updated (${result.transcript_text.length} chars)`);
+    }
+  } catch (error) {
+    console.error("[TRANSCRIPT-ENGINE] Error processing assistant transcript:", error instanceof Error ? error.message : error);
   }
 }
 
