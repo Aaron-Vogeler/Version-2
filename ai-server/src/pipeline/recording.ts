@@ -11,7 +11,220 @@
  * - RIFF header: 12 bytes (ChunkID, ChunkSize, Format)
  * - fmt sub-chunk: 24 bytes (SubchunkID, Size, AudioFormat, Channels, SampleRate, ByteRate, BlockAlign, BitsPerSample)
  * - data sub-chunk: 8 bytes header + audio data
+ *
+ * AUDIO SMOOTHING:
+ * - Applies crossfade at segment boundaries to eliminate clicking artifacts
+ * - Uses short fade-in/fade-out (2-4ms) at audio-to-silence transitions
+ * - Operates in linear PCM domain for accurate fading, then re-encodes to μ-law
  */
+
+// ============================================================================
+// μ-LAW CODEC FUNCTIONS (for audio smoothing)
+// ============================================================================
+
+/**
+ * ITU-T G.711 μ-law decoder.
+ * Converts 8-bit μ-law to 16-bit linear PCM.
+ * @param mulaw - 8-bit μ-law encoded sample
+ * @returns 16-bit linear PCM sample
+ */
+function decodeMulawG711(mulaw: number): number {
+  // Invert the bits (μ-law uses inverted encoding)
+  mulaw = ~mulaw & 0xff;
+
+  // Extract sign, exponent, and mantissa
+  const sign = mulaw & 0x80 ? -1 : 1;
+  const exponent = (mulaw >> 4) & 0x07;
+  const mantissa = mulaw & 0x0f;
+
+  // Reconstruct the sample
+  let sample: number;
+  if (exponent === 0) {
+    sample = (mantissa << 3) + 132;
+  } else {
+    sample = ((mantissa << 3) + 132) << exponent;
+  }
+
+  // Remove the bias
+  sample -= 132;
+
+  return sign * sample;
+}
+
+/**
+ * ITU-T G.711 μ-law encoder.
+ * Converts 16-bit linear PCM to 8-bit μ-law.
+ * @param sample - 16-bit linear PCM sample
+ * @returns 8-bit μ-law encoded sample
+ */
+function encodeMulawG711(sample: number): number {
+  const BIAS = 0x84; // 132
+  const CLIP = 32635; // Maximum before clipping
+
+  // Step 1: Extract sign
+  let sign = 0;
+  if (sample < 0) {
+    sign = 0x80;
+    sample = -sample;
+  }
+
+  // Step 2: Clip to valid range
+  if (sample > CLIP) {
+    sample = CLIP;
+  }
+
+  // Step 3: Add bias
+  sample += BIAS;
+
+  // Step 4: Find segment (exponent) by finding MSB position
+  let exponent = 0;
+  let mantissa = 0;
+
+  if (sample >= 0x4000) {
+    exponent = 7;
+    mantissa = (sample >> 10) & 0x0f;
+  } else if (sample >= 0x2000) {
+    exponent = 6;
+    mantissa = (sample >> 9) & 0x0f;
+  } else if (sample >= 0x1000) {
+    exponent = 5;
+    mantissa = (sample >> 8) & 0x0f;
+  } else if (sample >= 0x0800) {
+    exponent = 4;
+    mantissa = (sample >> 7) & 0x0f;
+  } else if (sample >= 0x0400) {
+    exponent = 3;
+    mantissa = (sample >> 6) & 0x0f;
+  } else if (sample >= 0x0200) {
+    exponent = 2;
+    mantissa = (sample >> 5) & 0x0f;
+  } else if (sample >= 0x0100) {
+    exponent = 1;
+    mantissa = (sample >> 4) & 0x0f;
+  } else {
+    exponent = 0;
+    mantissa = (sample >> 3) & 0x0f;
+  }
+
+  // Step 5: Combine sign, exponent, mantissa and invert all bits
+  const encoded = sign | (exponent << 4) | mantissa;
+  return ~encoded & 0xff;
+}
+
+// ============================================================================
+// AUDIO SMOOTHING FUNCTIONS
+// ============================================================================
+
+/**
+ * Linear PCM threshold for "silence" detection.
+ * Values below this are considered silence (corresponds to very quiet audio).
+ */
+const SILENCE_THRESHOLD_LINEAR = 100;
+
+/**
+ * Fade duration in samples at 8kHz.
+ * 32 samples = 4ms - long enough to eliminate clicks, short enough to not affect speech
+ */
+const FADE_SAMPLES = 32;
+
+/**
+ * Apply fade-in/fade-out smoothing to a μ-law audio track.
+ * Detects transitions between silence and audio, then applies short fades
+ * to eliminate clicking artifacts.
+ *
+ * @param track - μ-law audio buffer
+ * @returns Smoothed μ-law audio buffer
+ */
+function smoothTrackBoundaries(track: Buffer): Buffer {
+  if (track.length < FADE_SAMPLES * 2) {
+    // Track too short to smooth meaningfully
+    return track;
+  }
+
+  // Convert entire track to linear PCM for processing
+  const pcmSamples = new Int16Array(track.length);
+  for (let i = 0; i < track.length; i++) {
+    pcmSamples[i] = decodeMulawG711(track[i]);
+  }
+
+  // Find segments (runs of non-silence audio)
+  const segments: Array<{ start: number; end: number }> = [];
+  let inSegment = false;
+  let segmentStart = 0;
+
+  // Use a sliding window to detect segment boundaries (avoid triggering on single samples)
+  const WINDOW_SIZE = 4;
+
+  for (let i = 0; i < pcmSamples.length; i++) {
+    const isSilent = Math.abs(pcmSamples[i]) < SILENCE_THRESHOLD_LINEAR;
+
+    if (!inSegment && !isSilent) {
+      // Check if this is a real segment start (not just noise)
+      let nonSilentCount = 0;
+      for (let j = i; j < Math.min(i + WINDOW_SIZE, pcmSamples.length); j++) {
+        if (Math.abs(pcmSamples[j]) >= SILENCE_THRESHOLD_LINEAR) {
+          nonSilentCount++;
+        }
+      }
+      if (nonSilentCount >= WINDOW_SIZE / 2) {
+        inSegment = true;
+        segmentStart = i;
+      }
+    } else if (inSegment && isSilent) {
+      // Check if this is a real segment end
+      let silentCount = 0;
+      for (let j = i; j < Math.min(i + WINDOW_SIZE, pcmSamples.length); j++) {
+        if (Math.abs(pcmSamples[j]) < SILENCE_THRESHOLD_LINEAR) {
+          silentCount++;
+        }
+      }
+      if (silentCount >= WINDOW_SIZE / 2) {
+        inSegment = false;
+        segments.push({ start: segmentStart, end: i });
+      }
+    }
+  }
+
+  // Handle case where audio runs to the end
+  if (inSegment) {
+    segments.push({ start: segmentStart, end: pcmSamples.length });
+  }
+
+  // Apply fade-in at segment starts and fade-out at segment ends
+  for (const segment of segments) {
+    // Fade-in at start of segment
+    const fadeInEnd = Math.min(segment.start + FADE_SAMPLES, segment.end);
+    for (let i = segment.start; i < fadeInEnd; i++) {
+      const fadePosition = i - segment.start;
+      // Use smooth cosine fade curve
+      const fadeFactor = 0.5 * (1 - Math.cos((Math.PI * fadePosition) / FADE_SAMPLES));
+      pcmSamples[i] = Math.round(pcmSamples[i] * fadeFactor);
+    }
+
+    // Fade-out at end of segment
+    const fadeOutStart = Math.max(segment.end - FADE_SAMPLES, segment.start);
+    for (let i = fadeOutStart; i < segment.end; i++) {
+      const fadePosition = segment.end - i;
+      // Use smooth cosine fade curve
+      const fadeFactor = 0.5 * (1 - Math.cos((Math.PI * fadePosition) / FADE_SAMPLES));
+      pcmSamples[i] = Math.round(pcmSamples[i] * fadeFactor);
+    }
+  }
+
+  // Convert back to μ-law
+  const smoothedTrack = Buffer.alloc(track.length);
+  for (let i = 0; i < pcmSamples.length; i++) {
+    smoothedTrack[i] = encodeMulawG711(pcmSamples[i]);
+  }
+
+  if (segments.length > 0) {
+    console.log(
+      `[CustomRecording] Smoothed ${segments.length} audio segments (fade: ${FADE_SAMPLES} samples = ${(FADE_SAMPLES / 8).toFixed(1)}ms)`
+    );
+  }
+
+  return smoothedTrack;
+}
 
 /**
  * Concatenate an array of Buffers into a single Buffer.
@@ -135,14 +348,20 @@ export function wavHeaderMulawStereo(
 
 /**
  * Create a complete stereo μ-law WAV file from two mono tracks.
+ * Applies audio smoothing to eliminate clicking artifacts at segment boundaries.
  *
  * @param inbound - Inbound (caller/left channel) μ-law audio buffer
  * @param outbound - Outbound (assistant/right channel) μ-law audio buffer
  * @returns Complete WAV file as Buffer (header + interleaved audio data)
  */
 export function createMulawStereoWav(inbound: Buffer, outbound: Buffer): Buffer {
-  // Interleave the two mono tracks into stereo
-  const stereoData = interleaveMulawStereo(inbound, outbound);
+  // Apply smoothing to eliminate clicking at segment boundaries
+  console.log("[CustomRecording] Applying audio smoothing to eliminate clicks...");
+  const smoothedInbound = smoothTrackBoundaries(inbound);
+  const smoothedOutbound = smoothTrackBoundaries(outbound);
+
+  // Interleave the two smoothed mono tracks into stereo
+  const stereoData = interleaveMulawStereo(smoothedInbound, smoothedOutbound);
 
   // Generate WAV header for the stereo data
   const header = wavHeaderMulawStereo(stereoData.length);
