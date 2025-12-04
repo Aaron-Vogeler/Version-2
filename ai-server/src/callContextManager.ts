@@ -57,6 +57,15 @@ export interface CallContext {
   lastCallerUtterance?: string; // Last flushed caller utterance (for deduplication)
   assistantFinalBuf?: string[]; // Buffer of final assistant utterances (if outbound STT enabled)
   assistantFinalFlushTimer?: any; // Timer for flushing buffered assistant utterance (NodeJS.Timeout | ReturnType<typeof setTimeout>)
+
+  // Custom recording buffers for self-hosted dual-channel recording
+  recordingBuffers?: {
+    inbound: Buffer[]; // μ-law bytes from caller (Telnyx media payloads)
+    outbound: Buffer[]; // μ-law bytes from assistant (Telnyx media payloads)
+    startedAtMs: number; // Date.now() when buffering begins
+  };
+  // Flag to disable custom recording if size limit exceeded (fallback to Telnyx native)
+  customRecordingDisabledDueToSize?: boolean;
 }
 
 /**
@@ -214,6 +223,12 @@ export function clearContext(callId: string): void {
       } catch (error) {
         console.warn("Error closing Deepgram in clearContext:", error);
       }
+    }
+    // Clear recording buffers to free memory
+    if (context.recordingBuffers) {
+      context.recordingBuffers.inbound = [];
+      context.recordingBuffers.outbound = [];
+      context.recordingBuffers = undefined;
     }
   }
   callContextStore.delete(callId);

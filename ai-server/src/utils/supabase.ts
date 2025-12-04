@@ -54,7 +54,8 @@ export interface CallRecord {
   goal?: string;
   live_transcript?: string;
   transcript_status?: string;
-  recording_url?: string;
+  recording_url?: string; // Telnyx native recording URL
+  custom_recording_url?: string; // Self-hosted dual-channel recording URL (Supabase Storage)
   started_at?: string;
   answered_at?: string;
   ended_at?: string;
@@ -347,6 +348,62 @@ export async function insertTranscriptSegment(
       success: false,
       error: error instanceof Error ? error.message : String(error),
     };
+  }
+}
+
+/**
+ * Upload custom call recording to Supabase Storage.
+ * Uploads to bucket "call-recordings" with path "recordings/{callId}.wav"
+ *
+ * @param callId - The call control ID (used as filename)
+ * @param file - The WAV file buffer to upload
+ * @returns Result with ok status, optional public URL, or error message
+ */
+export async function uploadCustomCallRecording(
+  callId: string,
+  file: Buffer
+): Promise<{ ok: boolean; url?: string; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    console.log("[CustomRecording] Supabase not configured, skipping upload");
+    return { ok: false, error: "Supabase not configured" };
+  }
+
+  const bucketName = "call-recordings";
+  const filePath = `recordings/${callId}.wav`;
+
+  try {
+    // Upload with upsert to handle re-uploads
+    const { data, error } = await supabase.storage
+      .from(bucketName)
+      .upload(filePath, file, {
+        contentType: "audio/wav",
+        upsert: true,
+      });
+
+    if (error) {
+      console.error("[CustomRecording] Upload error:", error.message);
+      return { ok: false, error: error.message };
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from(bucketName)
+      .getPublicUrl(filePath);
+
+    const publicUrl = urlData?.publicUrl;
+
+    if (!publicUrl) {
+      console.error("[CustomRecording] Failed to get public URL");
+      return { ok: false, error: "Failed to get public URL" };
+    }
+
+    console.log(`[CustomRecording] Uploaded ${filePath} (${file.length} bytes), url=${publicUrl}`);
+    return { ok: true, url: publicUrl };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error("[CustomRecording] Exception during upload:", errMsg);
+    return { ok: false, error: errMsg };
   }
 }
 
