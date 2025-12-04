@@ -10,7 +10,7 @@ import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
-import { safeUpdateStatus, updateCall, appendTranscript, isSupabaseConfigured } from "./utils/supabase";
+import { upsertCall, safeUpdateStatus, updateCall, appendTranscript, isSupabaseConfigured } from "./utils/supabase";
 
 // Constants
 const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
@@ -107,12 +107,13 @@ async function scheduleTtsResponse(
       });
 
       // Log user transcript to Supabase
+      // Note: transcript_status constraint allows: 'pending', 'processing', 'completed', 'failed', 'none'
       if (callContext.callControlId && isSupabaseConfigured()) {
         const toNumber = callContext.goal ? "Customer" : "Caller";
         appendTranscript(
           callContext.callControlId,
           userText,
-          "in_progress",
+          "processing",
           toNumber
         ).catch((err) => console.error("[Supabase] Error logging user transcript:", err));
       }
@@ -174,7 +175,7 @@ async function scheduleTtsResponse(
         appendTranscript(
           callContext.callControlId,
           aiText,
-          "in_progress",
+          "processing",
           "Merlin"
         ).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
       }
@@ -447,15 +448,66 @@ function decodeMulawG711(mulaw: number): number {
 // OUTBOUND CALL ENDPOINT
 app.use("/api/outbound-call", outboundCallRouter);
 
+// Helper to decode client_state from Telnyx webhooks (matching Cloudflare pattern)
+function decodeClientState(encodedState: string | undefined): Record<string, any> {
+  if (!encodedState) return {};
+  try {
+    if (typeof encodedState === "string") {
+      if (encodedState.trim().startsWith("{")) {
+        return JSON.parse(encodedState);
+      }
+      return JSON.parse(Buffer.from(encodedState, "base64").toString("utf8"));
+    }
+    return encodedState as Record<string, any>;
+  } catch (error) {
+    console.error("Failed to decode client_state:", error);
+    return {};
+  }
+}
+
 // TELNYX WEBHOOKS (Call start/stop and TTS playback lifecycle)
 app.post("/webhooks/telnyx", async (req, res) => {
   const eventType = req.body?.data?.event_type;
   const callControlId = req.body?.data?.payload?.call_control_id;
+  const callSessionId = req.body?.data?.payload?.call_session_id;
   const payload = req.body?.data?.payload || {};
+
+  // Decode client_state to get user_id and goal
+  const clientStateData = decodeClientState(payload.client_state);
+  const userId = clientStateData.userId || clientStateData.user_id || null;
+  const goal = clientStateData.goal || null;
 
   console.log(`📞 Telnyx webhook event: ${eventType} (callControlId: ${callControlId || 'N/A'})`);
 
-  if (eventType === "call.answered") {
+  // Handle call.initiated - create call record if it doesn't exist
+  if (eventType === "call.initiated" || eventType === "call.ringing") {
+    if (callControlId && isSupabaseConfigured() && userId) {
+      const fromNumber = payload.from || payload.from_number;
+      const toNumber = payload.to || payload.to_number;
+      const timestamp = payload.start_time || new Date().toISOString();
+
+      upsertCall({
+        id: callControlId,
+        user_id: userId,
+        direction: payload.direction === "inbound" ? "inbound" : "outbound",
+        from_e164: fromNumber,
+        to_e164: toNumber,
+        status: eventType === "call.initiated" ? "initiated" : "ringing",
+        goal: goal,
+        started_at: timestamp,
+        metadata: {
+          call_session_id: callSessionId,
+          initiated_by: "webhook",
+        },
+      }).then((result) => {
+        if (result.success) {
+          console.log(`📊 Call ${eventType} logged to Supabase:`, callControlId);
+        } else {
+          console.error(`❌ Failed to log ${eventType}:`, result.error);
+        }
+      }).catch((err) => console.error(`[Supabase] Error logging ${eventType}:`, err));
+    }
+  } else if (eventType === "call.answered") {
     console.log(
       "📦 Telnyx call.answered payload:",
       JSON.stringify(req.body, null, 2)
