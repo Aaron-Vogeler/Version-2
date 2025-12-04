@@ -299,21 +299,30 @@ export async function updateLiveTranscript(
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseClient();
   if (!supabase) {
+    console.log("[Supabase] updateLiveTranscript skipped: client not configured");
     return { success: true };
   }
 
   const trimmedText = text.trim();
   if (!trimmedText) {
+    console.log("[Supabase] updateLiveTranscript skipped: text is empty");
     return { success: true };
   }
 
+  console.log(`[Supabase] updateLiveTranscript: speaker=${speaker}, isFinal=${isFinal}, text="${trimmedText.substring(0, 30)}..."`);
+
   try {
     // Fetch existing live transcript
-    const { data: existing } = await supabase
+    const { data: existing, error: fetchError } = await supabase
       .from("calls")
       .select("live_transcript")
       .eq("id", callId)
       .single();
+
+    if (fetchError) {
+      console.error("[Supabase] Error fetching live transcript:", fetchError.message);
+      return { success: false, error: fetchError.message };
+    }
 
     let existingTranscript = existing?.live_transcript || "";
     const speakerLabel = speaker === "caller" ? "Caller" : "Assistant";
@@ -334,12 +343,14 @@ export async function updateLiveTranscript(
       updatedTranscript = cleanTranscript
         ? `${cleanTranscript}\n\n${formattedBlock}`
         : formattedBlock;
+      console.log(`[Supabase] Adding FINAL transcript for ${speaker}`);
     } else {
       // Interim result: Add to staging area (with markers)
       const interimBlock = `${interimMarkerStart}\n${speakerLabel}\n${trimmedText}\n${interimMarkerEnd}`;
       updatedTranscript = cleanTranscript
         ? `${cleanTranscript}\n\n${interimBlock}`
         : interimBlock;
+      console.log(`[Supabase] Adding INTERIM transcript for ${speaker}`);
     }
 
     const { error } = await supabase
@@ -356,6 +367,7 @@ export async function updateLiveTranscript(
       return { success: false, error: error.message };
     }
 
+    console.log(`[Supabase] ✅ Live transcript updated successfully for ${speaker}`);
     return { success: true };
   } catch (error) {
     console.error("[Supabase] Exception updating live transcript:", error instanceof Error ? error.message : error);

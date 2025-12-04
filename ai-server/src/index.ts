@@ -15,6 +15,10 @@ import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertT
 // Constants
 const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
 
+// Pending TTS utterances map: Track assistant text that's being spoken
+// Only log to transcript after TTS successfully completes (not on barge-in)
+const pendingTtsUtterances = new Map<string, { text: string; callControlId: string; timestamp: string }>();
+
 // -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
@@ -161,29 +165,6 @@ async function scheduleTtsResponse(
         timestamp: new Date().toISOString(),
       });
 
-      // Log assistant response to live transcript and final transcript segments
-      if (callContext.callControlId && isSupabaseConfigured()) {
-        // Live transcript: Add assistant response immediately (marked as final)
-        updateLiveTranscript(
-          callContext.callControlId,
-          "assistant",
-          aiText,
-          true  // Assistant responses are always final (complete sentences)
-        ).catch((err) => {
-          console.error("[LIVE] Error updating assistant live transcript:", err);
-        });
-
-        // Final transcript: Log to segments table
-        insertTranscriptSegment({
-          call_id: callContext.callControlId,
-          speaker: "assistant",
-          track: "outbound",
-          text: aiText,
-        }).catch((err) => {
-          console.error("[Supabase] Error inserting assistant transcript segment:", err);
-        });
-      }
-
       // Check if we should update the rolling summary
       try {
         await maybeUpdateSummaryForCall(callContext.callId);
@@ -269,6 +250,15 @@ async function sendTtsResponse(
     // This enables barge-in detection while audio is being queued/played
     callContext.ttsState = "speaking";
     console.log(`[TTS] Setting ttsState='speaking' (callControlId: ${callContext.callControlId})`);
+
+    // Store assistant text for logging after TTS completes successfully
+    // Use call_control_id as unique key for this TTS request
+    pendingTtsUtterances.set(callContext.callControlId, {
+      text: aiText,
+      callControlId: callContext.callControlId,
+      timestamp: new Date().toISOString(),
+    });
+    console.log(`[TTS] Stored pending utterance for ${callContext.callControlId} (${aiText.substring(0, 50)}...)`);
 
     await synthesizeSpeech(aiText, callContext.callControlId);
 
@@ -583,18 +573,49 @@ app.post("/webhooks/telnyx", async (req, res) => {
         ctx.ttsState = "speaking";
         console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
       } else {
-        console.warn(`[TTS] ⚠️ call.speak.started for unknown callControlId: ${callControlId}`);
+        console.log(`[TTS] 🔊 call.speak.started (callControlId: ${callControlId}, context not found but OK)`);
       }
     }
   } else if (eventType === "call.speak.ended") {
-    // TTS playback has ended
+    // TTS playback has ended - NOW we can log the assistant transcript
     if (callControlId) {
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
       } else {
-        console.warn(`[TTS] ⚠️ call.speak.ended for unknown callControlId: ${callControlId}`);
+        console.log(`[TTS] ✅ call.speak.ended (callControlId: ${callControlId}, context not found but OK)`);
+      }
+
+      // Log assistant transcript ONLY if TTS completed successfully (not interrupted by barge-in)
+      const pendingUtterance = pendingTtsUtterances.get(callControlId);
+      if (pendingUtterance && isSupabaseConfigured()) {
+        console.log(`[TTS] 📝 Logging assistant transcript after successful TTS: "${pendingUtterance.text.substring(0, 50)}..."`);
+
+        // Live transcript: Add assistant response (marked as final)
+        updateLiveTranscript(
+          callControlId,
+          "assistant",
+          pendingUtterance.text,
+          true  // Assistant responses are always final
+        ).catch((err) => {
+          console.error("[LIVE] Error updating assistant live transcript:", err);
+        });
+
+        // Final transcript: Log to segments table
+        insertTranscriptSegment({
+          call_id: callControlId,
+          speaker: "assistant",
+          track: "outbound",
+          text: pendingUtterance.text,
+        }).catch((err) => {
+          console.error("[Supabase] Error inserting assistant transcript segment:", err);
+        });
+
+        // Clear from pending map
+        pendingTtsUtterances.delete(callControlId);
+      } else if (!pendingUtterance) {
+        console.log(`[TTS] ⚠️ No pending utterance found for ${callControlId} (may have been cleared by barge-in)`);
       }
     }
   } else if (eventType === "call.playback.ended") {
@@ -605,7 +626,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.playback.ended - ttsState='idle' (callControlId: ${callControlId})`);
       } else {
-        console.warn(`[TTS] ⚠️ call.playback.ended for unknown callControlId: ${callControlId}`);
+        console.log(`[TTS] ✅ call.playback.ended (callControlId: ${callControlId}, context not found but OK)`);
       }
     }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
@@ -785,6 +806,7 @@ wss.on("connection", async (ws) => {
       // - Final: Commit to permanent transcript
       // ============================================================================
       if (callContext.callControlId && isSupabaseConfigured()) {
+        console.log(`[LIVE] 📝 Updating live transcript: caller="${userText.substring(0, 30)}..." isFinal=${isFinal}`);
         // Fire-and-forget: don't await to avoid slowing down the transcript handler
         updateLiveTranscript(
           callContext.callControlId,
@@ -792,8 +814,15 @@ wss.on("connection", async (ws) => {
           userText,
           isFinal  // Pass the isFinal flag for smart handling
         ).catch((err) => {
-          console.error("[LIVE] Error updating live transcript:", err);
+          console.error("[LIVE] ❌ Error updating live transcript:", err);
         });
+      } else {
+        if (!callContext.callControlId) {
+          console.warn("[LIVE] ⚠️ Cannot update live transcript: callControlId not set");
+        }
+        if (!isSupabaseConfigured()) {
+          console.warn("[LIVE] ⚠️ Cannot update live transcript: Supabase not configured");
+        }
       }
 
       // ============================================================================
@@ -810,6 +839,13 @@ wss.on("connection", async (ws) => {
 
           // Mark as stopping
           callContext.ttsState = "stopping";
+
+          // CRITICAL: Clear pending TTS utterance - this text was NOT fully spoken
+          if (pendingTtsUtterances.has(callContext.callControlId)) {
+            const interrupted = pendingTtsUtterances.get(callContext.callControlId);
+            console.log(`[BARGE-IN] 🗑️ Clearing interrupted assistant utterance: "${interrupted?.text.substring(0, 50)}..."`);
+            pendingTtsUtterances.delete(callContext.callControlId);
+          }
 
           // Issue playback stop
           try {
