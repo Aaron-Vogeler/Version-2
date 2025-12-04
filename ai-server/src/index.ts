@@ -261,6 +261,16 @@ async function sendTtsResponse(
 
     await synthesizeSpeech(aiText, callContext.callControlId);
 
+    // Log AI speech to Supabase now that it's been queued for playback
+    if (isSupabaseConfigured()) {
+      appendTranscript(
+        callContext.callControlId,
+        aiText,
+        "processing",
+        "Merlin"
+      ).catch((err) => console.error("[Supabase] Error logging AI transcript:", err));
+    }
+
     // NOTE: Do NOT set ttsState='idle' here!
     // The HTTP response returns BEFORE audio finishes playing.
     // Telnyx webhooks (call.speak.ended) will set ttsState='idle' when playback truly ends.
