@@ -12,7 +12,7 @@ import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording } from "./utils/supabase";
 import {
-  createMulawStereoWav,
+  createStereoWavFromBuffers,
   concatTrack,
   getBufferedSize,
   isCustomRecordingEnabled,
@@ -384,16 +384,17 @@ async function finalizeCustomRecording(callContext: CallContext): Promise<void> 
       `[CustomRecording] Finalizing recording for ${callControlId} (inbound chunks: ${buffers.inbound.length}, outbound chunks: ${buffers.outbound.length})`
     );
 
-    // Concatenate all chunks for each track
-    const inboundAudio = concatTrack(buffers.inbound);
-    const outboundAudio = concatTrack(buffers.outbound);
+    // Calculate raw buffer sizes for logging
+    const inboundSize = buffers.inbound.reduce((sum, buf) => sum + buf.length, 0);
+    const outboundSize = buffers.outbound.reduce((sum, buf) => sum + buf.length, 0);
 
     console.log(
-      `[CustomRecording] Track sizes: inbound=${inboundAudio.length}B, outbound=${outboundAudio.length}B`
+      `[CustomRecording] Track sizes: inbound=${inboundSize}B, outbound=${outboundSize}B`
     );
 
-    // Create stereo WAV file
-    const wavFile = createMulawStereoWav(inboundAudio, outboundAudio);
+    // Create stereo WAV file with crossfading between chunks to eliminate clicks
+    // Pass buffer arrays directly so crossfading can be applied at chunk boundaries
+    const wavFile = createStereoWavFromBuffers(buffers.inbound, buffers.outbound);
 
     // Upload to Supabase Storage
     const result = await uploadCustomCallRecording(callControlId, wavFile);

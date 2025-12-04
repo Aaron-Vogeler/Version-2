@@ -3,18 +3,172 @@
  * =============================
  * Creates stereo WAV files from dual-channel μ-law audio streams.
  *
- * Format: Stereo WAV with μ-law (G.711) encoding at 8kHz
+ * Format: Stereo WAV with 16-bit PCM at 8kHz (decoded from μ-law)
  * - Left channel: inbound (caller)
  * - Right channel: outbound (assistant)
  *
- * WAV Header Structure (44 bytes):
- * - RIFF header: 12 bytes (ChunkID, ChunkSize, Format)
- * - fmt sub-chunk: 24 bytes (SubchunkID, Size, AudioFormat, Channels, SampleRate, ByteRate, BlockAlign, BitsPerSample)
- * - data sub-chunk: 8 bytes header + audio data
+ * The audio is decoded from μ-law to PCM and crossfaded between chunks
+ * to eliminate clicking artifacts at chunk boundaries.
  */
 
+// μ-law decoding lookup table for fast conversion
+// Pre-computed table maps 8-bit μ-law values to 16-bit linear PCM
+const MULAW_DECODE_TABLE: Int16Array = new Int16Array(256);
+
+// Initialize the μ-law decode table
+(function initMulawTable() {
+  for (let i = 0; i < 256; i++) {
+    // μ-law uses inverted bits
+    const mulaw = ~i & 0xff;
+
+    // Extract sign, exponent, and mantissa
+    const sign = mulaw & 0x80 ? -1 : 1;
+    const exponent = (mulaw >> 4) & 0x07;
+    const mantissa = mulaw & 0x0f;
+
+    // Reconstruct the linear sample
+    // Formula: ((mantissa << 3) + 0x84) << exponent - 0x84
+    let sample: number;
+    if (exponent === 0) {
+      sample = (mantissa << 3) + 0x84;
+    } else {
+      sample = ((mantissa << 3) + 0x84) << exponent;
+    }
+    sample -= 0x84;
+
+    MULAW_DECODE_TABLE[i] = sign * sample;
+  }
+})();
+
 /**
- * Concatenate an array of Buffers into a single Buffer.
+ * Decode a single μ-law byte to 16-bit linear PCM.
+ * Uses pre-computed lookup table for speed.
+ */
+function decodeMulaw(mulaw: number): number {
+  return MULAW_DECODE_TABLE[mulaw & 0xff];
+}
+
+/**
+ * Decode a buffer of μ-law bytes to 16-bit PCM samples.
+ * @param mulaw - Buffer of μ-law encoded audio
+ * @returns Int16Array of decoded PCM samples
+ */
+function decodeMulawBuffer(mulaw: Buffer): Int16Array {
+  const pcm = new Int16Array(mulaw.length);
+  for (let i = 0; i < mulaw.length; i++) {
+    pcm[i] = decodeMulaw(mulaw[i]);
+  }
+  return pcm;
+}
+
+// Crossfade length in samples (at 8kHz, 32 samples = 4ms)
+const CROSSFADE_SAMPLES = 32;
+
+/**
+ * Concatenate an array of μ-law Buffers with crossfading to eliminate clicks.
+ * Decodes to PCM, applies crossfade between chunks, returns PCM Int16Array.
+ *
+ * @param buffers - Array of μ-law Buffer chunks
+ * @returns Int16Array of decoded and crossfaded PCM samples
+ */
+export function concatTrackWithCrossfade(buffers: Buffer[]): Int16Array {
+  if (!buffers || buffers.length === 0) {
+    return new Int16Array(0);
+  }
+
+  if (buffers.length === 1) {
+    return decodeMulawBuffer(buffers[0]);
+  }
+
+  // Calculate total length
+  let totalLength = 0;
+  for (const buf of buffers) {
+    totalLength += buf.length;
+  }
+
+  // Subtract overlap regions (we'll blend them)
+  const overlapCount = buffers.length - 1;
+  const finalLength = totalLength - overlapCount * CROSSFADE_SAMPLES;
+
+  if (finalLength <= 0) {
+    // Very short audio, just decode without crossfade
+    return decodeMulawBuffer(Buffer.concat(buffers));
+  }
+
+  const result = new Int16Array(finalLength);
+  let writePos = 0;
+
+  for (let chunkIdx = 0; chunkIdx < buffers.length; chunkIdx++) {
+    const chunk = buffers[chunkIdx];
+    const pcm = decodeMulawBuffer(chunk);
+
+    if (chunkIdx === 0) {
+      // First chunk: write all but the last CROSSFADE_SAMPLES
+      const copyLen = Math.max(0, pcm.length - CROSSFADE_SAMPLES);
+      for (let i = 0; i < copyLen; i++) {
+        result[writePos++] = pcm[i];
+      }
+
+      // Store the fade-out portion for blending with next chunk
+      if (pcm.length >= CROSSFADE_SAMPLES) {
+        const fadeStart = pcm.length - CROSSFADE_SAMPLES;
+        for (let i = 0; i < CROSSFADE_SAMPLES; i++) {
+          // Fade out: multiply by decreasing factor
+          const fadeOut = 1.0 - i / CROSSFADE_SAMPLES;
+          result[writePos + i] = Math.round(pcm[fadeStart + i] * fadeOut);
+        }
+      }
+    } else if (chunkIdx === buffers.length - 1) {
+      // Last chunk: blend first CROSSFADE_SAMPLES with previous, then write rest
+      const blendLen = Math.min(CROSSFADE_SAMPLES, pcm.length);
+
+      for (let i = 0; i < blendLen; i++) {
+        // Fade in: multiply by increasing factor, add to existing fade-out
+        const fadeIn = i / CROSSFADE_SAMPLES;
+        const blended = result[writePos + i] + Math.round(pcm[i] * fadeIn);
+        // Clamp to 16-bit range
+        result[writePos + i] = Math.max(-32768, Math.min(32767, blended));
+      }
+      writePos += blendLen;
+
+      // Write the rest of the chunk
+      for (let i = blendLen; i < pcm.length; i++) {
+        result[writePos++] = pcm[i];
+      }
+    } else {
+      // Middle chunk: blend first CROSSFADE_SAMPLES, write middle, prepare fade-out
+      const blendLen = Math.min(CROSSFADE_SAMPLES, pcm.length);
+
+      // Blend with previous chunk's fade-out
+      for (let i = 0; i < blendLen; i++) {
+        const fadeIn = i / CROSSFADE_SAMPLES;
+        const blended = result[writePos + i] + Math.round(pcm[i] * fadeIn);
+        result[writePos + i] = Math.max(-32768, Math.min(32767, blended));
+      }
+      writePos += blendLen;
+
+      // Write middle portion (excluding fade regions)
+      const middleEnd = Math.max(blendLen, pcm.length - CROSSFADE_SAMPLES);
+      for (let i = blendLen; i < middleEnd; i++) {
+        result[writePos++] = pcm[i];
+      }
+
+      // Prepare fade-out for next chunk
+      if (pcm.length > CROSSFADE_SAMPLES) {
+        const fadeStart = pcm.length - CROSSFADE_SAMPLES;
+        for (let i = 0; i < CROSSFADE_SAMPLES; i++) {
+          const fadeOut = 1.0 - i / CROSSFADE_SAMPLES;
+          result[writePos + i] = Math.round(pcm[fadeStart + i] * fadeOut);
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Simple concatenation without crossfade (legacy, for reference).
  * @param buffers - Array of Buffer chunks
  * @returns Single concatenated Buffer
  */
@@ -26,37 +180,31 @@ export function concatTrack(buffers: Buffer[]): Buffer {
 }
 
 /**
- * Interleave two mono μ-law tracks into stereo.
- * If track lengths differ, pad the shorter track with silence (0xFF for μ-law).
+ * Interleave two mono PCM tracks into stereo.
+ * If track lengths differ, pad the shorter track with silence (0).
  *
- * μ-law encoding: 0xFF represents silence (zero amplitude).
- * Interleaving pattern: L0 R0 L1 R1 L2 R2 ...
- *
- * @param left - Left channel (inbound/caller) μ-law bytes
- * @param right - Right channel (outbound/assistant) μ-law bytes
- * @param padByte - Byte value for padding shorter track (default: 0xFF = μ-law silence)
- * @returns Interleaved stereo buffer (2x the length of the longer track)
+ * @param left - Left channel (inbound/caller) PCM samples
+ * @param right - Right channel (outbound/assistant) PCM samples
+ * @returns Interleaved stereo Int16Array (2x the length of the longer track)
  */
-export function interleaveMulawStereo(
-  left: Buffer,
-  right: Buffer,
-  padByte: number = 0xff
-): Buffer {
+export function interleavePcmStereo(
+  left: Int16Array,
+  right: Int16Array
+): Int16Array {
   const maxLen = Math.max(left.length, right.length);
 
-  // If both are empty, return empty buffer
   if (maxLen === 0) {
-    return Buffer.alloc(0);
+    return new Int16Array(0);
   }
 
-  // Allocate stereo buffer (2 bytes per sample: 1 left + 1 right)
-  const stereo = Buffer.alloc(maxLen * 2);
+  // Allocate stereo buffer (2 samples per frame: 1 left + 1 right)
+  const stereo = new Int16Array(maxLen * 2);
 
   for (let i = 0; i < maxLen; i++) {
-    // Get left sample (pad with silence if shorter)
-    const leftSample = i < left.length ? left[i] : padByte;
-    // Get right sample (pad with silence if shorter)
-    const rightSample = i < right.length ? right[i] : padByte;
+    // Get left sample (0 = silence if shorter)
+    const leftSample = i < left.length ? left[i] : 0;
+    // Get right sample (0 = silence if shorter)
+    const rightSample = i < right.length ? right[i] : 0;
 
     // Interleave: left channel first, then right channel
     stereo[i * 2] = leftSample;
@@ -67,33 +215,32 @@ export function interleaveMulawStereo(
 }
 
 /**
- * Generate a 44-byte WAV header for stereo μ-law audio.
+ * Generate a 44-byte WAV header for stereo 16-bit PCM audio.
  *
  * WAV format details:
- * - AudioFormat = 7 (μ-law / PCMU)
+ * - AudioFormat = 1 (PCM)
  * - NumChannels = 2 (stereo)
  * - SampleRate = 8000 Hz (telephony standard)
- * - BitsPerSample = 8 (μ-law is 8-bit)
- * - ByteRate = SampleRate * NumChannels * BitsPerSample/8 = 8000 * 2 * 1 = 16000
- * - BlockAlign = NumChannels * BitsPerSample/8 = 2 * 1 = 2
+ * - BitsPerSample = 16
+ * - ByteRate = SampleRate * NumChannels * BitsPerSample/8 = 8000 * 2 * 2 = 32000
+ * - BlockAlign = NumChannels * BitsPerSample/8 = 2 * 2 = 4
  *
  * @param dataByteLength - Length of the audio data in bytes
  * @param sampleRate - Sample rate (default: 8000 Hz for telephony)
  * @returns 44-byte WAV header Buffer
  */
-export function wavHeaderMulawStereo(
+export function wavHeaderPcmStereo(
   dataByteLength: number,
   sampleRate: number = 8000
 ): Buffer {
   const numChannels = 2; // Stereo
-  const bitsPerSample = 8; // μ-law uses 8 bits per sample
-  const audioFormat = 7; // μ-law (PCMU) format code per WAV specification
+  const bitsPerSample = 16; // 16-bit PCM
+  const audioFormat = 1; // PCM format
 
   const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
   const blockAlign = numChannels * (bitsPerSample / 8);
 
-  // Total file size = 36 bytes (header without "data" chunk header) + 8 (data chunk header) + data
-  // ChunkSize = 4 + (8 + 16) + (8 + dataByteLength) = 36 + dataByteLength
+  // ChunkSize = 36 + dataByteLength
   const chunkSize = 36 + dataByteLength;
 
   const header = Buffer.alloc(44);
@@ -110,19 +257,19 @@ export function wavHeaderMulawStereo(
   // fmt sub-chunk
   header.write("fmt ", offset); // Subchunk1ID
   offset += 4;
-  header.writeUInt32LE(16, offset); // Subchunk1Size (16 for PCM/μ-law)
+  header.writeUInt32LE(16, offset); // Subchunk1Size (16 for PCM)
   offset += 4;
-  header.writeUInt16LE(audioFormat, offset); // AudioFormat (7 = μ-law)
+  header.writeUInt16LE(audioFormat, offset); // AudioFormat (1 = PCM)
   offset += 2;
   header.writeUInt16LE(numChannels, offset); // NumChannels (2 = stereo)
   offset += 2;
   header.writeUInt32LE(sampleRate, offset); // SampleRate (8000)
   offset += 4;
-  header.writeUInt32LE(byteRate, offset); // ByteRate (16000)
+  header.writeUInt32LE(byteRate, offset); // ByteRate (32000)
   offset += 4;
-  header.writeUInt16LE(blockAlign, offset); // BlockAlign (2)
+  header.writeUInt16LE(blockAlign, offset); // BlockAlign (4)
   offset += 2;
-  header.writeUInt16LE(bitsPerSample, offset); // BitsPerSample (8)
+  header.writeUInt16LE(bitsPerSample, offset); // BitsPerSample (16)
   offset += 2;
 
   // data sub-chunk
@@ -134,20 +281,46 @@ export function wavHeaderMulawStereo(
 }
 
 /**
- * Create a complete stereo μ-law WAV file from two mono tracks.
- *
- * @param inbound - Inbound (caller/left channel) μ-law audio buffer
- * @param outbound - Outbound (assistant/right channel) μ-law audio buffer
- * @returns Complete WAV file as Buffer (header + interleaved audio data)
+ * Convert Int16Array to Buffer (little-endian).
  */
-export function createMulawStereoWav(inbound: Buffer, outbound: Buffer): Buffer {
-  // Interleave the two mono tracks into stereo
-  const stereoData = interleaveMulawStereo(inbound, outbound);
+function int16ArrayToBuffer(pcm: Int16Array): Buffer {
+  const buffer = Buffer.alloc(pcm.length * 2);
+  for (let i = 0; i < pcm.length; i++) {
+    buffer.writeInt16LE(pcm[i], i * 2);
+  }
+  return buffer;
+}
+
+/**
+ * Create a complete stereo PCM WAV file from two mono μ-law track buffers.
+ * Decodes μ-law to PCM, applies crossfading, and outputs 16-bit PCM WAV.
+ *
+ * @param inboundBuffers - Array of inbound (caller/left channel) μ-law buffers
+ * @param outboundBuffers - Array of outbound (assistant/right channel) μ-law buffers
+ * @returns Complete WAV file as Buffer (header + interleaved PCM audio data)
+ */
+export function createStereoWavFromBuffers(
+  inboundBuffers: Buffer[],
+  outboundBuffers: Buffer[]
+): Buffer {
+  // Decode and crossfade each track
+  const inboundPcm = concatTrackWithCrossfade(inboundBuffers);
+  const outboundPcm = concatTrackWithCrossfade(outboundBuffers);
+
+  console.log(
+    `[CustomRecording] Decoded tracks: inbound=${inboundPcm.length} samples, outbound=${outboundPcm.length} samples`
+  );
+
+  // Interleave the two mono PCM tracks into stereo
+  const stereoPcm = interleavePcmStereo(inboundPcm, outboundPcm);
+
+  // Convert to buffer
+  const stereoData = int16ArrayToBuffer(stereoPcm);
 
   // Generate WAV header for the stereo data
-  const header = wavHeaderMulawStereo(stereoData.length);
+  const header = wavHeaderPcmStereo(stereoData.length);
 
-  // Sanity check: header should be 44 bytes and start with "RIFF"
+  // Sanity check
   if (header.length !== 44) {
     console.error("[CustomRecording] WAV header size mismatch:", header.length);
   }
@@ -158,9 +331,20 @@ export function createMulawStereoWav(inbound: Buffer, outbound: Buffer): Buffer 
   // Concatenate header and audio data
   const wavFile = Buffer.concat([header, stereoData]);
 
-  console.log(`[CustomRecording] Created WAV: header=${header.length}B, data=${stereoData.length}B, total=${wavFile.length}B`);
+  console.log(
+    `[CustomRecording] Created WAV: header=${header.length}B, data=${stereoData.length}B, total=${wavFile.length}B`
+  );
 
   return wavFile;
+}
+
+/**
+ * Legacy function - kept for backward compatibility but now uses the improved pipeline.
+ * @deprecated Use createStereoWavFromBuffers instead
+ */
+export function createMulawStereoWav(inbound: Buffer, outbound: Buffer): Buffer {
+  // Convert single buffers to arrays and use the new function
+  return createStereoWavFromBuffers([inbound], [outbound]);
 }
 
 /**
@@ -174,8 +358,14 @@ export function getBufferedSize(recordingBuffers: {
   inbound: Buffer[];
   outbound: Buffer[];
 }): number {
-  const inboundSize = recordingBuffers.inbound.reduce((sum, buf) => sum + buf.length, 0);
-  const outboundSize = recordingBuffers.outbound.reduce((sum, buf) => sum + buf.length, 0);
+  const inboundSize = recordingBuffers.inbound.reduce(
+    (sum, buf) => sum + buf.length,
+    0
+  );
+  const outboundSize = recordingBuffers.outbound.reduce(
+    (sum, buf) => sum + buf.length,
+    0
+  );
   return inboundSize + outboundSize;
 }
 
