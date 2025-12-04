@@ -12,7 +12,7 @@ import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 
 // Constants
-const TTS_DEBOUNCE_MS = 800; // 800 milliseconds of silence before responding
+const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -525,56 +525,20 @@ wss.on("connection", async (ws) => {
 
   console.log("🎧 Deepgram stream started");
 
-  // INSTANT BARGE-IN: Handle Deepgram SpeechStarted event (VAD)
-  // This fires as soon as caller starts speaking, BEFORE any transcript is ready
-  dgLive.on(LiveTranscriptionEvents.SpeechStarted, async () => {
-    try {
-      if (!callContext || !callContext.callControlId) {
-        return; // No active call yet
-      }
-
-      // Check if AI is currently speaking
-      if (callContext.ttsState === "speaking") {
-        // Apply cooldown to prevent spamming the stop endpoint
-        const now = Date.now();
-        if (callContext.bargeInCooldownUntil && now < callContext.bargeInCooldownUntil) {
-          console.log(`[BARGE-IN] Cooldown active, skipping (${callContext.bargeInCooldownUntil - now}ms remaining)`);
-          return;
-        }
-
-        console.log(`[BARGE-IN] 🛑 SpeechStarted detected while AI speaking (callControlId: ${callContext.callControlId})`);
-
-        // Set cooldown (200ms) to prevent multiple rapid stops
-        callContext.bargeInCooldownUntil = now + 200;
-
-        // Mark as stopping
-        callContext.ttsState = "stopping";
-
-        // Issue playback stop
-        await stopSpeaking(callContext.callControlId);
-
-        // Clear any pending TTS debounce timer
-        if (callContext.ttsDebounceTimer) {
-          clearTimeout(callContext.ttsDebounceTimer);
-          callContext.ttsDebounceTimer = undefined;
-        }
-
-        // Increment turn sequence to invalidate any in-flight LLM/TTS work
-        callContext.turnSeq = (callContext.turnSeq || 0) + 1;
-        console.log(`[TURN] Turn sequence incremented to ${callContext.turnSeq} (stale responses will be dropped)`);
-
-        // Mark as idle after stop
-        callContext.ttsState = "idle";
-      }
-    } catch (error) {
-      console.error(
-        "[BARGE-IN] ❌ Error handling SpeechStarted:",
-        error instanceof Error ? error.message : error
-      );
+  // NOTE: We no longer use SpeechStarted for barge-in because it's too sensitive
+  // (triggers on any sound, not just actual words). Instead, barge-in is now
+  // handled in the Transcript event handler, which only fires when actual words
+  // are detected by Deepgram's speech recognition.
+  dgLive.on(LiveTranscriptionEvents.SpeechStarted, () => {
+    // Log for debugging, but don't trigger barge-in on VAD alone
+    if (callContext?.ttsState === "speaking") {
+      console.log("[VAD] SpeechStarted detected while AI speaking (waiting for actual words before barge-in)");
     }
   });
 
-  // Relay Deepgram transcript → Groq → Telnyx (with 800ms silence debounce)
+  // Relay Deepgram transcript → Groq → Telnyx (with debounce)
+  // BARGE-IN: Now handled here instead of SpeechStarted, so we only interrupt
+  // when actual words are detected (not just sounds/noise)
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
@@ -595,8 +559,45 @@ wss.on("connection", async (ws) => {
 
       console.log("🗣️ Caller transcript:", userText);
 
+      // BARGE-IN: If AI is speaking and we got actual words, interrupt it
+      // This is more reliable than VAD because it only triggers on recognized speech
+      if (callContext.ttsState === "speaking" && callContext.callControlId) {
+        // Apply cooldown to prevent spamming the stop endpoint
+        const now = Date.now();
+        if (!callContext.bargeInCooldownUntil || now >= callContext.bargeInCooldownUntil) {
+          console.log(`[BARGE-IN] 🛑 Words detected while AI speaking: "${userText}" (callControlId: ${callContext.callControlId})`);
+
+          // Set cooldown (300ms) to prevent multiple rapid stops
+          callContext.bargeInCooldownUntil = now + 300;
+
+          // Mark as stopping
+          callContext.ttsState = "stopping";
+
+          // Issue playback stop
+          try {
+            await stopSpeaking(callContext.callControlId);
+          } catch (stopError) {
+            console.error("[BARGE-IN] ❌ Error stopping playback:", stopError);
+          }
+
+          // Clear any pending TTS debounce timer (we'll queue new response below)
+          if (callContext.ttsDebounceTimer) {
+            clearTimeout(callContext.ttsDebounceTimer);
+            callContext.ttsDebounceTimer = undefined;
+          }
+
+          // Increment turn sequence to invalidate any in-flight LLM/TTS work
+          callContext.turnSeq = (callContext.turnSeq || 0) + 1;
+          console.log(`[TURN] Turn sequence incremented to ${callContext.turnSeq} (stale responses will be dropped)`);
+
+          // Mark as idle after stop
+          callContext.ttsState = "idle";
+        } else {
+          console.log(`[BARGE-IN] Cooldown active, skipping (${callContext.bargeInCooldownUntil - now}ms remaining)`);
+        }
+      }
+
       // Queue the transcript with debounce
-      // Note: Barge-in is now handled by SpeechStarted event (VAD), not here
       queueUserTranscript(callContext, userText, ws);
     } catch (error) {
       console.error(
