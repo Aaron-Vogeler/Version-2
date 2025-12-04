@@ -14,118 +14,68 @@
  */
 
 /**
- * Decode μ-law to linear PCM sample.
- * @param mulaw - μ-law encoded byte
- * @returns Linear PCM value (-32768 to 32767)
+ * Apply a simple linear ramp between two values.
+ * Used to smooth discontinuities at packet boundaries.
+ * @param from - Starting value
+ * @param to - Ending value
+ * @param steps - Number of steps in the ramp
+ * @returns Array of intermediate values
  */
-function decodeMulaw(mulaw: number): number {
-  mulaw = ~mulaw & 0xff;
-  const sign = (mulaw & 0x80) ? -1 : 1;
-  const exponent = (mulaw >> 4) & 0x07;
-  const mantissa = mulaw & 0x0f;
-
-  let sample: number;
-  if (exponent === 0) {
-    sample = (mantissa << 3) + 132;
-  } else {
-    sample = ((mantissa << 3) + 132) << exponent;
+function linearRamp(from: number, to: number, steps: number): number[] {
+  const result: number[] = [];
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    result.push(from + (to - from) * t);
   }
-  sample -= 132;
-
-  return sign * sample;
+  return result;
 }
 
 /**
- * Encode linear PCM sample to μ-law.
- * @param sample - Linear PCM value (-32768 to 32767)
- * @returns μ-law encoded byte
+ * Smooth discontinuities between audio buffers by applying short ramps.
+ * Only applies smoothing if there's a significant jump between buffers.
+ * @param buffers - Array of Buffer chunks (μ-law encoded)
+ * @returns Array of Buffers with discontinuities smoothed
  */
-function encodeMulaw(sample: number): number {
-  const MULAW_MAX = 0x1fff;
-  const MULAW_BIAS = 132;
-
-  // Get sign and absolute value
-  const sign = sample < 0 ? 0x80 : 0x00;
-  if (sample < 0) sample = -sample;
-
-  // Clip to max value
-  if (sample > MULAW_MAX) sample = MULAW_MAX;
-
-  // Add bias
-  sample += MULAW_BIAS;
-
-  // Find exponent (position of highest set bit)
-  let exponent = 0;
-  let temp = sample >> 8;
-  while (temp > 0) {
-    exponent++;
-    temp >>= 1;
+function smoothDiscontinuities(buffers: Buffer[]): Buffer[] {
+  if (buffers.length <= 1) {
+    return buffers;
   }
 
-  // Limit exponent to 7
-  if (exponent > 7) exponent = 7;
+  const smoothed: Buffer[] = [];
+  const RAMP_SAMPLES = 4; // 0.5ms ramp at 8kHz
+  const DISCONTINUITY_THRESHOLD = 30; // Threshold for detecting clicks
 
-  // Extract mantissa (4 bits after exponent position)
-  const mantissa = (sample >> (exponent + 3)) & 0x0f;
+  for (let i = 0; i < buffers.length; i++) {
+    const currentBuf = Buffer.from(buffers[i]); // Copy to avoid modifying original
 
-  // Compose μ-law byte and invert
-  const mulaw = ~(sign | (exponent << 4) | mantissa) & 0xff;
+    // Check for discontinuity with previous buffer
+    if (i > 0 && buffers[i - 1].length > 0 && currentBuf.length >= RAMP_SAMPLES) {
+      const prevLastSample = buffers[i - 1][buffers[i - 1].length - 1];
+      const currentFirstSample = currentBuf[0];
 
-  return mulaw;
+      // Detect significant discontinuity (potential click)
+      const diff = Math.abs(prevLastSample - currentFirstSample);
+
+      if (diff > DISCONTINUITY_THRESHOLD) {
+        // Apply a short ramp at the start of this buffer to smooth the transition
+        const rampValues = linearRamp(prevLastSample, currentFirstSample, RAMP_SAMPLES);
+        for (let j = 0; j < RAMP_SAMPLES && j < currentBuf.length; j++) {
+          currentBuf[j] = Math.round(rampValues[j]);
+        }
+      }
+    }
+
+    smoothed.push(currentBuf);
+  }
+
+  return smoothed;
 }
 
 /**
- * Apply crossfade between two buffers at the boundary.
- * Smooths the transition to eliminate clicking noises.
- * @param buf1 - First buffer (end will be crossfaded)
- * @param buf2 - Second buffer (start will be crossfaded)
- * @param crossfadeSamples - Number of samples to crossfade (default: 8)
- * @returns Tuple of [modified buf1, modified buf2]
- */
-function applyCrossfade(
-  buf1: Buffer,
-  buf2: Buffer,
-  crossfadeSamples: number = 8
-): [Buffer, Buffer] {
-  // If either buffer is too short for crossfading, return as-is
-  if (buf1.length < crossfadeSamples || buf2.length < crossfadeSamples) {
-    return [buf1, buf2];
-  }
-
-  // Create copies to avoid modifying originals
-  const modified1 = Buffer.from(buf1);
-  const modified2 = Buffer.from(buf2);
-
-  // Apply crossfade at the boundary
-  for (let i = 0; i < crossfadeSamples; i++) {
-    // Calculate fade weights (linear crossfade)
-    const fade1 = 1.0 - (i / crossfadeSamples); // Fade out buf1
-    const fade2 = i / crossfadeSamples;         // Fade in buf2
-
-    // Get samples from end of buf1 and start of buf2
-    const idx1 = buf1.length - crossfadeSamples + i;
-    const idx2 = i;
-
-    // Decode μ-law to linear PCM
-    const sample1 = decodeMulaw(buf1[idx1]);
-    const sample2 = decodeMulaw(buf2[idx2]);
-
-    // Apply crossfade
-    const blended = sample1 * fade1 + sample2 * fade2;
-
-    // Encode back to μ-law
-    modified1[idx1] = encodeMulaw(blended);
-    modified2[idx2] = encodeMulaw(blended);
-  }
-
-  return [modified1, modified2];
-}
-
-/**
- * Concatenate an array of Buffers into a single Buffer with smooth transitions.
- * Applies crossfading at segment boundaries to eliminate clicking noises.
+ * Concatenate an array of Buffers into a single Buffer.
+ * Applies discontinuity smoothing to eliminate clicking noises.
  * @param buffers - Array of Buffer chunks
- * @returns Single concatenated Buffer with smoothed boundaries
+ * @returns Single concatenated Buffer with smooth transitions
  */
 export function concatTrack(buffers: Buffer[]): Buffer {
   if (!buffers || buffers.length === 0) {
@@ -136,30 +86,8 @@ export function concatTrack(buffers: Buffer[]): Buffer {
     return buffers[0];
   }
 
-  // Apply crossfading between consecutive segments
-  const smoothedBuffers: Buffer[] = [];
-
-  for (let i = 0; i < buffers.length; i++) {
-    if (i === 0) {
-      // First buffer: only crossfade with next
-      if (buffers.length > 1) {
-        const [modified1, modified2] = applyCrossfade(buffers[0], buffers[1]);
-        smoothedBuffers.push(modified1);
-        // Store modified2 for next iteration
-        buffers[1] = modified2;
-      } else {
-        smoothedBuffers.push(buffers[0]);
-      }
-    } else if (i === buffers.length - 1) {
-      // Last buffer: already crossfaded with previous
-      smoothedBuffers.push(buffers[i]);
-    } else {
-      // Middle buffers: crossfade with next
-      const [modified1, modified2] = applyCrossfade(buffers[i], buffers[i + 1]);
-      smoothedBuffers.push(modified1);
-      buffers[i + 1] = modified2;
-    }
-  }
+  // Smooth discontinuities between buffers
+  const smoothedBuffers = smoothDiscontinuities(buffers);
 
   return Buffer.concat(smoothedBuffers);
 }
