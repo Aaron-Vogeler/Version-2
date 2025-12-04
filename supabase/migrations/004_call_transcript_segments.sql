@@ -39,8 +39,8 @@ CREATE POLICY "Service role can manage transcript segments"
   USING (true)
   WITH CHECK (true);
 
--- RLS Policy: Users can view segments for calls they can access
--- This relies on the call being visible to the user
+-- RLS Policy: Users can view segments for calls they own
+-- Uses user_id from calls table (no tenant_id in this schema)
 CREATE POLICY "Users can view segments for accessible calls"
   ON public.call_transcript_segments
   FOR SELECT
@@ -48,7 +48,7 @@ CREATE POLICY "Users can view segments for accessible calls"
     EXISTS (
       SELECT 1 FROM public.calls c
       WHERE c.id = call_transcript_segments.call_id
-      AND c.tenant_id = (auth.jwt() -> 'user_metadata' ->> 'tenant_id')::UUID
+      AND c.user_id = auth.uid()
     )
   );
 
