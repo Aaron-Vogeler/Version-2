@@ -282,6 +282,71 @@ export async function appendTranscript(
 }
 
 /**
+ * Update live transcript with interim results (fast, real-time updates)
+ * This provides the fastest transcript by updating on every interim result
+ * @param callId - The call control ID
+ * @param speaker - Speaker identification ("caller" or "assistant")
+ * @param text - The interim transcript text
+ * @returns Success/error result
+ */
+export async function updateLiveTranscript(
+  callId: string,
+  speaker: TranscriptSpeaker,
+  text: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { success: true };
+  }
+
+  const trimmedText = text.trim();
+  if (!trimmedText) {
+    return { success: true };
+  }
+
+  try {
+    // Fetch existing live transcript
+    const { data: existing } = await supabase
+      .from("calls")
+      .select("live_transcript")
+      .eq("id", callId)
+      .single();
+
+    const existingTranscript = existing?.live_transcript || "";
+
+    // Format: Speaker Name\nText with double newline for separation
+    const speakerLabel = speaker === "caller" ? "Caller" : "Assistant";
+    const formattedBlock = `${speakerLabel}\n${trimmedText}`;
+
+    const updatedTranscript = existingTranscript
+      ? `${existingTranscript}\n\n${formattedBlock}`
+      : formattedBlock;
+
+    const { error } = await supabase
+      .from("calls")
+      .update({
+        live_transcript: updatedTranscript,
+        transcript_status: "processing",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", callId);
+
+    if (error) {
+      console.error("[Supabase] Error updating live transcript:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("[Supabase] Exception updating live transcript:", error instanceof Error ? error.message : error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
  * Insert a transcript segment (insert-only, no reads)
  * Robust logging for only final/confirmed speech from caller or assistant
  * @param segment - The transcript segment to insert

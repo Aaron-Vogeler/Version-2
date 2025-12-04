@@ -10,7 +10,7 @@ import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
-import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment } from "./utils/supabase";
+import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, updateLiveTranscript } from "./utils/supabase";
 
 // Constants
 const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
@@ -733,9 +733,9 @@ wss.on("connection", async (ws) => {
   });
 
   // Relay Deepgram transcript → Groq → Telnyx (with debounce)
-  // STRICT-FINAL-ONLY: Only log final recognized speech (is_final=true)
+  // LIVE TRANSCRIPT: Log all transcripts (interim + final) to live_transcript for speed
+  // FINAL TRANSCRIPT: Only log final recognized speech (is_final=true) to call_transcript_segments for accuracy
   // BARGE-IN: Trigger on any transcript (interim or final) for responsiveness
-  // LOGGING: Only log to Supabase when speech completes (speech_final or timer flush)
   dgLive.on(LiveTranscriptionEvents.Transcript, async (dgEvent: any) => {
     try {
       const results = dgEvent.channel?.alternatives?.[0];
@@ -755,6 +755,20 @@ wss.on("connection", async (ws) => {
       if (!userText) return;
 
       console.log("🗣️ Caller transcript:", userText, `(is_final: ${results.is_final}, speech_final: ${results.speech_final})`);
+
+      // ============================================================================
+      // LIVE TRANSCRIPT: Log ALL transcripts (interim + final) for fastest updates
+      // ============================================================================
+      if (callContext.callControlId && isSupabaseConfigured()) {
+        // Fire-and-forget: don't await to avoid slowing down the transcript handler
+        updateLiveTranscript(
+          callContext.callControlId,
+          "caller",
+          userText
+        ).catch((err) => {
+          console.error("[LIVE] Error updating live transcript:", err);
+        });
+      }
 
       // ============================================================================
       // BARGE-IN: Trigger on any recognized words (interim or final) for responsiveness
@@ -802,11 +816,10 @@ wss.on("connection", async (ws) => {
       }
 
       // ============================================================================
-      // TRANSCRIPT LOGGING: Only log FINAL recognized speech
+      // FINAL TRANSCRIPT: Only log FINAL recognized speech to segments table
       // ============================================================================
-      // Only process final transcript chunks (is_final=true)
+      // Only process final transcript chunks (is_final=true) for accurate segment logging
       if (!results.is_final) {
-        // Don't log interim transcripts to Supabase; only queue for responsiveness
         // Queue the (interim) transcript with debounce for LLM response
         queueUserTranscript(callContext, userText, ws);
         return;
