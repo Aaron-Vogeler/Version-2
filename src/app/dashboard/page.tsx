@@ -8,6 +8,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FilterBar, CallFilters } from '@/components/dashboard/filter-bar';
@@ -357,11 +358,20 @@ export default function DashboardPage() {
       <header className="border-b border-border/40 bg-card/50 backdrop-blur-sm sticky top-0 z-40 shadow-soft">
         <div className="container-custom">
           <div className="flex items-center justify-between py-6 lg:py-8">
-            <div className="space-y-1">
+            <div className="flex items-center gap-4">
               {user && (
-                <h1 className="text-3xl lg:text-4xl font-bold tracking-tight text-foreground">
-                  Welcome back, {firstName || user.full_name || user.email?.split('@')[0] || 'there'}
-                </h1>
+                <>
+                  <Image
+                    src="/assets/bird/Wings Up.png"
+                    alt="Wings Up"
+                    width={64}
+                    height={64}
+                    className="flex-shrink-0"
+                  />
+                  <h1 className="text-3xl lg:text-4xl font-bold tracking-tight text-foreground">
+                    Welcome back, {firstName || user.full_name || user.email?.split('@')[0] || 'there'}
+                  </h1>
+                </>
               )}
             </div>
             <div className="flex items-center gap-3">
