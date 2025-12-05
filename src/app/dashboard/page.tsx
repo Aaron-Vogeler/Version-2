@@ -307,7 +307,10 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen bg-background">
         <div className="bird-container">
-          <div className="bird"></div>
+          <div className="bird">
+            <div className="bird-wings-up"></div>
+            <div className="bird-wings-down"></div>
+          </div>
         </div>
       </div>
     );
