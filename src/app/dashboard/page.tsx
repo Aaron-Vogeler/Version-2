@@ -49,6 +49,8 @@ export default function DashboardPage() {
   const [phoneScheme, setPhoneScheme] = useState('modern');
   const [customAssistantName, setCustomAssistantName] = useState('');
   const [savingAssistantName, setSavingAssistantName] = useState(false);
+  const [firstName, setFirstName] = useState('');
+  const [savingFirstName, setSavingFirstName] = useState(false);
 
   // Initial load on mount
   useEffect(() => {
@@ -109,6 +111,10 @@ export default function DashboardPage() {
       // Set custom assistant name from user profile
       if (data.user.custom_assistant_name) {
         setCustomAssistantName(data.user.custom_assistant_name);
+      }
+      // Set first name from user profile
+      if (data.user.first_name) {
+        setFirstName(data.user.first_name);
       }
     } else {
       // Not authenticated, redirect to login page
@@ -253,6 +259,34 @@ export default function DashboardPage() {
     }
   };
 
+  const handleSaveFirstName = async () => {
+    setSavingFirstName(true);
+    try {
+      const response = await fetch('/api/profile/update-first-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ first_name: firstName || null }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save first name');
+      }
+
+      // Update user state to reflect the change
+      if (user) {
+        setUser({
+          ...user,
+          first_name: firstName || null,
+        });
+      }
+    } catch (error) {
+      console.error('Error saving first name:', error);
+      alert('Failed to save first name. Please try again.');
+    } finally {
+      setSavingFirstName(false);
+    }
+  };
+
   const handleEndActiveCalls = async () => {
     // Identify active calls
     const activeCalls = calls.filter(call =>
@@ -318,13 +352,10 @@ export default function DashboardPage() {
         <div className="container-custom">
           <div className="flex items-center justify-between py-6 lg:py-8">
             <div className="space-y-1">
-              <h1 className="text-3xl lg:text-4xl font-bold tracking-tight text-foreground">
-                AI Call Dashboard
-              </h1>
               {user && (
-                <p className="text-sm lg:text-base text-foreground-secondary">
-                  Welcome back, {user.full_name || user.email}
-                </p>
+                <h1 className="text-3xl lg:text-4xl font-bold tracking-tight text-foreground">
+                  Welcome back, {firstName || user.full_name || user.email?.split('@')[0] || 'there'}
+                </h1>
               )}
             </div>
             <div className="flex items-center gap-3">
@@ -428,6 +459,30 @@ export default function DashboardPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
+            {/* First Name */}
+            <div className="space-y-2">
+              <Label htmlFor="first-name">Your First Name</Label>
+              <Input
+                id="first-name"
+                type="text"
+                placeholder="e.g., John, Sarah, Alex..."
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                maxLength={50}
+              />
+              <p className="text-xs text-muted-foreground">
+                This will be displayed in your personalized dashboard greeting
+              </p>
+              <Button
+                onClick={handleSaveFirstName}
+                disabled={savingFirstName}
+                size="sm"
+                className="mt-2"
+              >
+                {savingFirstName ? 'Saving...' : 'Save First Name'}
+              </Button>
+            </div>
+
             {/* Custom Assistant Name */}
             <div className="space-y-2">
               <Label htmlFor="assistant-name">AI Assistant Name</Label>
