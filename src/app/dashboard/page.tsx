@@ -319,7 +319,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background dashboard-fade-in">
+    <div className="min-h-screen bg-background">
       {/* Header - Minimalist Beige Futuristic Design */}
       <header className="border-b border-border/40 bg-card/50 backdrop-blur-sm sticky top-0 z-40 shadow-soft">
         <div className="container-custom">

@@ -406,7 +406,8 @@
   top: 0;
   left: 0;
   will-change: transform, opacity;
-  animation: loginFlyAcross var(--login-fly-duration) cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+  /* Slow start, gradually speeds up - ease-in for natural takeoff */
+  animation: loginFlyAcross var(--login-fly-duration) ease-in forwards;
 }
 
 /* Login bird container - same size as static bird */
@@ -414,8 +415,6 @@
   position: relative;
   width: var(--login-bird-size);
   height: var(--login-bird-size);
-  will-change: transform;
-  animation: bobAndTilt var(--bob-duration) ease-in-out infinite;
   background: transparent;
 }
 
@@ -436,12 +435,12 @@
 
 .login-bird .bird-wings-up {
   background-image: url('/assets/bird/Wings Up.png');
-  animation: flapWingsUp var(--flap-duration) steps(1, end) infinite;
+  animation: flapWingsUp 0.5s steps(1, end) infinite;
 }
 
 .login-bird .bird-wings-down {
   background-image: url('/assets/bird/Wings Down.png');
-  animation: flapWingsDown var(--flap-duration) steps(1, end) infinite;
+  animation: flapWingsDown 0.5s steps(1, end) infinite;
 }
 
 /* Login content fade out and move down animation */
@@ -473,17 +472,13 @@
     opacity: 0;
   }
 
-  .login-bird {
-    animation: none;
-  }
-
   .login-bird .bird-wings-up {
-    animation: none;
+    animation: none !important;
     opacity: 1;
   }
 
   .login-bird .bird-wings-down {
-    animation: none;
+    animation: none !important;
     opacity: 0;
   }
 
