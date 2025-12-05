@@ -128,8 +128,8 @@ export default function LoginPage() {
 
       {/* Bird animation overlay - shown during login animation */}
       {isAnimatingOut && (
-        <div className="bird-overlay" aria-hidden="true">
-          <div className="bird-flight">
+        <div className="bird-overlay login-bird-overlay" aria-hidden="true">
+          <div className="bird-flight login-bird-flight">
             <div className="bird">
               <div className="bird-wings-up"></div>
               <div className="bird-wings-down"></div>

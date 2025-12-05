@@ -345,6 +345,31 @@
   animation: loginExitDown var(--fly-duration) ease-in forwards;
 }
 
+/* Login bird flight - starts at center, flies right */
+@keyframes loginBirdFly {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(calc(100vw + var(--bird-size)), 0, 0);
+    opacity: 0;
+  }
+}
+
+.login-bird-overlay {
+  z-index: 50;
+}
+
+.login-bird-flight {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-50%);
+  will-change: transform, opacity;
+  animation: loginBirdFly var(--fly-duration) linear forwards;
+}
+
 /* Respect user motion preferences */
 @media (prefers-reduced-motion: reduce) {
   .bird-flight {
@@ -369,5 +394,10 @@
 
   .login-exit {
     animation: none;
+  }
+
+  .login-bird-flight {
+    animation: none;
+    transform: translateX(-50%) translateY(-50%);
   }
 }
