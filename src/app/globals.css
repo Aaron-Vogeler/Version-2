@@ -226,39 +226,35 @@
   }
 }
 
-@keyframes flapUp {
-  0% {
+/* Instant wing snap - no fading/ghosting */
+@keyframes wingSnap {
+  0%, 49.99% {
     opacity: 1;
   }
-  25% {
-    opacity: 0.8;
-  }
-  50% {
+  50%, 100% {
     opacity: 0;
   }
-  75% {
-    opacity: 0.8;
+}
+
+@keyframes wingSnapInverse {
+  0%, 49.99% {
+    opacity: 0;
   }
-  100% {
+  50%, 100% {
     opacity: 1;
   }
 }
 
-@keyframes flapDown {
+/* Vertical bobbing - bird rises when wings push down (lift) */
+@keyframes bobbing {
   0% {
-    opacity: 0;
-  }
-  25% {
-    opacity: 0.2;
+    transform: translateY(0px);
   }
   50% {
-    opacity: 1;
-  }
-  75% {
-    opacity: 0.2;
+    transform: translateY(-12px);
   }
   100% {
-    opacity: 0;
+    transform: translateY(0px);
   }
 }
 
@@ -276,6 +272,7 @@
   width: 200px;
   height: 200px;
   background: transparent;
+  animation: bobbing 0.4s ease-in-out infinite;
 }
 
 .bird-wings-up,
@@ -295,10 +292,10 @@
 
 .bird-wings-up {
   background-image: url('/assets/bird/Wings Up Biggest.png');
-  animation: flapUp 5s ease-in-out forwards;
+  animation: wingSnap 0.4s steps(1, end) infinite;
 }
 
 .bird-wings-down {
   background-image: url('/assets/bird/Wings Down Biggest.png');
-  animation: flapDown 5s ease-in-out forwards;
+  animation: wingSnapInverse 0.4s steps(1, end) infinite;
 }
