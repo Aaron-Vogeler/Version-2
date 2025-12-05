@@ -3,7 +3,7 @@ name: Deploy AI Server to Fly.io
 on:
   push:
     branches:
-      - "**"   # Run on ALL branches (incl. feature/foo)
+      - "test"   # Run on ALL branches (incl. feature/foo) "**"
 
 jobs:
   deploy:
