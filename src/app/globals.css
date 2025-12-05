@@ -219,7 +219,7 @@
 /* Flying Bird Loading Animation */
 @keyframes flyAcross {
   0% {
-    left: -200px;
+    left: -250px;
   }
   100% {
     left: 100vw;
@@ -273,8 +273,8 @@
 
 .bird {
   position: relative;
-  width: 80px;
-  height: 80px;
+  width: 200px;
+  height: 200px;
   background: transparent;
 }
 
@@ -289,14 +289,16 @@
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
+  mix-blend-mode: multiply;
+  filter: contrast(1.2) brightness(1.1);
 }
 
 .bird-wings-up {
-  background-image: url('/assets/bird/Wings Up.png');
+  background-image: url('/assets/bird/Wings Up Biggest.png');
   animation: flapUp 5s ease-in-out forwards;
 }
 
 .bird-wings-down {
-  background-image: url('/assets/bird/Wings Down.png');
+  background-image: url('/assets/bird/Wings Down Biggest.png');
   animation: flapDown 5s ease-in-out forwards;
 }
