@@ -54,8 +54,7 @@ export interface CallRecord {
   goal?: string;
   live_transcript?: string;
   transcript_status?: string;
-  recording_url?: string; // Telnyx native recording URL
-  custom_recording_url?: string; // Self-hosted dual-channel recording URL (Supabase Storage)
+  recording_url?: string; // Custom dual-channel recording URL (Supabase Storage, μ-law stereo WAV)
   started_at?: string;
   answered_at?: string;
   ended_at?: string;

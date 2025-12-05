@@ -342,7 +342,7 @@ async function sendTtsResponse(
 /**
  * Finalize and upload custom call recording to Supabase Storage.
  * Creates a stereo WAV file from the buffered audio and uploads it.
- * Updates the calls table with custom_recording_url.
+ * Updates the calls table with recording_url.
  *
  * This function is designed to never throw - all errors are caught and logged.
  *
@@ -399,13 +399,12 @@ async function finalizeCustomRecording(callContext: CallContext): Promise<void> 
     const result = await uploadCustomCallRecording(callControlId, wavFile);
 
     if (result.ok && result.url) {
-      // Update the call record with custom_recording_url
-      // NOTE: This does NOT overwrite recording_url (Telnyx native recording)
+      // Update the call record with recording_url (custom recording is now the primary source)
       if (isSupabaseConfigured()) {
         await updateCall(callControlId, {
-          custom_recording_url: result.url,
+          recording_url: result.url,
         });
-        console.log(`[CustomRecording] Updated call ${callControlId} with custom_recording_url`);
+        console.log(`[CustomRecording] Updated call ${callControlId} with recording_url`);
       }
     } else {
       console.error(`[CustomRecording] Upload failed for ${callControlId}:`, result.error);
@@ -808,21 +807,6 @@ app.post("/webhooks/telnyx", async (req, res) => {
 
     // Note: We don't have access to callContext here, but we mark the call
     // as inactive via the WebSocket close event. Cleanup happens there.
-  } else if (eventType === "call.recording.saved") {
-    // Log recording URL to Supabase
-    const recordingUrl =
-      payload.public_recording_urls?.mp3 ||
-      payload.public_recording_urls?.wav ||
-      payload.recording_urls?.mp3 ||
-      payload.recording_url ||
-      null;
-
-    if (callControlId && recordingUrl && isSupabaseConfigured()) {
-      console.log("🎙️ Recording saved:", recordingUrl);
-      updateCall(callControlId, {
-        recording_url: recordingUrl,
-      }).catch((err) => console.error("[Supabase] Error logging recording:", err));
-    }
   } else if (eventType === "call.cost") {
     // Log call cost/billing to Supabase
     const billedSeconds =
