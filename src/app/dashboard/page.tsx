@@ -336,7 +336,6 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-foreground-secondary text-lg">Loading...</div>
         {/* Show bird loader overlay only on first session load */}
         {showBirdLoader && (
           <div className="bird-overlay" aria-hidden="true">
