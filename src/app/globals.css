@@ -216,68 +216,93 @@
   }
 }
 
-/* Flying Bird Loading Animation */
+/* ===== BIRD LOADER ANIMATION ===== */
+/* Smooth, professional overlay animation with GPU acceleration */
+
+:root {
+  /* Tunable animation parameters */
+  --bird-size: 200px;
+  --fly-duration: 3s;
+  --flap-duration: 260ms;
+  --fly-padding: 250px;
+  --bob-duration: 520ms;
+}
+
+/* Overlay container - does not affect page layout */
+.bird-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* GPU-accelerated flight motion using translate3d */
 @keyframes flyAcross {
   0% {
-    left: -250px;
+    transform: translate3d(calc(-1 * var(--fly-padding)), -50%, 0);
   }
   100% {
-    left: 100vw;
+    transform: translate3d(calc(100vw + var(--fly-padding)), -50%, 0);
+    opacity: 0; /* Fade out at the end */
   }
 }
 
-@keyframes flapUp {
-  0% {
-    opacity: 1;
+/* Subtle bob and tilt for realistic flight */
+@keyframes bobAndTilt {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
   }
   25% {
-    opacity: 0.8;
+    transform: translate3d(0, -8px, 0) rotate(-2deg);
+  }
+  50% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  75% {
+    transform: translate3d(0, 8px, 0) rotate(2deg);
+  }
+}
+
+/* Crisp 2-frame wing flap using steps() */
+@keyframes flapWingsUp {
+  0%, 100% {
+    opacity: 1;
   }
   50% {
     opacity: 0;
   }
-  75% {
-    opacity: 0.8;
-  }
-  100% {
-    opacity: 1;
-  }
 }
 
-@keyframes flapDown {
-  0% {
+@keyframes flapWingsDown {
+  0%, 100% {
     opacity: 0;
-  }
-  25% {
-    opacity: 0.2;
   }
   50% {
     opacity: 1;
   }
-  75% {
-    opacity: 0.2;
-  }
-  100% {
-    opacity: 0;
-  }
 }
 
-.bird-container {
-  position: fixed;
+/* Flight container - handles horizontal motion */
+.bird-flight {
+  position: absolute;
   top: 50%;
-  transform: translateY(-50%);
-  z-index: 50;
-  animation: flyAcross 3s linear forwards;
-  background: transparent;
+  left: 0;
+  will-change: transform, opacity;
+  animation: flyAcross var(--fly-duration) linear forwards;
 }
 
+/* Bird container - handles bob/tilt motion */
 .bird {
   position: relative;
-  width: 200px;
-  height: 200px;
-  background: transparent;
+  width: var(--bird-size);
+  height: var(--bird-size);
+  will-change: transform;
+  animation: bobAndTilt var(--bob-duration) ease-in-out infinite;
 }
 
+/* Wing frames - stacked absolutely */
 .bird-wings-up,
 .bird-wings-down {
   position: absolute;
@@ -285,20 +310,43 @@
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: transparent;
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
-  mix-blend-mode: multiply;
-  filter: contrast(1.2) brightness(1.1);
+  will-change: opacity;
 }
 
+/* Wings up frame */
 .bird-wings-up {
   background-image: url('/assets/bird/Wings Up Biggest.png');
-  animation: flapUp 5s ease-in-out forwards;
+  animation: flapWingsUp var(--flap-duration) steps(1, end) infinite;
 }
 
+/* Wings down frame */
 .bird-wings-down {
   background-image: url('/assets/bird/Wings Down Biggest.png');
-  animation: flapDown 5s ease-in-out forwards;
+  animation: flapWingsDown var(--flap-duration) steps(1, end) infinite;
+}
+
+/* Respect user motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .bird-flight {
+    animation: none;
+    transform: translate3d(calc(50vw - var(--bird-size) / 2), -50%, 0);
+    opacity: 0.7;
+  }
+
+  .bird {
+    animation: none;
+  }
+
+  .bird-wings-up {
+    animation: none;
+    opacity: 1;
+  }
+
+  .bird-wings-down {
+    animation: none;
+    opacity: 0;
+  }
 }
