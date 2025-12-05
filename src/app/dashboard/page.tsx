@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
@@ -46,6 +47,8 @@ export default function DashboardPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [colorTheme, setColorTheme] = useState('blue');
   const [phoneScheme, setPhoneScheme] = useState('modern');
+  const [customAssistantName, setCustomAssistantName] = useState('');
+  const [savingAssistantName, setSavingAssistantName] = useState(false);
 
   // Initial load on mount
   useEffect(() => {
@@ -103,6 +106,10 @@ export default function DashboardPage() {
     if (response.ok) {
       const data = await response.json();
       setUser(data.user);
+      // Set custom assistant name from user profile
+      if (data.user.custom_assistant_name) {
+        setCustomAssistantName(data.user.custom_assistant_name);
+      }
     } else {
       // Not authenticated, redirect to login page
       window.location.href = '/login';
@@ -216,6 +223,34 @@ export default function DashboardPage() {
     // Sign out and redirect to login
     await fetch('/api/auth/signout', { method: 'POST' });
     window.location.href = '/login';
+  };
+
+  const handleSaveAssistantName = async () => {
+    setSavingAssistantName(true);
+    try {
+      const response = await fetch('/api/profile/update-assistant-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ custom_assistant_name: customAssistantName || null }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save assistant name');
+      }
+
+      // Update user state to reflect the change
+      if (user) {
+        setUser({
+          ...user,
+          custom_assistant_name: customAssistantName || null,
+        });
+      }
+    } catch (error) {
+      console.error('Error saving assistant name:', error);
+      alert('Failed to save assistant name. Please try again.');
+    } finally {
+      setSavingAssistantName(false);
+    }
   };
 
   const handleEndActiveCalls = async () => {
@@ -351,7 +386,7 @@ export default function DashboardPage() {
 
           {/* Delegate A Call Tab */}
           <TabsContent value="delegate" className="animate-fade-in">
-            <DelegateCall />
+            <DelegateCall customAssistantName={customAssistantName || 'your AI assistant'} />
           </TabsContent>
 
           {/* Billing & Usage Tab */}
@@ -389,10 +424,34 @@ export default function DashboardPage() {
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Customize your dashboard appearance and phone settings.
+              Customize your dashboard appearance and assistant settings.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
+            {/* Custom Assistant Name */}
+            <div className="space-y-2">
+              <Label htmlFor="assistant-name">AI Assistant Name</Label>
+              <Input
+                id="assistant-name"
+                type="text"
+                placeholder="e.g., Ferguson, Alex, Sarah..."
+                value={customAssistantName}
+                onChange={(e) => setCustomAssistantName(e.target.value)}
+                maxLength={100}
+              />
+              <p className="text-xs text-muted-foreground">
+                This name will be used when your AI assistant introduces itself on calls
+              </p>
+              <Button
+                onClick={handleSaveAssistantName}
+                disabled={savingAssistantName}
+                size="sm"
+                className="mt-2"
+              >
+                {savingAssistantName ? 'Saving...' : 'Save Assistant Name'}
+              </Button>
+            </div>
+
             {/* Color Theme Selection */}
             <div className="space-y-2">
               <Label htmlFor="color-theme">Color Theme</Label>
