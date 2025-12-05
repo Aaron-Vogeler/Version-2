@@ -267,7 +267,7 @@
   top: 50%;
   transform: translateY(-50%);
   z-index: 50;
-  animation: flyAcross 3s linear infinite;
+  animation: flyAcross 3s linear forwards;
   background: transparent;
 }
 
@@ -293,10 +293,10 @@
 
 .bird-wings-up {
   background-image: url('/assets/bird/Wings Up.png');
-  animation: flapUp 0.5s ease-in-out infinite;
+  animation: flapUp 5s ease-in-out forwards;
 }
 
 .bird-wings-down {
   background-image: url('/assets/bird/Wings Down.png');
-  animation: flapDown 0.5s ease-in-out infinite;
+  animation: flapDown 5s ease-in-out forwards;
 }
