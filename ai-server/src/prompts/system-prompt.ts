@@ -107,6 +107,12 @@ function interpolate(
  * @returns Complete system prompt ready for LLM
  */
 export function buildSystemPrompt(context?: CallContext): string {
+  // Check if an environment variable override is set
+  const override = process.env.LLM_SYSTEM_PROMPT;
+  if (override) {
+    return override;
+  }
+
   // Resolve names from context or use defaults
   const assistantName = context?.assistantName || "Ferguson";
   const userName = context?.userName || "Aaron";
