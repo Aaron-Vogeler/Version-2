@@ -8,10 +8,13 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from 'next-auth/react';
+import { Great_Vibes } from 'next/font/google';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+
+const greatVibes = Great_Vibes({ weight: '400', subsets: ['latin'] });
 
 export default function LoginPage() {
   const router = useRouter();
@@ -55,7 +58,7 @@ export default function LoginPage() {
       <div className="w-full max-w-lg">
         {/* Header */}
         <div className="text-center mb-10">
-          <h1 className="text-4xl lg:text-5xl font-bold tracking-tight text-foreground mb-3">
+          <h1 className={`${greatVibes.className} text-5xl lg:text-6xl tracking-tight text-foreground mb-3`}>
             Ferguson
           </h1>
           <p className="text-lg text-foreground-secondary italic">
