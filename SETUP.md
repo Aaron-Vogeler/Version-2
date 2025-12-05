@@ -1,5 +1,7 @@
 # Quick Setup Guide
 
+**Authentication:** This app uses individual user login with email/password via NextAuth + Supabase Auth. Data is secured with Row Level Security (RLS).
+
 ## Step-by-Step Setup
 
 ### 1. Install Dependencies

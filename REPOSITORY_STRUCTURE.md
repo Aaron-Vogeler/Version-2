@@ -2,7 +2,7 @@
 
 **Last Updated:** December 5, 2025
 
-Multi-tenant AI voice CRM platform. Users create outbound calls with an AI agent that listens, responds, and records conversations.
+AI voice CRM platform with individual user authentication. Users create outbound calls with an AI agent that listens, responds, and records conversations. Data is organized with Row Level Security (RLS) for secure isolation.
 
 ---
 
@@ -66,7 +66,7 @@ Multi-tenant AI voice CRM platform. Users create outbound calls with an AI agent
 ## Database Schema
 
 **Core Tables:**
-- `tenants` - Organization data
+- `tenants` - Organization data for data isolation
 - `profiles` - User profiles (email, role: admin/member, custom_assistant_name)
 - `calls` - Call records (direction, status, goal, transcript, recording_url, cost)
 - `assistants` - AI assistant configs (voice_id, prompt_template, model)
@@ -74,7 +74,7 @@ Multi-tenant AI voice CRM platform. Users create outbound calls with an AI agent
 - `notifications` - Alert config (webhook, Slack, email, SMS)
 - `billing_summary` - Call cost aggregation
 
-**Multi-tenancy:** Row Level Security (RLS) policies enforce `tenant_id` isolation.
+**Authentication:** Individual user login with email/password via NextAuth + Supabase Auth. Row Level Security (RLS) policies enforce secure data isolation by `tenant_id`.
 
 ---
 
@@ -149,6 +149,6 @@ CALL_RATE_PER_MINUTE
 - ✅ Real-time call monitoring & live transcripts
 - ✅ Stereo WAV recording (caller + agent)
 - ✅ Call analytics (goals, performance, billing)
-- ✅ Multi-tenant architecture with RLS
+- ✅ Individual user authentication with secure data isolation
 - ✅ Browser listening via Telnyx WebRTC
 - ✅ Custom assistant naming per user

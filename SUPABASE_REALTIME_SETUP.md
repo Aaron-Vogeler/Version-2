@@ -139,7 +139,7 @@ In your dashboard UI, you should see one of these indicators:
 When a call is created or updated:
 
 ```
-Telnyx Webhook → Cloudflare Worker → Supabase Insert/Update
+Telnyx Webhook → AI Server (Fly.io) → Supabase Insert/Update
     ↓
 Supabase Realtime broadcasts postgres_changes event
     ↓
@@ -166,9 +166,9 @@ UI updates instantly (no reload!)
 ### Issue: Events not appearing
 
 **Solution**:
-1. Verify your tenant_id filter isn't blocking events
-2. Check RLS policies
-3. Ensure the Cloudflare worker is successfully writing to Supabase
+1. Verify your tenant_id filter isn't blocking events (RLS isolates data by tenant_id)
+2. Check RLS policies allow SELECT for authenticated users
+3. Ensure the AI server is successfully writing to Supabase
 
 ### Issue: "404 on /api/calls"
 
@@ -180,9 +180,9 @@ UI updates instantly (no reload!)
 ## Production Checklist
 
 - [ ] `ALTER PUBLICATION supabase_realtime ADD TABLE public.calls;` executed
-- [ ] RLS policies configured for tenant isolation
+- [ ] RLS policies configured for data isolation
 - [ ] Environment variables set in production
-- [ ] Cloudflare worker successfully writing to Supabase
+- [ ] AI server successfully writing to Supabase
 - [ ] Realtime connection status shows "Connected" in UI
 - [ ] Test call appears instantly without page reload
 
