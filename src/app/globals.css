@@ -437,16 +437,18 @@
   background-position: center;
 }
 
-/* Wings up - visible by default (static pose) */
+/* Wings up - visible by default (static pose, no animation) */
 .login-bird-inline .bird-wings-up {
   background-image: url('/assets/bird/Wings Up.png');
   opacity: 1;
+  animation: none; /* Override inherited animation - only flap after login success */
 }
 
-/* Wings down - hidden by default */
+/* Wings down - hidden by default (static pose, no animation) */
 .login-bird-inline .bird-wings-down {
   background-image: url('/assets/bird/Wings Down.png');
   opacity: 0;
+  animation: none; /* Override inherited animation - only flap after login success */
 }
 
 /* Flapping animation - only when .flapping class is added */
