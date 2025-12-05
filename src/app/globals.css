@@ -406,8 +406,8 @@
   top: 0;
   left: 0;
   will-change: transform, opacity;
-  /* Delay flight by 0.75s so bird flaps once before moving */
-  animation: loginFlyAcross var(--login-fly-duration) cubic-bezier(0.25, 0.1, 0.25, 1) 0.75s forwards;
+  /* Start moving immediately - bird moves first, then flaps */
+  animation: loginFlyAcross var(--login-fly-duration) cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
 /* Login bird container - same size as static bird */
@@ -435,12 +435,33 @@
 
 .login-bird .bird-wings-up {
   background-image: url('/assets/bird/Wings Up.png');
-  animation: flapWingsUp var(--flap-duration) steps(1, end) infinite;
+  /* Delay flapping so bird moves a bit first, smoother transition */
+  animation: flapWingsUpSmooth 0.4s ease-in-out 0.3s infinite;
 }
 
 .login-bird .bird-wings-down {
   background-image: url('/assets/bird/Wings Down.png');
-  animation: flapWingsDown var(--flap-duration) steps(1, end) infinite;
+  /* Delay flapping so bird moves a bit first, smoother transition */
+  animation: flapWingsDownSmooth 0.4s ease-in-out 0.3s infinite;
+}
+
+/* Smoother wing flap animations with crossfade */
+@keyframes flapWingsUpSmooth {
+  0%, 100% {
+    opacity: 1;
+  }
+  45%, 55% {
+    opacity: 0;
+  }
+}
+
+@keyframes flapWingsDownSmooth {
+  0%, 100% {
+    opacity: 0;
+  }
+  45%, 55% {
+    opacity: 1;
+  }
 }
 
 /* Login content fade out and move down animation */
@@ -473,12 +494,12 @@
   }
 
   .login-bird .bird-wings-up {
-    animation: none;
+    animation: none !important;
     opacity: 1;
   }
 
   .login-bird .bird-wings-down {
-    animation: none;
+    animation: none !important;
     opacity: 0;
   }
 
