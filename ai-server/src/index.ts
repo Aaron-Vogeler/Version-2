@@ -666,23 +666,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
       }
 
       try {
-        // Start recording
-        await axios.post(
-          `https://api.telnyx.com/v2/calls/${callControlId}/actions/record_start`,
-          {
-            format: "mp3",
-            channels: "dual",
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${config.telnyx.apiKey}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-        console.log("🎙️ Recording started for call:", callControlId);
-
-        // Start streaming
+        // Start streaming (Telnyx recording disabled - using custom recording pipeline)
         await axios.post(
           `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
           {
