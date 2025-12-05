@@ -667,48 +667,59 @@ app.post("/webhooks/telnyx", async (req, res) => {
       }
 
       try {
-        // Start recording
-        await axios.post(
-          `https://api.telnyx.com/v2/calls/${callControlId}/actions/record_start`,
-          {
-            format: "mp3",
-            channels: "dual",
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${config.telnyx.apiKey}`,
-              "Content-Type": "application/json",
+        // Start recording and streaming in parallel for faster setup
+        const [recordingResult, streamingResult] = await Promise.allSettled([
+          axios.post(
+            `https://api.telnyx.com/v2/calls/${callControlId}/actions/record_start`,
+            {
+              format: "mp3",
+              channels: "dual",
             },
-          }
-        );
-        console.log("🎙️ Recording started for call:", callControlId);
+            {
+              headers: {
+                "Authorization": `Bearer ${config.telnyx.apiKey}`,
+                "Content-Type": "application/json",
+              },
+            }
+          ),
+          axios.post(
+            `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
+            {
+              stream_url: config.telnyx.streamUrl,
+              stream_track: "both_tracks",
+              stream_bidirectional_mode: "rtp",
+            },
+            {
+              headers: {
+                "Authorization": `Bearer ${config.telnyx.apiKey}`,
+                "Content-Type": "application/json",
+              },
+            }
+          ),
+        ]);
 
-        // Start streaming
-        await axios.post(
-          `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
-          {
-            stream_url: config.telnyx.streamUrl,
-            stream_track: "both_tracks",
-            stream_bidirectional_mode: "rtp",
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${config.telnyx.apiKey}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-        console.log("✅ Streaming started for call:", callControlId);
-      } catch (error) {
-        console.error("❌ Failed to start streaming:", error instanceof Error ? error.message : error);
-        if (error instanceof Error && "response" in error) {
-          const err = error as any;
-          console.error("📋 Telnyx API Error Details:", {
-            status: err.response?.status,
-            statusText: err.response?.statusText,
-            data: err.response?.data,
-          });
+        // Log results
+        if (recordingResult.status === "fulfilled") {
+          console.log("🎙️ Recording started for call:", callControlId);
+        } else {
+          console.error("❌ Failed to start recording:", recordingResult.reason instanceof Error ? recordingResult.reason.message : recordingResult.reason);
         }
+
+        if (streamingResult.status === "fulfilled") {
+          console.log("✅ Streaming started for call:", callControlId);
+        } else {
+          console.error("❌ Failed to start streaming:", streamingResult.reason instanceof Error ? streamingResult.reason.message : streamingResult.reason);
+          if (streamingResult.reason instanceof Error && "response" in streamingResult.reason) {
+            const err = streamingResult.reason as any;
+            console.error("📋 Telnyx API Error Details:", {
+              status: err.response?.status,
+              statusText: err.response?.statusText,
+              data: err.response?.data,
+            });
+          }
+        }
+      } catch (error) {
+        console.error("❌ Unexpected error in call setup:", error instanceof Error ? error.message : error);
       }
     }
   } else if (eventType === "call.speak.started") {
