@@ -223,7 +223,7 @@
   /* Tunable animation parameters */
   --bird-size: 200px;
   --fly-duration: 5s;
-  --flap-duration: 500ms;
+  --flap-duration: 750ms;
   --fly-padding: 250px;
   --bob-duration: 520ms;
 }
@@ -299,7 +299,6 @@
   width: var(--bird-size);
   height: var(--bird-size);
   will-change: transform;
-  animation: bobAndTilt var(--bob-duration) ease-in-out infinite;
   background: transparent;
 }
 
