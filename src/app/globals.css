@@ -223,7 +223,7 @@
   /* Tunable animation parameters */
   --bird-size: 200px;
   --fly-duration: 5s;
-  --flap-duration: 260ms;
+  --flap-duration: 500ms;
   --fly-padding: 250px;
   --bob-duration: 520ms;
 }
@@ -300,6 +300,7 @@
   height: var(--bird-size);
   will-change: transform;
   animation: bobAndTilt var(--bob-duration) ease-in-out infinite;
+  background: transparent;
 }
 
 /* Wing frames - stacked absolutely */
@@ -310,6 +311,7 @@
   left: 0;
   width: 100%;
   height: 100%;
+  background-color: transparent;
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
