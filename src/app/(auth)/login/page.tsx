@@ -74,15 +74,15 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
       <div className="w-full max-w-lg">
-        {/* Bird - always flapping, starts flying on login success */}
+        {/* Bird - static until login, then flaps and flies */}
         <div className="flex justify-center mb-4">
           <div
             ref={birdRef}
             className={`login-bird-inline ${loginSuccess ? 'login-bird-flying' : ''}`}
           >
-            {/* Bird always flaps - flight animation added on login success */}
-            <div className="bird-wings-up flapping"></div>
-            <div className="bird-wings-down flapping"></div>
+            {/* Flapping class added only after login success */}
+            <div className={`bird-wings-up ${loginSuccess ? 'flapping' : ''}`}></div>
+            <div className={`bird-wings-down ${loginSuccess ? 'flapping' : ''}`}></div>
           </div>
         </div>
 
