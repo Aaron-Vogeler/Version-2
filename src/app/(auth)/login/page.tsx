@@ -59,7 +59,7 @@ export default function LoginPage() {
         {/* Header */}
         <div className="text-center mb-10">
           <h1 className={`${greatVibes.className} text-5xl lg:text-6xl tracking-tight text-foreground mb-3`}>
-            Ferguson
+            Pidgeon
           </h1>
           <p className="text-lg text-foreground-secondary italic">
             More time and sanity awaits you...
