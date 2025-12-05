@@ -270,93 +270,100 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-lg">Loading dashboard...</div>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="text-lg text-foreground">Loading dashboard...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Header */}
-      <header className="border-b bg-white dark:bg-gray-800">
-        <div className="container mx-auto flex items-center justify-between px-4 py-4">
-          <div>
-            <h1 className="text-2xl font-bold">AI Call Dashboard</h1>
-            {user && (
-              <p className="text-sm text-muted-foreground">
-                Welcome back, {user.full_name || user.email}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-4">
-            {/* Live Call Indicator & End Button */}
-            {activeCallCount > 0 && (
-              <>
-                <Badge variant="success" className="animate-pulse">
-                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
-                  {activeCallCount} Active
-                </Badge>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleEndActiveCalls}
-                  disabled={endingCalls}
-                >
-                  <PhoneOff className="mr-2 h-4 w-4" />
-                  {endingCalls ? 'Ending...' : activeCallCount > 1 ? 'End All Calls' : 'End Call'}
-                </Button>
-              </>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowSettings(true)}
-              title="Settings"
-            >
-              <Settings className="h-5 w-5" />
-            </Button>
-            <Button variant="outline" onClick={handleLogout}>
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
-            </Button>
+    <div className="min-h-screen bg-background">
+      {/* Header - Minimalist Beige Futuristic Design */}
+      <header className="border-b border-border/40 bg-card/50 backdrop-blur-sm sticky top-0 z-40 shadow-soft">
+        <div className="container-custom">
+          <div className="flex items-center justify-between py-6 lg:py-8">
+            <div className="space-y-1">
+              <h1 className="text-3xl lg:text-4xl font-bold tracking-tight text-foreground">
+                AI Call Dashboard
+              </h1>
+              {user && (
+                <p className="text-sm lg:text-base text-foreground-secondary">
+                  Welcome back, {user.full_name || user.email}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              {/* Live Call Indicator & End Button */}
+              {activeCallCount > 0 && (
+                <>
+                  <Badge variant="success" className="animate-pulse px-4 py-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-success mr-2 animate-pulse" />
+                    {activeCallCount} Active
+                  </Badge>
+                  <Button
+                    variant="destructive"
+                    onClick={handleEndActiveCalls}
+                    disabled={endingCalls}
+                  >
+                    <PhoneOff className="mr-2 h-5 w-5" />
+                    {endingCalls ? 'Ending...' : activeCallCount > 1 ? 'End All Calls' : 'End Call'}
+                  </Button>
+                </>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowSettings(true)}
+                title="Settings"
+                className="hidden lg:flex"
+              >
+                <Settings className="h-5 w-5" />
+              </Button>
+              <Button variant="outline" onClick={handleLogout}>
+                <LogOut className="mr-2 h-5 w-5" />
+                <span className="hidden sm:inline">Logout</span>
+              </Button>
+            </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <Tabs defaultValue="delegate" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
+      {/* Main Content - Generous Spacing & Clean Layout */}
+      <main className="container-custom py-8 lg:py-12">
+        <Tabs defaultValue="delegate" className="space-y-8 lg:space-y-10">
+          <TabsList className="w-full max-w-2xl mx-auto grid grid-cols-3">
             <TabsTrigger value="delegate">
-              <Send className="mr-2 h-4 w-4" />
-              Delegate A Call
+              <Send className="h-5 w-5 lg:mr-2" />
+              <span className="hidden lg:inline">Delegate A Call</span>
+              <span className="lg:hidden">Delegate</span>
             </TabsTrigger>
             <TabsTrigger value="billing">
-              <DollarSign className="mr-2 h-4 w-4" />
-              Billing
+              <DollarSign className="h-5 w-5 lg:mr-2" />
+              <span className="hidden lg:inline">Billing & Usage</span>
+              <span className="lg:hidden">Billing</span>
             </TabsTrigger>
             <TabsTrigger value="calls">
-              <BarChart3 className="mr-2 h-4 w-4" />
-              All Calls
+              <BarChart3 className="h-5 w-5 lg:mr-2" />
+              <span className="hidden lg:inline">All Calls</span>
+              <span className="lg:hidden">Calls</span>
             </TabsTrigger>
           </TabsList>
 
           {/* Delegate A Call Tab */}
-          <TabsContent value="delegate">
+          <TabsContent value="delegate" className="animate-fade-in">
             <DelegateCall />
           </TabsContent>
 
           {/* Billing & Usage Tab */}
-          <TabsContent value="billing">
+          <TabsContent value="billing" className="animate-fade-in">
             {billingData && <BillingUsage data={billingData} />}
           </TabsContent>
 
           {/* All Calls Tab with Filtering */}
-          <TabsContent value="calls" className="space-y-6">
+          <TabsContent value="calls" className="space-y-6 animate-fade-in">
             <FilterBar onFiltersChange={handleFiltersChange} assistants={assistants} />
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold">
+            <div className="flex items-center justify-between px-2">
+              <h3 className="text-xl lg:text-2xl font-semibold tracking-tight text-foreground">
                 {filteredCalls.length} Call{filteredCalls.length !== 1 ? 's' : ''}
               </h3>
             </div>

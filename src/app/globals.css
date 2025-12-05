@@ -4,65 +4,110 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* ===== MINIMALIST BEIGE FUTURISTIC DESIGN SYSTEM ===== */
 
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    /* Backgrounds - Warm neutral beige tones */
+    --background: 30 20% 95%;           /* Warm sand #F5F1ED */
+    --background-secondary: 40 50% 98%; /* Cream #FDFBF7 */
+    --background-tertiary: 35 15% 88%;  /* Taupe #E8E3DC */
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    /* Text - Deep charcoal to soft brown-gray */
+    --foreground: 25 10% 15%;           /* Deep charcoal #2A2622 */
+    --foreground-secondary: 20 5% 40%;  /* Brown-gray #6B6560 */
+    --foreground-muted: 25 8% 56%;      /* Soft brown #9A8F88 */
 
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
+    /* Surfaces - Layered beige/cream */
+    --card: 35 30% 96%;                 /* Soft beige #FAF7F2 */
+    --card-foreground: 25 10% 15%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --popover: 0 0% 100%;               /* Pure white for elevated elements */
+    --popover-foreground: 25 10% 15%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    /* Primary - Desaturated teal (minimalist accent) */
+    --primary: 180 20% 45%;             /* Desaturated teal #5B8A8A */
+    --primary-foreground: 0 0% 100%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    /* Secondary - Soft surfaces */
+    --secondary: 35 18% 90%;            /* Light taupe #EBE7E0 */
+    --secondary-foreground: 25 10% 15%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    /* Muted - Subtle backgrounds */
+    --muted: 38 20% 92%;                /* Very light beige #F0EDE8 */
+    --muted-foreground: 20 5% 40%;      /* Brown-gray */
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
+    /* Accent - Soft electric blue */
+    --accent: 200 22% 53%;              /* Soft blue #6B8FA3 */
+    --accent-foreground: 0 0% 100%;
 
-    --radius: 0.5rem;
+    /* Semantic Colors - Muted, professional */
+    --destructive: 15 28% 55%;          /* Soft terracotta #B17B6B */
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 120 15% 54%;             /* Muted sage #7A9B7A */
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 48% 60%;              /* Warm amber #C9A66B */
+    --warning-foreground: 25 10% 15%;
+
+    /* Borders - Ultra-subtle */
+    --border: 35 12% 85%;               /* Soft beige border #D9D4CC */
+    --input: 35 15% 88%;                /* Input border */
+    --ring: 180 20% 45%;                /* Focus ring (matches primary) */
+
+    /* Border Radius - Modern, soft */
+    --radius-sm: 0.5rem;     /* 8px */
+    --radius-md: 0.875rem;   /* 14px */
+    --radius-lg: 1.25rem;    /* 20px */
+    --radius-xl: 1.5rem;     /* 24px */
+    --radius: 1.25rem;       /* Default: 20px */
+
+    /* Shadows - Soft atmospheric */
+    --shadow-soft: 0 1px 2px rgba(42, 38, 34, 0.04), 0 4px 8px rgba(42, 38, 34, 0.04);
+    --shadow-medium: 0 2px 4px rgba(42, 38, 34, 0.06), 0 8px 16px rgba(42, 38, 34, 0.08);
+    --shadow-large: 0 4px 8px rgba(42, 38, 34, 0.08), 0 16px 32px rgba(42, 38, 34, 0.12);
+    --shadow-elevated: 0 8px 16px rgba(42, 38, 34, 0.10), 0 24px 48px rgba(42, 38, 34, 0.15);
   }
 
+  /* Dark mode - Inverted beige with warm tones */
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    --background: 25 15% 12%;           /* Deep warm charcoal */
+    --background-secondary: 25 12% 15%; /* Slightly lighter */
+    --background-tertiary: 25 10% 18%;  /* Card backgrounds */
 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
+    --foreground: 40 30% 92%;           /* Warm off-white */
+    --foreground-secondary: 35 15% 65%; /* Muted beige-gray */
+    --foreground-muted: 30 10% 50%;     /* Subtle text */
 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
+    --card: 25 12% 15%;
+    --card-foreground: 40 30% 92%;
 
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --popover: 25 15% 10%;
+    --popover-foreground: 40 30% 92%;
 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
+    --primary: 180 25% 55%;             /* Brighter teal for dark */
+    --primary-foreground: 25 15% 12%;
 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --secondary: 25 10% 22%;
+    --secondary-foreground: 40 30% 92%;
 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --muted: 25 10% 20%;
+    --muted-foreground: 35 15% 60%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --accent: 200 30% 60%;
+    --accent-foreground: 25 15% 12%;
 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    --destructive: 15 40% 50%;
+    --destructive-foreground: 40 30% 92%;
+
+    --success: 120 20% 45%;
+    --success-foreground: 40 30% 92%;
+
+    --warning: 38 55% 55%;
+    --warning-foreground: 25 15% 12%;
+
+    --border: 25 10% 25%;
+    --input: 25 10% 22%;
+    --ring: 180 25% 55%;
   }
 }
 
@@ -70,34 +115,103 @@
   * {
     @apply border-border;
   }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Smooth scroll behavior */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Modern typography scale */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+
+  /* Focus visible styles */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 }
 
-/* Color Theme Overrides */
-.theme-blue {
-  --primary: 221.2 83.2% 53.3%;
-  --ring: 221.2 83.2% 53.3%;
+/* Typography Utilities */
+@layer components {
+  .text-display {
+    @apply text-6xl lg:text-7xl xl:text-8xl font-bold tracking-tighter;
+  }
+
+  .text-h1 {
+    @apply text-4xl lg:text-5xl xl:text-6xl font-semibold tracking-tight;
+  }
+
+  .text-h2 {
+    @apply text-3xl lg:text-4xl xl:text-5xl font-semibold tracking-tight;
+  }
+
+  .text-h3 {
+    @apply text-2xl lg:text-3xl xl:text-4xl font-semibold tracking-tight;
+  }
+
+  .text-h4 {
+    @apply text-xl lg:text-2xl xl:text-3xl font-semibold tracking-tight;
+  }
+
+  .text-body-lg {
+    @apply text-lg leading-relaxed;
+  }
+
+  .text-body {
+    @apply text-base leading-relaxed;
+  }
+
+  .text-body-sm {
+    @apply text-sm leading-relaxed;
+  }
+
+  .text-caption {
+    @apply text-xs leading-normal tracking-wide uppercase;
+  }
 }
 
-.theme-green {
-  --primary: 142.1 76.2% 36.3%;
-  --ring: 142.1 76.2% 36.3%;
+/* Layout Utilities */
+@layer components {
+  .container-custom {
+    @apply max-w-7xl mx-auto px-6 lg:px-8;
+  }
+
+  .section-spacing {
+    @apply py-16 lg:py-24 xl:py-32;
+  }
+
+  .card-soft {
+    @apply bg-card rounded-[var(--radius)] p-6 lg:p-8;
+    box-shadow: var(--shadow-medium);
+  }
+
+  .surface-soft {
+    @apply bg-muted/30 backdrop-blur-sm border border-border/50;
+  }
 }
 
-.theme-purple {
-  --primary: 262.1 83.3% 57.8%;
-  --ring: 262.1 83.3% 57.8%;
-}
+/* Interaction Utilities */
+@layer utilities {
+  .hover-lift {
+    @apply transition-transform duration-200 ease-out;
+  }
 
-.theme-beige {
-  --primary: 43.3 74.1% 66.4%;
-  --ring: 43.3 74.1% 66.4%;
-  --primary-foreground: 222.2 84% 4.9%;
-}
+  .hover-lift:hover {
+    @apply -translate-y-1;
+  }
 
-.theme-red {
-  --primary: 0 72.2% 50.6%;
-  --ring: 0 72.2% 50.6%;
+  .hover-glow {
+    @apply transition-shadow duration-300 ease-out;
+  }
+
+  .hover-glow:hover {
+    box-shadow: var(--shadow-large);
+  }
 }

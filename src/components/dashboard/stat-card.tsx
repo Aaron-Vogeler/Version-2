@@ -1,9 +1,11 @@
 /**
  * Stat card component for displaying KPIs
+ * Redesigned with minimalist beige aesthetic
  */
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { LucideIcon } from 'lucide-react';
+import { LucideIcon, TrendingUp, TrendingDown } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface StatCardProps {
   title: string;
@@ -18,20 +20,38 @@ interface StatCardProps {
 
 export function StatCard({ title, value, icon: Icon, description, trend }: StatCardProps) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+    <Card className="group transition-all duration-300 hover:shadow-large border-border/30">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+        <CardTitle className="text-sm font-medium uppercase tracking-wider text-foreground-muted">
+          {title}
+        </CardTitle>
+        <div className="rounded-lg bg-primary/10 p-3 transition-colors duration-200 group-hover:bg-primary/20">
+          <Icon className="h-5 w-5 text-primary" />
+        </div>
       </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
+      <CardContent className="space-y-3">
+        <div className="text-4xl font-bold tracking-tight text-foreground">{value}</div>
         {description && (
-          <p className="text-xs text-muted-foreground mt-1">{description}</p>
+          <p className="text-sm text-foreground-secondary leading-relaxed">{description}</p>
         )}
         {trend && (
-          <p className={`text-xs mt-1 ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
-            {trend.isPositive ? '+' : ''}{trend.value}% from last period
-          </p>
+          <div className="flex items-center gap-2 pt-2">
+            {trend.isPositive ? (
+              <TrendingUp className="h-4 w-4 text-success" />
+            ) : (
+              <TrendingDown className="h-4 w-4 text-destructive" />
+            )}
+            <p
+              className={cn(
+                'text-sm font-medium',
+                trend.isPositive ? 'text-success' : 'text-destructive'
+              )}
+            >
+              {trend.isPositive ? '+' : ''}
+              {trend.value}%
+              <span className="text-foreground-muted ml-1">from last period</span>
+            </p>
+          </div>
         )}
       </CardContent>
     </Card>
