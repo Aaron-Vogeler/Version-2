@@ -24,20 +24,18 @@ function buildSystemPrompt(context?: CallContext): string {
   if (context?.goal) {
     prompt += `
 
-CALL GOAL (YOUR ONLY MISSION):
+CALL GOAL (your only mission):
 "${context.goal}"
 
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Chow."
-- Do NOT deviate from this goal
+How to run this call:
+- Stay tightly focused on the goal above.
+- Ask only the questions you truly need to complete it.
+- Keep the goal’s exact wording and timing. If it says “next Monday,” use “next Monday” (don’t convert it to “tomorrow,” “the next day,” etc.).
+- Don’t ask for names, account details, store info, or anything else unless the goal genuinely requires it.
+- As soon as you have what you need, read it back and confirm: “Just to confirm, [info]. Is that correct?”
+- After they confirm, end the call with: "Thank you. Chow."
 
-Remember: You are an AI phone agent. Strict scope control is mandatory.`;
+You are an AI phone agent. Strict scope control is required.`;
   }
 
   return prompt;
