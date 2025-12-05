@@ -22,6 +22,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAnimatingOut, setIsAnimatingOut] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,28 +39,35 @@ export default function LoginPage() {
 
       if (result?.error) {
         setError('Invalid email or password');
+        setLoading(false);
         return;
       }
 
       if (result?.ok) {
-        // Redirect to dashboard
-        router.push('/dashboard');
-        router.refresh();
+        // Trigger animation sequence
+        setIsAnimatingOut(true);
+
+        // Wait for bird animation to complete (5s)
+        setTimeout(() => {
+          router.push('/dashboard');
+          router.refresh();
+        }, 5000);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to login');
-    } finally {
       setLoading(false);
     }
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
-      <div className="w-full max-w-lg">
+      <div className={`w-full max-w-lg ${isAnimatingOut ? 'login-exit' : ''}`}>
         {/* Header */}
         <div className="text-center mb-10">
           <div className="flex justify-center mb-4">
-            <img src="/assets/bird/Wings Up.png" alt="Pidgeon" className="h-32 w-32" />
+            {!isAnimatingOut && (
+              <img src="/assets/bird/Wings Up.png" alt="Pidgeon" className="h-32 w-32" />
+            )}
           </div>
           <h1 className={`${greatVibes.className} text-5xl lg:text-6xl tracking-tight text-foreground mb-3`}>
             Pidgeon
@@ -87,7 +95,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  disabled={loading}
+                  disabled={loading || isAnimatingOut}
                 />
               </div>
               <div className="space-y-3">
@@ -99,10 +107,10 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  disabled={loading}
+                  disabled={loading || isAnimatingOut}
                 />
               </div>
-              <Button type="submit" className="w-full" size="lg" disabled={loading}>
+              <Button type="submit" className="w-full" size="lg" disabled={loading || isAnimatingOut}>
                 {loading ? 'Signing in...' : 'Sign in'}
               </Button>
             </CardContent>
@@ -117,6 +125,18 @@ export default function LoginPage() {
           </Link>
         </p>
       </div>
+
+      {/* Bird animation overlay - shown during login animation */}
+      {isAnimatingOut && (
+        <div className="bird-overlay" aria-hidden="true">
+          <div className="bird-flight">
+            <div className="bird">
+              <div className="bird-wings-up"></div>
+              <div className="bird-wings-down"></div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

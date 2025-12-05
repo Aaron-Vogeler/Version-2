@@ -329,6 +329,22 @@
   animation: flapWingsDown var(--flap-duration) steps(1, end) infinite;
 }
 
+/* Login exit animation - fade out and move down */
+@keyframes loginExitDown {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(150px);
+  }
+}
+
+.login-exit {
+  animation: loginExitDown var(--fly-duration) ease-in forwards;
+}
+
 /* Respect user motion preferences */
 @media (prefers-reduced-motion: reduce) {
   .bird-flight {
@@ -349,5 +365,9 @@
   .bird-wings-down {
     animation: none;
     opacity: 0;
+  }
+
+  .login-exit {
+    animation: none;
   }
 }
