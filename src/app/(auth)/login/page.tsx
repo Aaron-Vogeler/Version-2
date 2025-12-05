@@ -55,7 +55,7 @@ export default function LoginPage() {
       <div className="w-full max-w-lg">
         {/* Header */}
         <div className="text-center mb-10">
-          <h1 className="text-5xl lg:text-6xl font-black tracking-wider text-foreground mb-3" style={{ letterSpacing: '-0.02em' }}>
+          <h1 className="text-4xl lg:text-5xl font-bold tracking-tight text-foreground mb-3">
             Ferguson
           </h1>
           <p className="text-lg text-foreground-secondary italic">
