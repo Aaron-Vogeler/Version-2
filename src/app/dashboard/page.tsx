@@ -27,6 +27,7 @@ import { Call, Assistant } from '@/lib/types/database';
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [calls, setCalls] = useState<Call[]>([]);
   const [filteredCalls, setFilteredCalls] = useState<Call[]>([]);
   const [currentFilters, setCurrentFilters] = useState<CallFilters>({
@@ -55,6 +56,16 @@ export default function DashboardPage() {
     loadDashboardData();
     loadAnalytics(true); // Force initial load
   }, []);
+
+  // Handle loading delay - wait 5 seconds minimum for bird animation
+  useEffect(() => {
+    if (dataLoaded) {
+      const timer = setTimeout(() => {
+        setLoading(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [dataLoaded]);
 
   // Analytics polling - fetch every 5 minutes instead of on every event
   useEffect(() => {
@@ -90,8 +101,6 @@ export default function DashboardPage() {
 
   const loadDashboardData = async () => {
     try {
-      setLoading(true);
-
       // Fetch recent calls
       const callsRes = await fetch('/api/calls?limit=100');
       if (callsRes.ok) {
@@ -109,7 +118,7 @@ export default function DashboardPage() {
     } catch (error) {
       console.error('Error loading dashboard:', error);
     } finally {
-      setLoading(false);
+      setDataLoaded(true);
     }
   };
 
