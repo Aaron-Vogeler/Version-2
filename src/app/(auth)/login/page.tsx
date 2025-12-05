@@ -24,8 +24,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loginSuccess, setLoginSuccess] = useState(false);
-  const [birdPosition, setBirdPosition] = useState<{ top: number; left: number } | null>(null);
-  const birdRef = useRef<HTMLImageElement>(null);
+  const birdRef = useRef<HTMLDivElement>(null);
 
   // Handle redirect after animation completes
   useEffect(() => {
@@ -62,14 +61,6 @@ export default function LoginPage() {
       }
 
       if (result?.ok) {
-        // Get the bird's current position before starting animation
-        if (birdRef.current) {
-          const rect = birdRef.current.getBoundingClientRect();
-          setBirdPosition({
-            top: rect.top,
-            left: rect.left,
-          });
-        }
         // Trigger the login success animation
         setLoginSuccess(true);
       }
@@ -82,34 +73,18 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
-      {/* Animated bird overlay - appears on successful login */}
-      {loginSuccess && birdPosition && (
-        <div className="login-bird-overlay" aria-hidden="true">
-          <div
-            className="login-bird-flight"
-            style={{
-              top: birdPosition.top,
-              left: birdPosition.left,
-            }}
-          >
-            <div className="login-bird">
-              <div className="bird-wings-up"></div>
-              <div className="bird-wings-down"></div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className={`w-full max-w-lg ${loginSuccess ? 'login-content-fade-out' : ''}`}>
         {/* Header */}
         <div className="text-center mb-10">
           <div className="flex justify-center mb-4">
-            <img
+            {/* Bird is always the animated version, flight only triggers on success */}
+            <div
               ref={birdRef}
-              src="/assets/bird/Wings Up.png"
-              alt="Pidgeon"
-              className={`h-32 w-32 transition-opacity duration-0 ${loginSuccess ? 'login-bird-hidden' : ''}`}
-            />
+              className={`login-bird-inline ${loginSuccess ? 'login-bird-flying' : ''}`}
+            >
+              <div className={`bird-wings-up ${loginSuccess ? 'flapping' : ''}`}></div>
+              <div className={`bird-wings-down ${loginSuccess ? 'flapping' : ''}`}></div>
+            </div>
           </div>
           <h1 className={`${greatVibes.className} text-5xl lg:text-6xl tracking-tight text-foreground mb-3`}>
             Pidgeon

@@ -410,17 +410,22 @@
   animation: loginFlyAcross var(--login-fly-duration) ease-in forwards;
 }
 
-/* Login bird container - same size as static bird */
-.login-bird {
+/* Inline bird - sits in place, flies off on login success */
+.login-bird-inline {
   position: relative;
   width: var(--login-bird-size);
   height: var(--login-bird-size);
   background: transparent;
 }
 
-/* Wing frames for login bird */
-.login-bird .bird-wings-up,
-.login-bird .bird-wings-down {
+/* When flying, bird moves to the right */
+.login-bird-inline.login-bird-flying {
+  animation: loginFlyAcross var(--login-fly-duration) ease-in forwards;
+}
+
+/* Wing frames for inline bird */
+.login-bird-inline .bird-wings-up,
+.login-bird-inline .bird-wings-down {
   position: absolute;
   top: 0;
   left: 0;
@@ -430,17 +435,29 @@
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
+}
+
+/* Wings up - visible by default (static bird pose) */
+.login-bird-inline .bird-wings-up {
+  background-image: url('/assets/bird/Wings Up.png');
+  opacity: 1;
+}
+
+/* Wings down - hidden by default */
+.login-bird-inline .bird-wings-down {
+  background-image: url('/assets/bird/Wings Down.png');
+  opacity: 0;
+}
+
+/* When flapping class is added, animate the wings */
+.login-bird-inline .bird-wings-up.flapping {
+  animation: flapWingsUp 0.5s steps(1, end) infinite;
   will-change: opacity;
 }
 
-.login-bird .bird-wings-up {
-  background-image: url('/assets/bird/Wings Up.png');
-  animation: flapWingsUp 0.5s steps(1, end) infinite;
-}
-
-.login-bird .bird-wings-down {
-  background-image: url('/assets/bird/Wings Down.png');
+.login-bird-inline .bird-wings-down.flapping {
   animation: flapWingsDown 0.5s steps(1, end) infinite;
+  will-change: opacity;
 }
 
 /* Login content fade out and move down animation */
@@ -467,17 +484,18 @@
 
 /* Reduced motion for login animations */
 @media (prefers-reduced-motion: reduce) {
-  .login-bird-flight {
+  .login-bird-flight,
+  .login-bird-inline.login-bird-flying {
     animation: none;
     opacity: 0;
   }
 
-  .login-bird .bird-wings-up {
+  .login-bird-inline .bird-wings-up.flapping {
     animation: none !important;
     opacity: 1;
   }
 
-  .login-bird .bird-wings-down {
+  .login-bird-inline .bird-wings-down.flapping {
     animation: none !important;
     opacity: 0;
   }
