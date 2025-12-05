@@ -358,7 +358,7 @@
 :root {
   --login-bird-size: 128px; /* h-32 w-32 = 8rem = 128px */
   --login-fly-duration: 5s;
-  --login-content-fade-duration: 1.5s;
+  --login-content-fade-duration: 1s;
 }
 
 /* Dashboard fade-in animation */
@@ -437,7 +437,7 @@
   background-position: center;
 }
 
-/* Wings up - visible by default (static bird pose) */
+/* Wings up - visible by default (static pose) */
 .login-bird-inline .bird-wings-up {
   background-image: url('/assets/bird/Wings Up.png');
   opacity: 1;
@@ -449,7 +449,7 @@
   opacity: 0;
 }
 
-/* When flapping class is added, animate the wings */
+/* Flapping animation - only when .flapping class is added */
 .login-bird-inline .bird-wings-up.flapping {
   animation: flapWingsUp 0.5s steps(1, end) infinite;
   will-change: opacity;

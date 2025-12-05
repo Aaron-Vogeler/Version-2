@@ -73,26 +73,29 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
-      <div className={`w-full max-w-lg ${loginSuccess ? 'login-content-fade-out' : ''}`}>
-        {/* Header */}
-        <div className="text-center mb-10">
-          <div className="flex justify-center mb-4">
-            {/* Bird is always the animated version, flight only triggers on success */}
-            <div
-              ref={birdRef}
-              className={`login-bird-inline ${loginSuccess ? 'login-bird-flying' : ''}`}
-            >
-              <div className={`bird-wings-up ${loginSuccess ? 'flapping' : ''}`}></div>
-              <div className={`bird-wings-down ${loginSuccess ? 'flapping' : ''}`}></div>
-            </div>
+      <div className="w-full max-w-lg">
+        {/* Bird - static until login, then flaps and flies */}
+        <div className="flex justify-center mb-4">
+          <div
+            ref={birdRef}
+            className={`login-bird-inline ${loginSuccess ? 'login-bird-flying' : ''}`}
+          >
+            {/* Flapping class added only after login success */}
+            <div className={`bird-wings-up ${loginSuccess ? 'flapping' : ''}`}></div>
+            <div className={`bird-wings-down ${loginSuccess ? 'flapping' : ''}`}></div>
           </div>
-          <h1 className={`${greatVibes.className} text-5xl lg:text-6xl tracking-tight text-foreground mb-3`}>
-            Pidgeon
-          </h1>
-          <p className="text-lg text-foreground-secondary italic">
-            More time and sanity awaits you...
-          </p>
         </div>
+
+        {/* Content that fades out and moves down */}
+        <div className={loginSuccess ? 'login-content-fade-out' : ''}>
+          <div className="text-center mb-10">
+            <h1 className={`${greatVibes.className} text-5xl lg:text-6xl tracking-tight text-foreground mb-3`}>
+              Pidgeon
+            </h1>
+            <p className="text-lg text-foreground-secondary italic">
+              More time and sanity awaits you...
+            </p>
+          </div>
 
         {/* Login Card */}
         <Card className="shadow-elevated">
@@ -134,13 +137,14 @@ export default function LoginPage() {
           </form>
         </Card>
 
-        {/* Sign up link */}
-        <p className="text-center text-base text-foreground-secondary mt-8">
-          Don&apos;t have an account?{' '}
-          <Link href="/signup" className="text-primary hover:text-primary/80 font-medium transition-colors">
-            Create an account
-          </Link>
-        </p>
+          {/* Sign up link */}
+          <p className="text-center text-base text-foreground-secondary mt-8">
+            Don&apos;t have an account?{' '}
+            <Link href="/signup" className="text-primary hover:text-primary/80 font-medium transition-colors">
+              Create an account
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );
