@@ -2,9 +2,10 @@
 
 /**
  * Login page with email/password authentication via NextAuth
+ * Features animated bird fly-off on successful login
  */
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from 'next-auth/react';
@@ -22,6 +23,22 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loginSuccess, setLoginSuccess] = useState(false);
+  const [birdPosition, setBirdPosition] = useState<{ top: number; left: number } | null>(null);
+  const birdRef = useRef<HTMLImageElement>(null);
+
+  // Handle redirect after animation completes
+  useEffect(() => {
+    if (loginSuccess) {
+      // Redirect after animation (5 seconds total)
+      const redirectTimer = setTimeout(() => {
+        router.push('/dashboard');
+        router.refresh();
+      }, 5000);
+
+      return () => clearTimeout(redirectTimer);
+    }
+  }, [loginSuccess, router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,9 +59,16 @@ export default function LoginPage() {
       }
 
       if (result?.ok) {
-        // Redirect to dashboard
-        router.push('/dashboard');
-        router.refresh();
+        // Get the bird's current position before starting animation
+        if (birdRef.current) {
+          const rect = birdRef.current.getBoundingClientRect();
+          setBirdPosition({
+            top: rect.top,
+            left: rect.left,
+          });
+        }
+        // Trigger the login success animation
+        setLoginSuccess(true);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to login');
@@ -55,11 +79,34 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
-      <div className="w-full max-w-lg">
+      {/* Animated bird overlay - appears on successful login */}
+      {loginSuccess && birdPosition && (
+        <div className="login-bird-overlay" aria-hidden="true">
+          <div
+            className="login-bird-flight"
+            style={{
+              top: birdPosition.top,
+              left: birdPosition.left,
+            }}
+          >
+            <div className="login-bird">
+              <div className="bird-wings-up"></div>
+              <div className="bird-wings-down"></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`w-full max-w-lg ${loginSuccess ? 'login-content-fade-out' : ''}`}>
         {/* Header */}
         <div className="text-center mb-10">
           <div className="flex justify-center mb-4">
-            <img src="/assets/bird/Wings Up.png" alt="Pidgeon" className="h-32 w-32" />
+            <img
+              ref={birdRef}
+              src="/assets/bird/Wings Up.png"
+              alt="Pidgeon"
+              className={`h-32 w-32 transition-opacity duration-0 ${loginSuccess ? 'login-bird-hidden' : ''}`}
+            />
           </div>
           <h1 className={`${greatVibes.className} text-5xl lg:text-6xl tracking-tight text-foreground mb-3`}>
             Pidgeon
@@ -87,7 +134,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  disabled={loading}
+                  disabled={loading || loginSuccess}
                 />
               </div>
               <div className="space-y-3">
@@ -99,11 +146,11 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  disabled={loading}
+                  disabled={loading || loginSuccess}
                 />
               </div>
-              <Button type="submit" className="w-full" size="lg" disabled={loading}>
-                {loading ? 'Signing in...' : 'Sign in'}
+              <Button type="submit" className="w-full" size="lg" disabled={loading || loginSuccess}>
+                {loading ? 'Signing in...' : loginSuccess ? 'Success!' : 'Sign in'}
               </Button>
             </CardContent>
           </form>
