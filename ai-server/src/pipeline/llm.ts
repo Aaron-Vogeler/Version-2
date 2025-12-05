@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
+import { buildSystemPrompt } from "../prompts/system-prompt";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -14,50 +15,10 @@ const groq = new OpenAI({
 export type CallContext = contextMgr.CallContext;
 
 /**
- * Build the system prompt dynamically, optionally injecting call goal context.
- * Replaces the hardcoded assistant name and user name with custom names from the call context.
- * @param context - Optional call context with goal, assistantName, and userName
- * @returns The complete system prompt
+ * Re-export buildSystemPrompt from the dedicated prompts module.
+ * This maintains backward compatibility with any code importing from this file.
  */
-function buildSystemPrompt(context?: CallContext): string {
-  let prompt = config.llm.systemPrompt;
-
-  // Replace the hardcoded assistant name "Ferguson" with the custom name if provided
-  const assistantName = context?.assistantName || "Ferguson";
-
-  // Replace all occurrences of "Ferguson" with the custom assistant name
-  prompt = prompt.replace(/Ferguson/g, assistantName);
-
-  // Also handle lowercase "ferguson" if it appears
-  prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
-
-  // Replace the hardcoded user name "Aaron" with the custom name if provided
-  const userName = context?.userName || "Aaron";
-
-  // Replace all occurrences of "Aaron" with the custom user name
-  prompt = prompt.replace(/Aaron/g, userName);
-
-  if (context?.goal) {
-    prompt += `
-
-CALL GOAL (YOUR ONLY MISSION):
-"${context.goal}"
-
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Chow."
-- Do NOT deviate from this goal
-
-Remember: You are an AI phone agent. Strict scope control is mandatory.`;
-  }
-
-  return prompt;
-}
+export { buildSystemPrompt };
 
 /**
  * Generate a rolling summary of the call by calling the LLM.
