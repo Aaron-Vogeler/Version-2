@@ -226,12 +226,6 @@ export default function DashboardPage() {
 
     if (activeCalls.length === 0) return;
 
-    // Confirm if there are multiple
-    if (activeCalls.length > 1) {
-      const confirmed = window.confirm(`Are you sure you want to end ${activeCalls.length} active calls?`);
-      if (!confirmed) return;
-    }
-
     setEndingCalls(true);
 
     try {
