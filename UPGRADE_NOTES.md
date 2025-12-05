@@ -4,6 +4,8 @@
 
 This upgrade transforms the Telnyx Call CRM Dashboard into a comprehensive AI call assistant analytics platform with advanced tracking, filtering, and feedback capabilities.
 
+**Authentication Model:** Individual user authentication with email/password. Users log in once and access their data, which is isolated using Row Level Security (RLS).
+
 ### ✨ New Features
 
 #### 1. **Call Detail View**
@@ -207,10 +209,10 @@ const handleViewCall = (call: Call) => {
 
 ### 🔒 Security Notes
 
-- All new API routes enforce tenant scoping
-- RLS policies protect new tables
+- All new API routes enforce data scoping via RLS
+- RLS policies protect new tables and ensure data isolation
 - Feedback submission requires authenticated user
-- Analytics endpoints respect multi-tenant isolation
+- Analytics endpoints respect data isolation
 
 ### 📈 Performance Optimizations
 

@@ -1,6 +1,6 @@
 # NextAuth Setup Guide
 
-This application uses NextAuth with email/password authentication via Supabase for secure authentication.
+This application uses individual user authentication with NextAuth and email/password login via Supabase Auth. All users log in with their email and password, and data is isolated using Row Level Security (RLS).
 
 ## Quick Start
 

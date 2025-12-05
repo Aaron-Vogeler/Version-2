@@ -1,11 +1,12 @@
 # Telnyx AI Call CRM Dashboard
 
-A production-ready, multi-tenant AI Call CRM Dashboard with live Telnyx call metrics, AI-powered conversations, and analytics. Built with Next.js, Supabase, and Fly.io for optimal performance.
+A production-ready AI Call CRM Dashboard with live Telnyx call metrics, AI-powered conversations, and analytics. Built with Next.js, Supabase, and Fly.io for optimal performance. Users authenticate individually with email/password, and data is organized with Row Level Security (RLS) for secure isolation.
 
 ## Features
 
 - **AI Voice Agent**: Deepgram STT + Groq LLM + Telnyx TTS for intelligent phone conversations
-- **Multi-tenant Architecture**: Secure tenant isolation with Row Level Security (RLS)
+- **Individual User Authentication**: Secure email/password login with NextAuth + Supabase Auth
+- **Data Isolation**: Row Level Security (RLS) ensures users only see their own data
 - **Real-time Updates**: Live call metrics and transcripts via Supabase Realtime
 - **Polished UI**: Modern, responsive dashboard with shadcn/ui and TailwindCSS
 - **Live Transcripts**: Real-time conversation logging with speaker identification
@@ -29,7 +30,7 @@ A production-ready, multi-tenant AI Call CRM Dashboard with live Telnyx call met
 
 ### Infrastructure
 - **Fly.io** for AI server with WebSocket support
-- **PostgreSQL** with RLS for multi-tenant security
+- **PostgreSQL** with RLS for data security and isolation
 
 ## Architecture
 
@@ -250,8 +251,8 @@ Import `postman/telnyx-crm-dashboard.json` into Postman and test:
 
 ### Tables
 
-- **tenants**: Multi-tenant organizations
-- **profiles**: User profiles linked to tenants
+- **tenants**: Organization data for data isolation
+- **profiles**: User profiles with roles and metadata
 - **calls**: Call records with metrics and transcripts
 - **call_events**: Event timeline for each call
 - **assistants**: AI assistant configurations
@@ -260,13 +261,14 @@ Import `postman/telnyx-crm-dashboard.json` into Postman and test:
 ### RLS Policies
 
 All tables use Row Level Security to ensure:
-- Users only see data from their tenant
-- Service role can access all data
-- Admin users have elevated permissions within their tenant
+- Users only see their own data (isolated by tenant_id)
+- Service role can access all data for backend operations
+- Secure data access enforced at the database level
 
 ## Security
 
-- **RLS Policies**: Tenant isolation at database level
+- **Individual User Authentication**: Email/password via NextAuth + Supabase Auth
+- **RLS Policies**: Data isolation at database level
 - **Service Keys**: Never exposed to client
 - **Input Validation**: Zod schemas for API routes
 - **Secure WebSocket**: TLS encryption for audio streams

@@ -153,8 +153,8 @@ WHERE id = 'your-call-id-here';
 ### Test 3: End-to-End with Telnyx Call
 
 **Prerequisites:**
-- Cloudflare Worker is deployed and receiving Telnyx webhooks
-- Worker is writing to Supabase `calls` table
+- AI Server is deployed to Fly.io and receiving Telnyx webhooks
+- AI Server is writing to Supabase `calls` table
 
 **Steps:**
 
@@ -167,8 +167,8 @@ WHERE id = 'your-call-id-here';
 **What Should Happen:**
 1. Call appears in table with status "initiated" or "ringing"
 2. Modal opens showing "Waiting for transcript..." with LIVE badge
-3. As Telnyx sends transcription events → Worker updates `live_transcript`
-4. UI updates automatically every few seconds
+3. As call progresses → AI Server updates `live_transcript` in real-time
+4. UI updates automatically every few seconds via Supabase Realtime
 5. When call ends, status changes to "completed" and LIVE badge disappears
 6. Final transcript is retained
 
@@ -192,15 +192,15 @@ WHERE id = 'your-call-id-here';
    SELECT * FROM pg_policies WHERE tablename = 'calls';
    ```
 3. **Test manual update** in Supabase Table Editor
-4. **Check Cloudflare Worker** is actually writing to `live_transcript` field
-5. **Verify Supabase URL** matches between Worker and Frontend
+4. **Check AI Server** is actually writing to `live_transcript` field
+5. **Verify Supabase URL** matches between AI Server and Frontend
 
 ### Issue: "No transcript available"
 
 **Solutions:**
-- Verify Cloudflare Worker is writing to `live_transcript` OR `transcript` column
-- Check Worker logs for errors
-- Ensure Telnyx is sending transcription events
+- Verify AI Server is writing to `live_transcript` OR `transcript` column
+- Check AI Server logs with `fly logs` for errors
+- Ensure Deepgram is successfully transcribing audio
 - Verify call status is correct (`answered`, not `failed`)
 
 ### Issue: Multiple subscriptions causing lag
@@ -228,11 +228,11 @@ Before deploying to production:
 - [ ] Columns `live_transcript`, `transcript`, `transcription_url` exist
 - [ ] Test database update shows in UI within 2 seconds
 
-### Cloudflare Worker
-- [ ] Worker is writing to `live_transcript` field
-- [ ] Worker has correct Supabase credentials
-- [ ] Test webhook from Telnyx reaches Worker
-- [ ] Worker logs show successful database inserts
+### AI Server (Fly.io)
+- [ ] AI Server is writing to `live_transcript` field
+- [ ] AI Server has correct Supabase credentials
+- [ ] Telnyx webhooks and WebSocket streams reach AI Server
+- [ ] AI Server logs show successful database inserts
 
 ### End-to-End
 - [ ] Make a test call through Telnyx
@@ -314,4 +314,4 @@ Your implementation is working correctly if:
 - Check Vercel deployment logs
 - Review Supabase Realtime logs (Dashboard → Logs)
 - Inspect Network tab for failed WebSocket connections
-- Verify Cloudflare Worker is running and receiving webhooks
+- Verify AI Server is running on Fly.io: `fly logs`
