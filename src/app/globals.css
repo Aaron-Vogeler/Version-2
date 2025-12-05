@@ -406,7 +406,8 @@
   top: 0;
   left: 0;
   will-change: transform, opacity;
-  animation: loginFlyAcross var(--login-fly-duration) cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+  /* Delay flight by 0.75s so bird flaps once before moving */
+  animation: loginFlyAcross var(--login-fly-duration) cubic-bezier(0.25, 0.1, 0.25, 1) 0.75s forwards;
 }
 
 /* Login bird container - same size as static bird */

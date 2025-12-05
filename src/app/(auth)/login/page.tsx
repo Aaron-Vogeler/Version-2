@@ -33,11 +33,11 @@ export default function LoginPage() {
       // Pre-fetch dashboard for instant transition
       router.prefetch('/dashboard');
 
-      // Redirect slightly before bird fully exits for seamless transition
+      // Redirect when bird exits: 0.75s flap delay + 5s flight - 0.5s early = 5.25s
       const redirectTimer = setTimeout(() => {
         router.push('/dashboard');
         router.refresh();
-      }, 4500);
+      }, 5250);
 
       return () => clearTimeout(redirectTimer);
     }
