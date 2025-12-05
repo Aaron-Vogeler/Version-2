@@ -63,10 +63,10 @@ export default function DashboardPage() {
       setShowBirdLoader(true);
       sessionStorage.setItem('dashboardLoaderShown', 'true');
 
-      // Auto-hide bird loader after animation completes (3s)
+      // Auto-hide bird loader after animation completes (5s)
       const loaderTimer = setTimeout(() => {
         setShowBirdLoader(false);
-      }, 3000);
+      }, 5000);
 
       return () => clearTimeout(loaderTimer);
     }
@@ -80,7 +80,7 @@ export default function DashboardPage() {
       if (showBirdLoader) {
         const timer = setTimeout(() => {
           setLoading(false);
-        }, 3000);
+        }, 5000);
         return () => clearTimeout(timer);
       } else {
         setLoading(false);
