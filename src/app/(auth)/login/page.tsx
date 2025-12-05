@@ -59,7 +59,7 @@ export default function LoginPage() {
             Ferguson
           </h1>
           <p className="text-lg text-foreground-secondary italic">
-            Login for more time and sanity...
+            More time and sanity awaits you...
           </p>
         </div>
 
