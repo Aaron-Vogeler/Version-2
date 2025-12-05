@@ -58,6 +58,9 @@ export default function LoginPage() {
       <div className="w-full max-w-lg">
         {/* Header */}
         <div className="text-center mb-10">
+          <div className="flex justify-center mb-4">
+            <img src="/assets/bird/Wings Up.png" alt="Pidgeon" className="h-32 w-32" />
+          </div>
           <h1 className={`${greatVibes.className} text-5xl lg:text-6xl tracking-tight text-foreground mb-3`}>
             Pidgeon
           </h1>

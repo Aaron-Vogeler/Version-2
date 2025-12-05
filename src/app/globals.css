@@ -241,7 +241,7 @@
 /* GPU-accelerated flight motion using translate3d */
 @keyframes flyAcross {
   0% {
-    transform: translate3d(calc(-1 * var(--fly-padding)), -50%, 0);
+    transform: translate3d(calc(33.33vw / 2 - var(--bird-size) / 2), -50%, 0);
   }
   100% {
     transform: translate3d(calc(100vw + var(--fly-padding)), -50%, 0);
