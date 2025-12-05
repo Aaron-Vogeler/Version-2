@@ -5,7 +5,7 @@
  * Form to trigger outbound calls via webhook
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,6 +19,23 @@ export function DelegateCall() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  const [customAssistantName, setCustomAssistantName] = useState('Ferguson');
+
+  // Load custom assistant name on mount
+  useEffect(() => {
+    const loadAssistantName = async () => {
+      try {
+        const response = await fetch('/api/profile');
+        if (response.ok) {
+          const data = await response.json();
+          setCustomAssistantName(data.custom_assistant_name || 'Ferguson');
+        }
+      } catch (error) {
+        console.error('Error loading assistant name:', error);
+      }
+    };
+    loadAssistantName();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,6 +53,7 @@ export function DelegateCall() {
         body: JSON.stringify({
           goal,
           to_number: toNumber,
+          assistant_name: customAssistantName,
         }),
       });
 
@@ -68,7 +86,7 @@ export function DelegateCall() {
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center gap-2">
         <Phone className="h-6 w-6" />
-        <h2 className="text-2xl font-bold">Delegate A Call</h2>
+        <h2 className="text-2xl font-bold">Assign a call to {customAssistantName}</h2>
       </div>
 
       <Card>

@@ -614,10 +614,11 @@ app.post("/webhooks/telnyx", async (req, res) => {
   const callSessionId = req.body?.data?.payload?.call_session_id;
   const payload = req.body?.data?.payload || {};
 
-  // Decode client_state to get user_id and goal
+  // Decode client_state to get user_id, goal, and assistantName
   const clientStateData = decodeClientState(payload.client_state);
   const userId = clientStateData.userId || clientStateData.user_id || null;
   const goal = clientStateData.goal || null;
+  const assistantName = clientStateData.assistantName || 'Ferguson';
 
   console.log(`📞 Telnyx webhook event: ${eventType} (callControlId: ${callControlId || 'N/A'})`);
 
@@ -1080,6 +1081,7 @@ wss.on("connection", async (ws) => {
           managedContext.streamId = streamId;
           managedContext.goal = decoded.goal;
           managedContext.userId = decoded.userId;
+          managedContext.assistantName = decoded.assistantName || 'Ferguson';
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";

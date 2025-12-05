@@ -21,6 +21,10 @@ export type CallContext = contextMgr.CallContext;
 function buildSystemPrompt(context?: CallContext): string {
   let prompt = config.llm.systemPrompt;
 
+  // Replace assistant name placeholder with dynamic name
+  const assistantName = context?.assistantName || 'Ferguson';
+  prompt = prompt.replace(/\[ASSISTANT_NAME\]/g, assistantName);
+
   if (context?.goal) {
     prompt += `
 

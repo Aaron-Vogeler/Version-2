@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
@@ -46,6 +47,9 @@ export default function DashboardPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [colorTheme, setColorTheme] = useState('blue');
   const [phoneScheme, setPhoneScheme] = useState('modern');
+  const [customAssistantName, setCustomAssistantName] = useState('Ferguson');
+  const [customAssistantNameInput, setCustomAssistantNameInput] = useState('Ferguson');
+  const [savingAssistantName, setSavingAssistantName] = useState(false);
 
   // Initial load on mount
   useEffect(() => {
@@ -55,13 +59,25 @@ export default function DashboardPage() {
     loadSettings();
   }, []);
 
-  // Load settings from localStorage
-  const loadSettings = () => {
+  // Load settings from localStorage and API
+  const loadSettings = async () => {
     const savedColorTheme = localStorage.getItem('colorTheme');
     const savedPhoneScheme = localStorage.getItem('phoneScheme');
 
     if (savedColorTheme) setColorTheme(savedColorTheme);
     if (savedPhoneScheme) setPhoneScheme(savedPhoneScheme);
+
+    // Load custom assistant name from API
+    try {
+      const response = await fetch('/api/profile');
+      if (response.ok) {
+        const data = await response.json();
+        setCustomAssistantName(data.custom_assistant_name || 'Ferguson');
+        setCustomAssistantNameInput(data.custom_assistant_name || 'Ferguson');
+      }
+    } catch (error) {
+      console.error('Error loading profile settings:', error);
+    }
   };
 
   // Save settings to localStorage when they change
@@ -216,6 +232,34 @@ export default function DashboardPage() {
     // Sign out and redirect to login
     await fetch('/api/auth/signout', { method: 'POST' });
     window.location.href = '/login';
+  };
+
+  const handleSaveAssistantName = async () => {
+    if (!customAssistantNameInput.trim()) {
+      return;
+    }
+
+    setSavingAssistantName(true);
+    try {
+      const response = await fetch('/api/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ custom_assistant_name: customAssistantNameInput.trim() }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setCustomAssistantName(data.custom_assistant_name);
+        setCustomAssistantNameInput(data.custom_assistant_name);
+      } else {
+        const error = await response.json();
+        console.error('Failed to save assistant name:', error);
+      }
+    } catch (error) {
+      console.error('Error saving assistant name:', error);
+    } finally {
+      setSavingAssistantName(false);
+    }
   };
 
   const handleEndActiveCalls = async () => {
@@ -393,6 +437,31 @@ export default function DashboardPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
+            {/* Custom Assistant Name */}
+            <div className="space-y-2">
+              <Label htmlFor="assistant-name">AI Assistant Name</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="assistant-name"
+                  value={customAssistantNameInput}
+                  onChange={(e) => setCustomAssistantNameInput(e.target.value)}
+                  placeholder="e.g., Ferguson"
+                  className="flex-1"
+                />
+                <Button
+                  onClick={handleSaveAssistantName}
+                  disabled={savingAssistantName || customAssistantNameInput.trim() === customAssistantName}
+                  variant="outline"
+                  size="sm"
+                >
+                  {savingAssistantName ? 'Saving...' : 'Save'}
+                </Button>
+              </div>
+              <p className="text-xs text-foreground-secondary">
+                This name will be used when your AI assistant introduces itself on calls.
+              </p>
+            </div>
+
             {/* Color Theme Selection */}
             <div className="space-y-2">
               <Label htmlFor="color-theme">Color Theme</Label>
