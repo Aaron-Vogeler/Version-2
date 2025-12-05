@@ -10,11 +10,12 @@ import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Call } from '@/lib/types/database';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { LiveTranscript } from '@/components/dashboard/live-transcript';
 import { ListenInBrowser } from '@/components/dashboard/listen-in-browser';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { LoadingScreen } from '@/components/ui/loading-screen';
 import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } from '@/lib/utils';
 
 export default function CallDetailPage() {
@@ -59,14 +60,7 @@ export default function CallDetailPage() {
   }, [callId]);
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="flex items-center gap-2">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <span>Loading call details...</span>
-        </div>
-      </div>
-    );
+    return <LoadingScreen message="Loading call details..." />;
   }
 
   if (error || !call) {

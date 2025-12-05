@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
+import { LoadingScreen } from '@/components/ui/loading-screen';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -269,11 +270,7 @@ export default function DashboardPage() {
   ).length;
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-lg">Loading dashboard...</div>
-      </div>
-    );
+    return <LoadingScreen message="Loading your dashboard..." />;
   }
 
   return (
