@@ -351,3 +351,130 @@
     opacity: 0;
   }
 }
+
+/* ===== LOGIN PAGE BIRD ANIMATION ===== */
+/* Animation for bird flying off after successful login */
+
+:root {
+  --login-bird-size: 128px; /* h-32 w-32 = 8rem = 128px */
+  --login-fly-duration: 4s;
+  --login-content-fade-duration: 1.5s;
+}
+
+/* Login bird overlay - positioned to match the static bird */
+.login-bird-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* Flight animation starting from center (where static bird is) */
+@keyframes loginFlyAcross {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(calc(50vw + var(--fly-padding)), 0, 0);
+    opacity: 0;
+  }
+}
+
+/* Container that positions the bird at its initial location */
+.login-bird-flight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform, opacity;
+  animation: loginFlyAcross var(--login-fly-duration) cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+}
+
+/* Login bird container - same size as static bird */
+.login-bird {
+  position: relative;
+  width: var(--login-bird-size);
+  height: var(--login-bird-size);
+  will-change: transform;
+  animation: bobAndTilt var(--bob-duration) ease-in-out infinite;
+  background: transparent;
+}
+
+/* Wing frames for login bird */
+.login-bird .bird-wings-up,
+.login-bird .bird-wings-down {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: transparent;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  will-change: opacity;
+}
+
+.login-bird .bird-wings-up {
+  background-image: url('/assets/bird/Wings Up.png');
+  animation: flapWingsUp var(--flap-duration) steps(1, end) infinite;
+}
+
+.login-bird .bird-wings-down {
+  background-image: url('/assets/bird/Wings Down.png');
+  animation: flapWingsDown var(--flap-duration) steps(1, end) infinite;
+}
+
+/* Login content fade out and move down animation */
+@keyframes loginContentFadeOut {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+}
+
+.login-content-fade-out {
+  animation: loginContentFadeOut var(--login-content-fade-duration) ease-out forwards;
+}
+
+/* Hide static bird during animation */
+.login-bird-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Reduced motion for login animations */
+@media (prefers-reduced-motion: reduce) {
+  .login-bird-flight {
+    animation: none;
+    opacity: 0;
+  }
+
+  .login-bird {
+    animation: none;
+  }
+
+  .login-bird .bird-wings-up {
+    animation: none;
+    opacity: 1;
+  }
+
+  .login-bird .bird-wings-down {
+    animation: none;
+    opacity: 0;
+  }
+
+  .login-content-fade-out {
+    animation: none;
+    opacity: 0;
+  }
+}
