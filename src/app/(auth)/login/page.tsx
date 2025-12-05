@@ -30,11 +30,14 @@ export default function LoginPage() {
   // Handle redirect after animation completes
   useEffect(() => {
     if (loginSuccess) {
-      // Redirect as soon as bird exits screen (5 seconds)
+      // Pre-fetch dashboard for instant transition
+      router.prefetch('/dashboard');
+
+      // Redirect slightly before bird fully exits for seamless transition
       const redirectTimer = setTimeout(() => {
         router.push('/dashboard');
         router.refresh();
-      }, 5000);
+      }, 4500);
 
       return () => clearTimeout(redirectTimer);
     }

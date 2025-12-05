@@ -414,8 +414,6 @@
   position: relative;
   width: var(--login-bird-size);
   height: var(--login-bird-size);
-  will-change: transform;
-  animation: bobAndTilt var(--bob-duration) ease-in-out infinite;
   background: transparent;
 }
 
@@ -471,10 +469,6 @@
   .login-bird-flight {
     animation: none;
     opacity: 0;
-  }
-
-  .login-bird {
-    animation: none;
   }
 
   .login-bird .bird-wings-up {
