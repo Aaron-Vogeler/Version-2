@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    /* Core Colors */
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
 
@@ -32,7 +33,15 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
 
+    /* Customization Variables */
     --radius: 0.5rem;
+    --font-size-base: 1rem;
+    --spacing-unit: 1rem;
+
+    /* Animation Variables */
+    --transition-fast: 150ms;
+    --transition-base: 200ms;
+    --transition-slow: 300ms;
   }
 
   .dark {
@@ -70,8 +79,34 @@
   * {
     @apply border-border;
   }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    transition: background-color var(--transition-base) ease, color var(--transition-base) ease;
+  }
+
+  /* Enhanced Typography */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+
+  h1 { @apply text-4xl; }
+  h2 { @apply text-3xl; }
+  h3 { @apply text-2xl; }
+  h4 { @apply text-xl; }
+  h5 { @apply text-lg; }
+  h6 { @apply text-base; }
+}
+
+/* Smooth Transitions for Interactive Elements */
+@layer components {
+  button, a, [role="button"] {
+    transition: all var(--transition-fast) ease;
+  }
+
+  input, textarea, select {
+    transition: border-color var(--transition-fast) ease, box-shadow var(--transition-fast) ease;
   }
 }
 
@@ -100,4 +135,159 @@
 .theme-red {
   --primary: 0 72.2% 50.6%;
   --ring: 0 72.2% 50.6%;
+}
+
+.theme-orange {
+  --primary: 24.6 95% 53.1%;
+  --ring: 24.6 95% 53.1%;
+}
+
+.theme-cyan {
+  --primary: 188.7 85% 46.5%;
+  --ring: 188.7 85% 46.5%;
+}
+
+.theme-pink {
+  --primary: 330 81% 60%;
+  --ring: 330 81% 60%;
+}
+
+.theme-teal {
+  --primary: 173 80% 40%;
+  --ring: 173 80% 40%;
+}
+
+.theme-indigo {
+  --primary: 239 84% 67%;
+  --ring: 239 84% 67%;
+}
+
+/* Border Radius Customization */
+.radius-none {
+  --radius: 0rem;
+}
+
+.radius-sm {
+  --radius: 0.25rem;
+}
+
+.radius-md {
+  --radius: 0.5rem;
+}
+
+.radius-lg {
+  --radius: 0.75rem;
+}
+
+.radius-xl {
+  --radius: 1rem;
+}
+
+.radius-full {
+  --radius: 9999px;
+}
+
+/* Font Size Customization */
+.font-size-sm {
+  --font-size-base: 0.875rem;
+}
+
+.font-size-base {
+  --font-size-base: 1rem;
+}
+
+.font-size-lg {
+  --font-size-base: 1.125rem;
+}
+
+/* Density Customization */
+.density-compact {
+  --spacing-unit: 0.75rem;
+}
+
+.density-comfortable {
+  --spacing-unit: 1rem;
+}
+
+.density-spacious {
+  --spacing-unit: 1.5rem;
+}
+
+/* Glassmorphism Effects */
+.glass-effect {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.dark .glass-effect {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Smooth Scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: var(--radius);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn var(--transition-slow) ease-out;
+}
+
+.animate-slide-in {
+  animation: slideIn var(--transition-base) ease-out;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
 }

@@ -46,6 +46,9 @@ export default function DashboardPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [colorTheme, setColorTheme] = useState('blue');
   const [phoneScheme, setPhoneScheme] = useState('modern');
+  const [borderRadius, setBorderRadius] = useState('md');
+  const [fontSize, setFontSize] = useState('base');
+  const [density, setDensity] = useState('comfortable');
 
   // Initial load on mount
   useEffect(() => {
@@ -59,9 +62,15 @@ export default function DashboardPage() {
   const loadSettings = () => {
     const savedColorTheme = localStorage.getItem('colorTheme');
     const savedPhoneScheme = localStorage.getItem('phoneScheme');
+    const savedBorderRadius = localStorage.getItem('borderRadius');
+    const savedFontSize = localStorage.getItem('fontSize');
+    const savedDensity = localStorage.getItem('density');
 
     if (savedColorTheme) setColorTheme(savedColorTheme);
     if (savedPhoneScheme) setPhoneScheme(savedPhoneScheme);
+    if (savedBorderRadius) setBorderRadius(savedBorderRadius);
+    if (savedFontSize) setFontSize(savedFontSize);
+    if (savedDensity) setDensity(savedDensity);
   };
 
   // Save settings to localStorage when they change
@@ -74,15 +83,51 @@ export default function DashboardPage() {
     localStorage.setItem('phoneScheme', phoneScheme);
   }, [phoneScheme]);
 
+  useEffect(() => {
+    localStorage.setItem('borderRadius', borderRadius);
+    applyBorderRadius(borderRadius);
+  }, [borderRadius]);
+
+  useEffect(() => {
+    localStorage.setItem('fontSize', fontSize);
+    applyFontSize(fontSize);
+  }, [fontSize]);
+
+  useEffect(() => {
+    localStorage.setItem('density', density);
+    applyDensity(density);
+  }, [density]);
+
   // Apply color theme to document
   const applyColorTheme = (theme: string) => {
     const root = document.documentElement;
 
     // Remove existing theme classes
-    root.classList.remove('theme-blue', 'theme-green', 'theme-purple', 'theme-beige', 'theme-red');
+    root.classList.remove('theme-blue', 'theme-green', 'theme-purple', 'theme-beige', 'theme-red', 'theme-orange', 'theme-cyan', 'theme-pink', 'theme-teal', 'theme-indigo');
 
     // Add new theme class
     root.classList.add(`theme-${theme}`);
+  };
+
+  // Apply border radius to document
+  const applyBorderRadius = (radius: string) => {
+    const root = document.documentElement;
+    root.classList.remove('radius-none', 'radius-sm', 'radius-md', 'radius-lg', 'radius-xl', 'radius-full');
+    root.classList.add(`radius-${radius}`);
+  };
+
+  // Apply font size to document
+  const applyFontSize = (size: string) => {
+    const root = document.documentElement;
+    root.classList.remove('font-size-sm', 'font-size-base', 'font-size-lg');
+    root.classList.add(`font-size-${size}`);
+  };
+
+  // Apply density to document
+  const applyDensity = (densityValue: string) => {
+    const root = document.documentElement;
+    root.classList.remove('density-compact', 'density-comfortable', 'density-spacious');
+    root.classList.add(`density-${densityValue}`);
   };
 
   // Analytics polling - fetch every 5 minutes instead of on every event
@@ -277,24 +322,26 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-all duration-300">
       {/* Header */}
-      <header className="border-b bg-white dark:bg-gray-800">
-        <div className="container mx-auto flex items-center justify-between px-4 py-4">
-          <div>
-            <h1 className="text-2xl font-bold">AI Call Dashboard</h1>
+      <header className="sticky top-0 z-50 border-b bg-white/80 dark:bg-gray-800/80 backdrop-blur-md shadow-sm transition-all duration-300">
+        <div className="container mx-auto flex items-center justify-between px-6 py-4">
+          <div className="animate-fade-in">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+              AI Call Dashboard
+            </h1>
             {user && (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground mt-1">
                 Welcome back, {user.full_name || user.email}
               </p>
             )}
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {/* Live Call Indicator & End Button */}
             {activeCallCount > 0 && (
               <>
-                <Badge variant="success" className="animate-pulse">
-                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
+                <Badge variant="success" className="animate-pulse-subtle shadow-lg">
+                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2 animate-pulse" />
                   {activeCallCount} Active
                 </Badge>
                 <Button
@@ -302,6 +349,7 @@ export default function DashboardPage() {
                   size="sm"
                   onClick={handleEndActiveCalls}
                   disabled={endingCalls}
+                  className="shadow-md hover:shadow-lg transition-all duration-200"
                 >
                   <PhoneOff className="mr-2 h-4 w-4" />
                   {endingCalls ? 'Ending...' : activeCallCount > 1 ? 'End All Calls' : 'End Call'}
@@ -313,10 +361,15 @@ export default function DashboardPage() {
               size="icon"
               onClick={() => setShowSettings(true)}
               title="Settings"
+              className="hover:bg-primary/10 transition-all duration-200"
             >
               <Settings className="h-5 w-5" />
             </Button>
-            <Button variant="outline" onClick={handleLogout}>
+            <Button
+              variant="outline"
+              onClick={handleLogout}
+              className="shadow-sm hover:shadow-md transition-all duration-200"
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Logout
             </Button>
@@ -325,18 +378,27 @@ export default function DashboardPage() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <Tabs defaultValue="delegate" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="delegate">
+      <main className="container mx-auto px-6 py-8 animate-fade-in">
+        <Tabs defaultValue="delegate" className="space-y-8">
+          <TabsList className="grid w-full grid-cols-3 bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm p-1 shadow-md">
+            <TabsTrigger
+              value="delegate"
+              className="data-[state=active]:bg-white data-[state=active]:shadow-md dark:data-[state=active]:bg-gray-700 transition-all duration-200"
+            >
               <Send className="mr-2 h-4 w-4" />
               Delegate A Call
             </TabsTrigger>
-            <TabsTrigger value="billing">
+            <TabsTrigger
+              value="billing"
+              className="data-[state=active]:bg-white data-[state=active]:shadow-md dark:data-[state=active]:bg-gray-700 transition-all duration-200"
+            >
               <DollarSign className="mr-2 h-4 w-4" />
               Billing
             </TabsTrigger>
-            <TabsTrigger value="calls">
+            <TabsTrigger
+              value="calls"
+              className="data-[state=active]:bg-white data-[state=active]:shadow-md dark:data-[state=active]:bg-gray-700 transition-all duration-200"
+            >
               <BarChart3 className="mr-2 h-4 w-4" />
               All Calls
             </TabsTrigger>
@@ -378,17 +440,17 @@ export default function DashboardPage() {
 
       {/* Settings Dialog */}
       <Dialog open={showSettings} onOpenChange={setShowSettings}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Settings</DialogTitle>
+            <DialogTitle>Appearance Settings</DialogTitle>
             <DialogDescription>
-              Customize your dashboard appearance and phone settings.
+              Customize your dashboard to match your preferences. Changes are applied instantly and saved automatically.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
             {/* Color Theme Selection */}
-            <div className="space-y-2">
-              <Label htmlFor="color-theme">Color Theme</Label>
+            <div className="space-y-3">
+              <Label htmlFor="color-theme" className="text-base font-semibold">Color Theme</Label>
               <Select value={colorTheme} onValueChange={setColorTheme}>
                 <SelectTrigger id="color-theme">
                   <SelectValue placeholder="Select color theme" />
@@ -412,10 +474,16 @@ export default function DashboardPage() {
                       <span>Purple</span>
                     </div>
                   </SelectItem>
-                  <SelectItem value="beige">
+                  <SelectItem value="indigo">
                     <div className="flex items-center gap-2">
-                      <div className="h-4 w-4 rounded-full bg-amber-200" />
-                      <span>Beige</span>
+                      <div className="h-4 w-4 rounded-full bg-indigo-500" />
+                      <span>Indigo</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="pink">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-pink-500" />
+                      <span>Pink</span>
                     </div>
                   </SelectItem>
                   <SelectItem value="red">
@@ -424,13 +492,85 @@ export default function DashboardPage() {
                       <span>Red</span>
                     </div>
                   </SelectItem>
+                  <SelectItem value="orange">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-orange-500" />
+                      <span>Orange</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="cyan">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-cyan-500" />
+                      <span>Cyan</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="teal">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-teal-500" />
+                      <span>Teal</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="beige">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-amber-200" />
+                      <span>Beige</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Border Radius Selection */}
+            <div className="space-y-3">
+              <Label htmlFor="border-radius" className="text-base font-semibold">Border Radius</Label>
+              <Select value={borderRadius} onValueChange={setBorderRadius}>
+                <SelectTrigger id="border-radius">
+                  <SelectValue placeholder="Select border radius" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None (Sharp corners)</SelectItem>
+                  <SelectItem value="sm">Small</SelectItem>
+                  <SelectItem value="md">Medium (Default)</SelectItem>
+                  <SelectItem value="lg">Large</SelectItem>
+                  <SelectItem value="xl">Extra Large</SelectItem>
+                  <SelectItem value="full">Full (Pills)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Font Size Selection */}
+            <div className="space-y-3">
+              <Label htmlFor="font-size" className="text-base font-semibold">Font Size</Label>
+              <Select value={fontSize} onValueChange={setFontSize}>
+                <SelectTrigger id="font-size">
+                  <SelectValue placeholder="Select font size" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sm">Small</SelectItem>
+                  <SelectItem value="base">Medium (Default)</SelectItem>
+                  <SelectItem value="lg">Large</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Density Selection */}
+            <div className="space-y-3">
+              <Label htmlFor="density" className="text-base font-semibold">Layout Density</Label>
+              <Select value={density} onValueChange={setDensity}>
+                <SelectTrigger id="density">
+                  <SelectValue placeholder="Select layout density" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="compact">Compact (More content)</SelectItem>
+                  <SelectItem value="comfortable">Comfortable (Default)</SelectItem>
+                  <SelectItem value="spacious">Spacious (More breathing room)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             {/* Phone Scheme/Template Selection */}
-            <div className="space-y-2">
-              <Label htmlFor="phone-scheme">Phone Template</Label>
+            <div className="space-y-3">
+              <Label htmlFor="phone-scheme" className="text-base font-semibold">Phone Template</Label>
               <Select value={phoneScheme} onValueChange={setPhoneScheme}>
                 <SelectTrigger id="phone-scheme">
                   <SelectValue placeholder="Select phone template" />
