@@ -222,7 +222,7 @@
 :root {
   /* Tunable animation parameters */
   --bird-size: 200px;
-  --fly-duration: 3s;
+  --fly-duration: 5s;
   --flap-duration: 260ms;
   --fly-padding: 250px;
   --bob-duration: 520ms;
@@ -318,13 +318,13 @@
 
 /* Wings up frame */
 .bird-wings-up {
-  background-image: url('/assets/bird/Wings Up Biggest.png');
+  background-image: url('/assets/bird/Wings Up | BIggest | No Background.png');
   animation: flapWingsUp var(--flap-duration) steps(1, end) infinite;
 }
 
 /* Wings down frame */
 .bird-wings-down {
-  background-image: url('/assets/bird/Wings Down Biggest.png');
+  background-image: url('/assets/bird/Wings Down | BIggest | No Background.png');
   animation: flapWingsDown var(--flap-duration) steps(1, end) infinite;
 }
 
