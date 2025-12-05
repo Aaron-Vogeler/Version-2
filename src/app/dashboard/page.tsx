@@ -29,7 +29,6 @@ export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [dataLoaded, setDataLoaded] = useState(false);
-  const [showBirdLoader, setShowBirdLoader] = useState(false);
   const [calls, setCalls] = useState<Call[]>([]);
   const [filteredCalls, setFilteredCalls] = useState<Call[]>([]);
   const [currentFilters, setCurrentFilters] = useState<CallFilters>({
@@ -57,37 +56,14 @@ export default function DashboardPage() {
     checkAuth();
     loadDashboardData();
     loadAnalytics(true); // Force initial load
-
-    // Check if bird loader should be shown (once per session)
-    const loaderShown = sessionStorage.getItem('dashboardLoaderShown');
-    if (!loaderShown) {
-      setShowBirdLoader(true);
-      sessionStorage.setItem('dashboardLoaderShown', 'true');
-
-      // Auto-hide bird loader after animation completes (5s)
-      const loaderTimer = setTimeout(() => {
-        setShowBirdLoader(false);
-      }, 5000);
-
-      return () => clearTimeout(loaderTimer);
-    }
   }, []);
 
   // Handle loading delay - wait for data to load before showing dashboard
   useEffect(() => {
     if (dataLoaded) {
-      // If bird loader is showing, wait for it to complete
-      // Otherwise, show dashboard immediately
-      if (showBirdLoader) {
-        const timer = setTimeout(() => {
-          setLoading(false);
-        }, 5000);
-        return () => clearTimeout(timer);
-      } else {
-        setLoading(false);
-      }
+      setLoading(false);
     }
-  }, [dataLoaded, showBirdLoader]);
+  }, [dataLoaded]);
 
   // Analytics polling - fetch every 5 minutes instead of on every event
   useEffect(() => {
@@ -337,17 +313,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        {/* Show bird loader overlay only on first session load */}
-        {showBirdLoader && (
-          <div className="bird-overlay" aria-hidden="true">
-            <div className="bird-flight">
-              <div className="bird">
-                <div className="bird-wings-up"></div>
-                <div className="bird-wings-down"></div>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Loading... */}
       </div>
     );
   }

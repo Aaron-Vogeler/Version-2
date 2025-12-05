@@ -216,37 +216,15 @@
   }
 }
 
-/* ===== BIRD LOADER ANIMATION ===== */
-/* Smooth, professional overlay animation with GPU acceleration */
+/* ===== LOGIN PAGE BIRD ANIMATION ===== */
+/* Animation for bird flying off after successful login */
 
 :root {
-  /* Tunable animation parameters */
-  --bird-size: 200px;
-  --fly-duration: 5s;
+  --login-bird-size: 128px; /* h-32 w-32 = 8rem = 128px */
+  --login-fly-duration: 3s;
+  --login-content-fade-duration: 1.5s;
   --flap-duration: 750ms;
-  --fly-padding: 250px;
   --bob-duration: 520ms;
-}
-
-/* Overlay container - does not affect page layout */
-.bird-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  overflow: hidden;
-  background: transparent;
-}
-
-/* GPU-accelerated flight motion using translate3d */
-@keyframes flyAcross {
-  0% {
-    transform: translate3d(calc(33.33vw / 2 - var(--bird-size) / 2), -50%, 0);
-  }
-  100% {
-    transform: translate3d(calc(100vw + var(--fly-padding)), -50%, 0);
-    opacity: 0; /* Fade out at the end */
-  }
 }
 
 /* Subtle bob and tilt for realistic flight */
@@ -282,83 +260,6 @@
   50% {
     opacity: 1;
   }
-}
-
-/* Flight container - handles horizontal motion */
-.bird-flight {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  will-change: transform, opacity;
-  animation: flyAcross var(--fly-duration) linear forwards;
-}
-
-/* Bird container - handles bob/tilt motion */
-.bird {
-  position: relative;
-  width: var(--bird-size);
-  height: var(--bird-size);
-  will-change: transform;
-  background: transparent;
-}
-
-/* Wing frames - stacked absolutely */
-.bird-wings-up,
-.bird-wings-down {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: transparent;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  will-change: opacity;
-}
-
-/* Wings up frame */
-.bird-wings-up {
-  background-image: url('/assets/bird/Wings Up.png');
-  animation: flapWingsUp var(--flap-duration) steps(1, end) infinite;
-}
-
-/* Wings down frame */
-.bird-wings-down {
-  background-image: url('/assets/bird/Wings Down.png');
-  animation: flapWingsDown var(--flap-duration) steps(1, end) infinite;
-}
-
-/* Respect user motion preferences */
-@media (prefers-reduced-motion: reduce) {
-  .bird-flight {
-    animation: none;
-    transform: translate3d(calc(50vw - var(--bird-size) / 2), -50%, 0);
-    opacity: 0.7;
-  }
-
-  .bird {
-    animation: none;
-  }
-
-  .bird-wings-up {
-    animation: none;
-    opacity: 1;
-  }
-
-  .bird-wings-down {
-    animation: none;
-    opacity: 0;
-  }
-}
-
-/* ===== LOGIN PAGE BIRD ANIMATION ===== */
-/* Animation for bird flying off after successful login */
-
-:root {
-  --login-bird-size: 128px; /* h-32 w-32 = 8rem = 128px */
-  --login-fly-duration: 4s;
-  --login-content-fade-duration: 1.5s;
 }
 
 /* Login bird overlay - positioned to match the static bird */
