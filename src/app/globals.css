@@ -357,8 +357,22 @@
 
 :root {
   --login-bird-size: 128px; /* h-32 w-32 = 8rem = 128px */
-  --login-fly-duration: 4s;
+  --login-fly-duration: 5s;
   --login-content-fade-duration: 1.5s;
+}
+
+/* Dashboard fade-in animation */
+@keyframes dashboardFadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.dashboard-fade-in {
+  animation: dashboardFadeIn 0.5s ease-out forwards;
 }
 
 /* Login bird overlay - positioned to match the static bird */
