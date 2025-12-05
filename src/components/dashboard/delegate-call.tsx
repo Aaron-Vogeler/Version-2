@@ -15,6 +15,7 @@ import { Phone, Send, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export function DelegateCall() {
   const [goal, setGoal] = useState('');
+  const [context, setContext] = useState('');
   const [toNumber, setToNumber] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -35,6 +36,7 @@ export function DelegateCall() {
         },
         body: JSON.stringify({
           goal,
+          context,
           to_number: toNumber,
         }),
       });
@@ -54,6 +56,7 @@ export function DelegateCall() {
 
       // Clear form
       setGoal('');
+      setContext('');
       setToNumber('');
     } catch (error: any) {
       console.error('Error delegating call:', error);
@@ -72,18 +75,12 @@ export function DelegateCall() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Create Outbound Call</CardTitle>
-          <CardDescription>
-            Delegate a call to an AI assistant by specifying the goal and phone number
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Goal Field */}
+            {/* End Goal Field */}
             <div className="space-y-2">
               <Label htmlFor="goal">
-                Goal <span className="text-destructive">*</span>
+                End Goal <span className="text-destructive">*</span>
               </Label>
               <Textarea
                 id="goal"
@@ -110,6 +107,39 @@ export function DelegateCall() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {goal.length}/250
+                </p>
+              </div>
+            </div>
+
+            {/* Context Field */}
+            <div className="space-y-2">
+              <Label htmlFor="context">
+                Context
+              </Label>
+              <Textarea
+                id="context"
+                placeholder="Provide additional context for this call..."
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                maxLength={500}
+                className="resize-none min-h-[100px]"
+                style={{
+                  height: 'auto',
+                  minHeight: '100px',
+                  maxHeight: '300px'
+                }}
+                onInput={(e) => {
+                  const target = e.target as HTMLTextAreaElement;
+                  target.style.height = 'auto';
+                  target.style.height = Math.min(target.scrollHeight, 300) + 'px';
+                }}
+              />
+              <div className="flex justify-between">
+                <p className="text-xs text-muted-foreground">
+                  Optional: Provide background information or specific details
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {context.length}/500
                 </p>
               </div>
             </div>
@@ -173,21 +203,6 @@ export function DelegateCall() {
         </CardContent>
       </Card>
 
-      {/* Instructions Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">How It Works</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-2">
-          <ol className="list-decimal list-inside space-y-1">
-            <li>Describe the goal for this call (up to 250 characters)</li>
-            <li>Enter the phone number to call in E.164 format</li>
-            <li>Click &quot;Delegate Call&quot; to initiate the outbound call</li>
-            <li>The AI assistant will handle the call based on your goal</li>
-            <li>View call results in the &quot;Billing&quot; or &quot;All Calls&quot; tab</li>
-          </ol>
-        </CardContent>
-      </Card>
     </div>
   );
 }
