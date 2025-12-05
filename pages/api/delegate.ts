@@ -42,22 +42,24 @@ export default async function handler(
       return res.status(401).json({ error: 'User ID not found in session' });
     }
 
-    // Fetch custom assistant name from profile
+    // Fetch custom assistant name and first name from profile
     let customAssistantName = null;
+    let firstName = null;
     if (supabaseUrl && supabaseServiceKey) {
       try {
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
         const { data, error } = await supabase
           .from('profiles')
-          .select('custom_assistant_name')
+          .select('custom_assistant_name, first_name')
           .eq('user_id', userId)
           .single();
 
         if (!error && data) {
           customAssistantName = data.custom_assistant_name;
+          firstName = data.first_name;
         }
       } catch (error) {
-        console.error('Error fetching custom assistant name:', error);
+        console.error('Error fetching profile data:', error);
       }
     }
 
@@ -76,6 +78,7 @@ export default async function handler(
         toNumber: to_number,
         userId,
         assistantName: customAssistantName,
+        userName: firstName,
       }),
     });
 

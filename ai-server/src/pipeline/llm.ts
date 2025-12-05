@@ -15,8 +15,8 @@ export type CallContext = contextMgr.CallContext;
 
 /**
  * Build the system prompt dynamically, optionally injecting call goal context.
- * Replaces the hardcoded assistant name with the custom name from the call context.
- * @param context - Optional call context with goal and assistantName
+ * Replaces the hardcoded assistant name and user name with custom names from the call context.
+ * @param context - Optional call context with goal, assistantName, and userName
  * @returns The complete system prompt
  */
 function buildSystemPrompt(context?: CallContext): string {
@@ -30,6 +30,12 @@ function buildSystemPrompt(context?: CallContext): string {
 
   // Also handle lowercase "ferguson" if it appears
   prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
+
+  // Replace the hardcoded user name "Aaron" with the custom name if provided
+  const userName = context?.userName || "Aaron";
+
+  // Replace all occurrences of "Aaron" with the custom user name
+  prompt = prompt.replace(/Aaron/g, userName);
 
   if (context?.goal) {
     prompt += `
