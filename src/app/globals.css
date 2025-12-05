@@ -351,3 +351,64 @@
     opacity: 0;
   }
 }
+
+/* Login page specific bird animation - starts from center */
+@keyframes flyAcrossFromCenter {
+  0% {
+    transform: translate3d(calc(50vw - var(--bird-size) / 2), calc(50vh - 200px), 0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(calc(100vw + var(--fly-padding)), calc(50vh - 200px), 0);
+    opacity: 0;
+  }
+}
+
+/* Login page bird overlay */
+.bird-overlay-login {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* Login page bird flight - starts from center where static bird is */
+.bird-flight-login {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform, opacity;
+  animation: flyAcrossFromCenter var(--fly-duration) linear forwards;
+}
+
+/* Login content fade-out and move down animation */
+@keyframes loginFadeOut {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(50px);
+  }
+}
+
+.login-content-fadeout {
+  animation: loginFadeOut var(--fly-duration) ease-out forwards;
+}
+
+/* Respect user motion preferences for login page */
+@media (prefers-reduced-motion: reduce) {
+  .bird-flight-login {
+    animation: none;
+    transform: translate3d(calc(50vw - var(--bird-size) / 2), calc(50vh - 200px), 0);
+    opacity: 0.7;
+  }
+
+  .login-content-fadeout {
+    animation: none;
+    opacity: 0.3;
+  }
+}

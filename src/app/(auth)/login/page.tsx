@@ -22,6 +22,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showBirdAnimation, setShowBirdAnimation] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,9 +43,14 @@ export default function LoginPage() {
       }
 
       if (result?.ok) {
-        // Redirect to dashboard
-        router.push('/dashboard');
-        router.refresh();
+        // Trigger bird animation
+        setShowBirdAnimation(true);
+
+        // Redirect to dashboard after animation completes (~5 seconds)
+        setTimeout(() => {
+          router.push('/dashboard');
+          router.refresh();
+        }, 5000);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to login');
@@ -55,7 +61,19 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
-      <div className="w-full max-w-lg">
+      {/* Bird animation overlay - appears on successful login */}
+      {showBirdAnimation && (
+        <div className="bird-overlay-login" aria-hidden="true">
+          <div className="bird-flight-login">
+            <div className="bird">
+              <div className="bird-wings-up"></div>
+              <div className="bird-wings-down"></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`w-full max-w-lg ${showBirdAnimation ? 'login-content-fadeout' : ''}`}>
         {/* Header */}
         <div className="text-center mb-10">
           <div className="flex justify-center mb-4">
