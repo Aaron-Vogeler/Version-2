@@ -320,13 +320,13 @@
 
 /* Wings up frame */
 .bird-wings-up {
-  background-image: url('/assets/bird/Wings Up | BIggest | No Background.png');
+  background-image: url('/assets/bird/Wings Up.png');
   animation: flapWingsUp var(--flap-duration) steps(1, end) infinite;
 }
 
 /* Wings down frame */
 .bird-wings-down {
-  background-image: url('/assets/bird/Wings Down | BIggest | No Background.png');
+  background-image: url('/assets/bird/Wings Down.png');
   animation: flapWingsDown var(--flap-duration) steps(1, end) infinite;
 }
 
