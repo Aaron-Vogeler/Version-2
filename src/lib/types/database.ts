@@ -21,6 +21,7 @@ export interface Database {
           tenant_id: string;
           role: 'admin' | 'member';
           full_name: string | null;
+          first_name: string | null;
           custom_assistant_name: string | null;
           created_at: string;
           updated_at: string;

@@ -10,6 +10,7 @@ interface OutboundCallRequest {
   toNumber: string;
   userId: string;
   assistantName?: string;
+  userName?: string;
 }
 
 interface TelnyxCallResponse {
@@ -27,7 +28,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName } = req.body as OutboundCallRequest;
+    const { goal, toNumber, userId, assistantName, userName } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -37,8 +38,13 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName) in base64
-    const clientStatePayload = JSON.stringify({ goal, userId, assistantName: assistantName || null });
+    // Encode client state (goal + userId + assistantName + userName) in base64
+    const clientStatePayload = JSON.stringify({
+      goal,
+      userId,
+      assistantName: assistantName || null,
+      userName: userName || null,
+    });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 
     // Call Telnyx Call Control API
