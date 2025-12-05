@@ -15,11 +15,15 @@ export type CallContext = contextMgr.CallContext;
 
 /**
  * Build the system prompt dynamically, optionally injecting call goal context.
- * @param context - Optional call context with goal
+ * @param context - Optional call context with goal and assistantName
  * @returns The complete system prompt
  */
 function buildSystemPrompt(context?: CallContext): string {
   let prompt = config.llm.systemPrompt;
+
+  // Replace "Ferguson" with custom assistant name if provided
+  const assistantName = context?.assistantName || 'Ferguson';
+  prompt = prompt.replace(/Ferguson/g, assistantName);
 
   if (context?.goal) {
     prompt += `

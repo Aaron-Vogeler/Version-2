@@ -25,7 +25,7 @@ export default async function handler(
 
   try {
     // Validate request body
-    const { goal, to_number } = req.body;
+    const { goal, to_number, assistant_name } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
@@ -52,6 +52,7 @@ export default async function handler(
         goal,
         toNumber: to_number,
         userId,
+        assistantName: assistant_name || 'Ferguson',
       }),
     });
 
