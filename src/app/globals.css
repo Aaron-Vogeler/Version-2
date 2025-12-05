@@ -437,25 +437,16 @@
   background-position: center;
 }
 
-/* Wings up - visible by default (static bird pose) */
+/* Wings up - flapping animation always runs */
 .login-bird-inline .bird-wings-up {
   background-image: url('/assets/bird/Wings Up.png');
-  opacity: 1;
-}
-
-/* Wings down - hidden by default */
-.login-bird-inline .bird-wings-down {
-  background-image: url('/assets/bird/Wings Down.png');
-  opacity: 0;
-}
-
-/* When flapping class is added, animate the wings */
-.login-bird-inline .bird-wings-up.flapping {
   animation: flapWingsUp 0.5s steps(1, end) infinite;
   will-change: opacity;
 }
 
-.login-bird-inline .bird-wings-down.flapping {
+/* Wings down - flapping animation always runs */
+.login-bird-inline .bird-wings-down {
+  background-image: url('/assets/bird/Wings Down.png');
   animation: flapWingsDown 0.5s steps(1, end) infinite;
   will-change: opacity;
 }
@@ -490,12 +481,12 @@
     opacity: 0;
   }
 
-  .login-bird-inline .bird-wings-up.flapping {
+  .login-bird-inline .bird-wings-up {
     animation: none !important;
     opacity: 1;
   }
 
-  .login-bird-inline .bird-wings-down.flapping {
+  .login-bird-inline .bird-wings-down {
     animation: none !important;
     opacity: 0;
   }

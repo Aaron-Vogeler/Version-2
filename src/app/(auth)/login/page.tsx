@@ -8,7 +8,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
 import { signIn } from 'next-auth/react';
 import { Great_Vibes } from 'next/font/google';
 import { Button } from '@/components/ui/button';
@@ -75,42 +74,17 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
       <div className="w-full max-w-lg">
-        {/* Bird - separate from fading content so it flies independently */}
+        {/* Bird - always flapping, starts flying on login success */}
         <div className="flex justify-center mb-4">
           <div
             ref={birdRef}
             className={`login-bird-inline ${loginSuccess ? 'login-bird-flying' : ''}`}
           >
-            {/* Static bird image - shows until login succeeds */}
-            {!loginSuccess && (
-              <Image
-                src="/assets/bird/Wings Up.png"
-                alt="Pidgeon"
-                width={128}
-                height={128}
-                priority
-                className="w-full h-full object-contain"
-              />
-            )}
-            {/* Animated flapping bird - only shows after login succeeds */}
-            {loginSuccess && (
-              <>
-                <div className="bird-wings-up flapping"></div>
-                <div className="bird-wings-down flapping"></div>
-              </>
-            )}
+            {/* Bird always flaps - flight animation added on login success */}
+            <div className="bird-wings-up flapping"></div>
+            <div className="bird-wings-down flapping"></div>
           </div>
         </div>
-        {/* Preload wings down image for instant animation */}
-        <Image
-          src="/assets/bird/Wings Down.png"
-          alt=""
-          width={1}
-          height={1}
-          priority
-          className="sr-only"
-          aria-hidden="true"
-        />
 
         {/* Content that fades out and moves down */}
         <div className={loginSuccess ? 'login-content-fade-out' : ''}>
