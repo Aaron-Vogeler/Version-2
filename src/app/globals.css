@@ -215,3 +215,40 @@
     box-shadow: var(--shadow-large);
   }
 }
+
+/* Flying Bird Loading Animation */
+@keyframes flyAcross {
+  0% {
+    left: -200px;
+  }
+  100% {
+    left: 100vw;
+  }
+}
+
+@keyframes flap {
+  0% {
+    background-image: url('/assets/bird/Wings Up.png');
+  }
+  50% {
+    background-image: url('/assets/bird/Wings Down.png');
+  }
+}
+
+.bird-container {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 50;
+  animation: flyAcross 3s linear infinite;
+}
+
+.bird {
+  width: 80px;
+  height: 80px;
+  background-image: url('/assets/bird/Wings Up.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  animation: flap 0.3s steps(1) infinite;
+}

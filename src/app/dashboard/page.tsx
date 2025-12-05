@@ -305,8 +305,10 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="text-lg text-foreground">Loading dashboard...</div>
+      <div className="min-h-screen bg-background">
+        <div className="bird-container">
+          <div className="bird"></div>
+        </div>
       </div>
     );
   }
