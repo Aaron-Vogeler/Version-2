@@ -1080,6 +1080,7 @@ wss.on("connection", async (ws) => {
           managedContext.streamId = streamId;
           managedContext.goal = decoded.goal;
           managedContext.userId = decoded.userId;
+          managedContext.assistantName = decoded.assistantName || null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";

@@ -13,7 +13,11 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Phone, Send, CheckCircle2, AlertCircle } from 'lucide-react';
 
-export function DelegateCall() {
+interface DelegateCallProps {
+  customAssistantName?: string;
+}
+
+export function DelegateCall({ customAssistantName = 'your AI assistant' }: DelegateCallProps) {
   const [goal, setGoal] = useState('');
   const [context, setContext] = useState('');
   const [toNumber, setToNumber] = useState('');
@@ -71,7 +75,7 @@ export function DelegateCall() {
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center gap-2">
         <Phone className="h-6 w-6" />
-        <h2 className="text-2xl font-bold">Delegate A Call</h2>
+        <h2 className="text-2xl font-bold">Assign a call to {customAssistantName}</h2>
       </div>
 
       <Card>
