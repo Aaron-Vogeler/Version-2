@@ -1859,7 +1859,7 @@ CREATE TABLE public.calls (
   transcript_status TEXT DEFAULT 'none' CHECK (
     transcript_status IN ('pending', 'processing', 'completed', 'failed', 'none')
   ),
-  recording_url TEXT,  -- URL to call recording
+  recording_url TEXT,  -- URL to custom dual-channel call recording (Supabase Storage)
   user_feedback BOOLEAN,  -- Whether user submitted feedback
   feedback_comment TEXT,  -- User's feedback text
   feedback_at TIMESTAMPTZ,  -- When feedback was submitted
@@ -1951,7 +1951,6 @@ CREATE TABLE public.call_events (
 - `call.ringing` - Call is ringing on destination
 - `call.answered` - User answered
 - `call.hangup` - Call ended (any reason)
-- `call.recording.saved` - Recording file ready
 - `call.transcription.completed` - Transcript ready
 - `call.machine_detection.ended` - Voicemail/answering machine detected
 - (others as configured in Telnyx)
