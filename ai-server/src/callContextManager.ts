@@ -281,4 +281,24 @@ export function formatTurnsAsMessages(
   });
 }
 
+/**
+ * Format turns into a display transcript (for live_transcript field in database).
+ * Converts speaker names to appropriate labels (Receiver for caller, Assistant for AI).
+ * Format: SpeakerName\ntext\n\nSpeakerName\ntext...
+ */
+export function formatTurnsForDisplay(turns: Turn[]): string {
+  return turns
+    .map((turn) => {
+      // Map speaker type to display name
+      const speakerDisplay =
+        turn.speaker === "caller"
+          ? "Receiver"
+          : turn.speaker === "assistant"
+          ? "Assistant"
+          : turn.speaker.charAt(0).toUpperCase() + turn.speaker.slice(1);
+      return `${speakerDisplay}\n${turn.text}`;
+    })
+    .join("\n\n");
+}
+
 export { defaultConfig as DEFAULT_CONFIG };

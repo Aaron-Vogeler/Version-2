@@ -224,9 +224,33 @@ export async function upsertCallEvent(
 }
 
 /**
+ * Convert transcript speaker type to display name
+ * @param speaker - The speaker type: "caller", "assistant", "ivr", or "agent"
+ * @returns The display name for the speaker
+ */
+function getDisplaySpeakerName(speaker: string): string {
+  switch (speaker.toLowerCase()) {
+    case "caller":
+      return "Receiver";
+    case "assistant":
+      return "Assistant";
+    case "ivr":
+      return "IVR";
+    case "agent":
+      return "Agent";
+    default:
+      return speaker.charAt(0).toUpperCase() + speaker.slice(1);
+  }
+}
+
+/**
  * Append transcript text with speaker identification
  * Mirrors the Cloudflare worker appendTranscript functionality
  * @deprecated Use insertTranscriptSegment instead for robust, insert-only logging
+ * @param callId - The call ID
+ * @param newChunk - The transcript text to append
+ * @param status - The transcript status
+ * @param speakerName - The speaker type ("caller", "assistant", etc.)
  */
 export async function appendTranscript(
   callId: string,
@@ -250,7 +274,9 @@ export async function appendTranscript(
     const existingTranscript = existing?.live_transcript || "";
 
     // Format: Speaker Name (newline) Text
-    const formattedBlock = `${speakerName}\n${newChunk}`;
+    // Convert speaker type to display name (e.g., "caller" -> "Receiver")
+    const displayName = getDisplaySpeakerName(speakerName);
+    const formattedBlock = `${displayName}\n${newChunk}`;
 
     // Add double newline for clean separation
     const updatedTranscript = existingTranscript
