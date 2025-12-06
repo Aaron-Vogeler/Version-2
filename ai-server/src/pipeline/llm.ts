@@ -115,7 +115,7 @@ Be concise and focus on what's most important to continue this call effectively.
         },
         { role: "user", content: summaryPrompt },
       ],
-      temperature: 0.5, // Lower temperature for consistency
+      temperature: 0.2, // Lower temperature for consistency
       max_tokens: config_params.maxSummaryTokensHint,
     });
 

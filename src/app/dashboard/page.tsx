@@ -464,7 +464,7 @@ export default function DashboardPage() {
 
             {/* Custom Assistant Name */}
             <div className="space-y-2">
-              <Label htmlFor="assistant-name">Name Your Pidgeon</Label>
+              <Label htmlFor="assistant-name">Name Your Pigeon</Label>
               <Input
                 id="assistant-name"
                 type="text"
