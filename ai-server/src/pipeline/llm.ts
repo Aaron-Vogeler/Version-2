@@ -9,6 +9,125 @@ const groq = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
+// ============================================================================
+// LOGGING UTILITIES
+// ============================================================================
+
+const COL_WIDTH = 50;
+const DIVIDER = "─".repeat(COL_WIDTH);
+const DOUBLE_DIVIDER = "═".repeat(COL_WIDTH * 2 + 3);
+
+/**
+ * Truncate text to fit column width, adding ellipsis if needed.
+ */
+function truncate(text: string, maxLen: number = COL_WIDTH - 2): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen - 3) + "...";
+}
+
+/**
+ * Wrap text to multiple lines of specified width.
+ */
+function wrapText(text: string, width: number = COL_WIDTH - 4): string[] {
+  const lines: string[] = [];
+  const words = text.split(/\s+/);
+  let currentLine = "";
+
+  for (const word of words) {
+    if (currentLine.length + word.length + 1 <= width) {
+      currentLine += (currentLine ? " " : "") + word;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word.length > width ? word.slice(0, width - 3) + "..." : word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines.length ? lines : [""];
+}
+
+/**
+ * Format a message for display in the log.
+ */
+function formatMessage(msg: { role: string; content: string }, index: number): string[] {
+  const roleLabel = msg.role.toUpperCase().padEnd(9);
+  const lines: string[] = [];
+
+  // First line of content preview
+  const contentPreview = msg.content.replace(/\n/g, " ").slice(0, 200);
+  const wrapped = wrapText(contentPreview, COL_WIDTH - 14);
+
+  lines.push(`  [${index}] ${roleLabel} ${wrapped[0] || "(empty)"}`);
+  for (let i = 1; i < Math.min(wrapped.length, 3); i++) {
+    lines.push(`              ${wrapped[i]}`);
+  }
+  if (wrapped.length > 3) {
+    lines.push(`              ... (+${wrapped.length - 3} more lines)`);
+  }
+
+  return lines;
+}
+
+/**
+ * Log Groq request and response side-by-side.
+ */
+function logGroqExchange(
+  requestOptions: OpenAI.Chat.ChatCompletionCreateParams,
+  response: OpenAI.Chat.ChatCompletion,
+  durationMs: number
+): void {
+  const output = response.choices[0]?.message?.content || "(empty)";
+  const usage = response.usage;
+
+  console.log("");
+  console.log(`╔${DOUBLE_DIVIDER}╗`);
+  console.log(`║ GROQ LLM EXCHANGE                                                                                     ║`);
+  console.log(`╠${"═".repeat(COL_WIDTH)}╦${"═".repeat(COL_WIDTH + 2)}╣`);
+  console.log(`║ ${"INPUT".padEnd(COL_WIDTH - 1)}║ ${"OUTPUT".padEnd(COL_WIDTH + 1)}║`);
+  console.log(`╠${DIVIDER}╬${DIVIDER}══╣`);
+
+  // Build input lines
+  const inputLines: string[] = [];
+  inputLines.push(`  Model: ${requestOptions.model}`);
+  inputLines.push(`  Temperature: ${requestOptions.temperature}`);
+  inputLines.push(`  Max Tokens: ${requestOptions.max_tokens}`);
+  if (requestOptions.top_p !== undefined) inputLines.push(`  Top P: ${requestOptions.top_p}`);
+  if (requestOptions.frequency_penalty) inputLines.push(`  Freq Penalty: ${requestOptions.frequency_penalty}`);
+  if (requestOptions.presence_penalty) inputLines.push(`  Pres Penalty: ${requestOptions.presence_penalty}`);
+  if (requestOptions.stop) inputLines.push(`  Stop: ${JSON.stringify(requestOptions.stop)}`);
+  inputLines.push(`  ${DIVIDER.slice(0, COL_WIDTH - 4)}`);
+  inputLines.push(`  Messages (${requestOptions.messages.length}):`);
+
+  for (let i = 0; i < requestOptions.messages.length; i++) {
+    const msgLines = formatMessage(requestOptions.messages[i] as { role: string; content: string }, i);
+    inputLines.push(...msgLines);
+  }
+
+  // Build output lines
+  const outputLines: string[] = [];
+  outputLines.push(`  Duration: ${durationMs}ms`);
+  outputLines.push(`  Tokens: ${usage?.prompt_tokens || "?"} in → ${usage?.completion_tokens || "?"} out`);
+  outputLines.push(`  Total: ${usage?.total_tokens || "?"} tokens`);
+  outputLines.push(`  Finish: ${response.choices[0]?.finish_reason || "?"}`);
+  outputLines.push(`  ${DIVIDER.slice(0, COL_WIDTH - 4)}`);
+  outputLines.push(`  Response:`);
+
+  const responseWrapped = wrapText(output, COL_WIDTH - 4);
+  for (const line of responseWrapped) {
+    outputLines.push(`  ${line}`);
+  }
+
+  // Print side by side
+  const maxLines = Math.max(inputLines.length, outputLines.length);
+  for (let i = 0; i < maxLines; i++) {
+    const left = (inputLines[i] || "").padEnd(COL_WIDTH - 1);
+    const right = (outputLines[i] || "").padEnd(COL_WIDTH + 1);
+    console.log(`║${left}║${right}║`);
+  }
+
+  console.log(`╚${"═".repeat(COL_WIDTH)}╩${"═".repeat(COL_WIDTH + 2)}╝`);
+  console.log("");
+}
+
 // Default goal template (used when no custom template is provided)
 const DEFAULT_GOAL_TEMPLATE = `CALL GOAL (YOUR ONLY MISSION):
 "{goal}"
@@ -222,9 +341,6 @@ export async function generateAssistantReply(
   const temperature = settings?.temperature ?? 0.4; // Default to 0.4 for consistent phone agent behavior
   const maxTokens = settings?.maxTokens ?? 150; // Default to 150 for short phone responses
 
-  // Log LLM parameters for debugging
-  console.log(`[LLM] Generating reply with model=${model}, temp=${temperature}, max_tokens=${maxTokens}`);
-
   // Build the request options
   const requestOptions: OpenAI.Chat.ChatCompletionCreateParams = {
     model,
@@ -247,7 +363,13 @@ export async function generateAssistantReply(
     requestOptions.stop = settings.stopSequences;
   }
 
+  // Execute request and log exchange
+  const startTime = Date.now();
   const response = await groq.chat.completions.create(requestOptions);
+  const durationMs = Date.now() - startTime;
+
+  // Log the full input/output exchange side-by-side
+  logGroqExchange(requestOptions, response, durationMs);
 
   return response.choices[0]?.message?.content || "";
 }
