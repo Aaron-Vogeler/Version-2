@@ -16,6 +16,34 @@ export interface Turn {
 }
 
 /**
+ * Represents a single Groq LLM call log entry for debugging/testing.
+ */
+export interface GroqLogEntry {
+  id: string;
+  timestamp: string;
+  functionName: string;
+  requestOptions: {
+    model: string;
+    temperature?: number;
+    max_tokens?: number;
+    top_p?: number;
+    frequency_penalty?: number;
+    presence_penalty?: number;
+  };
+  messages: Array<{
+    role: string;
+    content: string;
+  }>;
+  output: string;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+  finishReason?: string;
+}
+
+/**
  * Per-call prompt settings for LLM customization.
  * These are passed from the frontend prompt control panel.
  */
@@ -100,6 +128,9 @@ export interface CallContext {
   };
   // Flag to disable custom recording if size limit exceeded (fallback to Telnyx native)
   customRecordingDisabledDueToSize?: boolean;
+
+  // Groq LLM call logs for debugging/testing prompt behavior
+  groqLogs?: GroqLogEntry[];
 }
 
 /**
@@ -314,3 +345,80 @@ export function formatTurnsAsMessages(
 }
 
 export { defaultConfig as DEFAULT_CONFIG };
+
+/**
+ * Append a Groq LLM log entry to the call context.
+ * Used for debugging and testing prompt behavior.
+ */
+export function appendGroqLog(callId: string, log: GroqLogEntry): void {
+  const context = getOrCreateContext(callId);
+  if (!context.groqLogs) {
+    context.groqLogs = [];
+  }
+  // Keep max 50 logs per call to prevent memory bloat
+  if (context.groqLogs.length >= 50) {
+    context.groqLogs.shift();
+  }
+  context.groqLogs.push(log);
+}
+
+/**
+ * Get all Groq logs for a call.
+ */
+export function getGroqLogs(callId: string): GroqLogEntry[] {
+  const context = getContext(callId);
+  return context?.groqLogs || [];
+}
+
+// Global store for logs that need to be accessible even after call context is cleared
+// This is useful for debugging completed calls
+const recentGroqLogsStore = new Map<string, GroqLogEntry[]>();
+
+/**
+ * Store Groq logs in the persistent store (survives call cleanup).
+ * Keeps last 100 calls worth of logs.
+ */
+export function persistGroqLogs(callId: string): void {
+  const context = getContext(callId);
+  if (context?.groqLogs && context.groqLogs.length > 0) {
+    recentGroqLogsStore.set(callId, [...context.groqLogs]);
+    // Keep only last 100 calls
+    if (recentGroqLogsStore.size > 100) {
+      const firstKey = recentGroqLogsStore.keys().next().value;
+      if (firstKey) recentGroqLogsStore.delete(firstKey);
+    }
+  }
+}
+
+/**
+ * Get persisted Groq logs for a call (even after context cleared).
+ */
+export function getPersistedGroqLogs(callId: string): GroqLogEntry[] {
+  return recentGroqLogsStore.get(callId) || [];
+}
+
+/**
+ * Get all recent Groq logs across all calls (for dashboard).
+ * Returns logs from both active and recent completed calls.
+ */
+export function getAllRecentGroqLogs(): { callId: string; logs: GroqLogEntry[] }[] {
+  const result: { callId: string; logs: GroqLogEntry[] }[] = [];
+
+  // Get from active calls
+  for (const callId of getActiveCallIds()) {
+    const logs = getGroqLogs(callId);
+    if (logs.length > 0) {
+      result.push({ callId, logs });
+    }
+  }
+
+  // Get from persisted logs (completed calls)
+  for (const [callId, logs] of recentGroqLogsStore) {
+    // Skip if already included from active calls
+    if (!result.some(r => r.callId === callId)) {
+      result.push({ callId, logs });
+    }
+  }
+
+  return result;
+}

@@ -11,8 +11,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Phone, Send, CheckCircle2, AlertCircle, Settings2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Phone, Send, CheckCircle2, AlertCircle, Settings2, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import { PromptControl, PromptSettings, DEFAULT_SETTINGS } from './prompt-control';
+import { GroqLogsViewer } from './groq-logs-viewer';
 
 interface DelegateCallProps {
   customAssistantName?: string;
@@ -26,6 +27,7 @@ export function DelegateCall({ customAssistantName = 'your AI assistant' }: Dele
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [showPromptControl, setShowPromptControl] = useState(false);
+  const [showGroqLogs, setShowGroqLogs] = useState(false);
   const [promptSettings, setPromptSettings] = useState<PromptSettings>(DEFAULT_SETTINGS);
 
   const handlePromptSettingsChange = useCallback((settings: PromptSettings) => {
@@ -242,6 +244,28 @@ export function DelegateCall({ customAssistantName = 'your AI assistant' }: Dele
           compact={false}
         />
       )}
+
+      {/* Groq Logs Toggle */}
+      <Card>
+        <CardContent className="pt-4">
+          <button
+            type="button"
+            onClick={() => setShowGroqLogs(!showGroqLogs)}
+            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-full justify-center py-2"
+          >
+            <FileText className="h-4 w-4" />
+            <span>View LLM Logs (Input/Output)</span>
+            {showGroqLogs ? (
+              <ChevronUp className="h-4 w-4" />
+            ) : (
+              <ChevronDown className="h-4 w-4" />
+            )}
+          </button>
+        </CardContent>
+      </Card>
+
+      {/* Groq Logs Viewer */}
+      {showGroqLogs && <GroqLogsViewer />}
 
     </div>
   );

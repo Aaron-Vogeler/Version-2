@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
-import type { PromptSettings } from "../callContextManager";
+import type { PromptSettings, GroqLogEntry } from "../callContextManager";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -12,6 +12,7 @@ const groq = new OpenAI({
 /**
  * Log Groq LLM inputs and outputs for prompt testing and debugging.
  * Displays the full request messages alongside the response for side-by-side comparison.
+ * Also stores the log in the call context for dashboard access.
  * @param callId - The call ID (optional, for context)
  * @param functionName - The name of the function making the call
  * @param messages - The messages array sent to Groq
@@ -23,7 +24,7 @@ function logGroqInputOutput(
   callId: string | undefined,
   functionName: string,
   messages: Array<{ role: string; content: string }>,
-  requestOptions: { model: string; temperature?: number; max_tokens?: number; top_p?: number },
+  requestOptions: { model: string; temperature?: number; max_tokens?: number; top_p?: number; frequency_penalty?: number; presence_penalty?: number },
   response: OpenAI.Chat.ChatCompletion,
   output: string
 ): void {
@@ -31,6 +32,35 @@ function logGroqInputOutput(
   const subSeparator = "-".repeat(40);
   const prefix = callId ? `[${callId}]` : "[no-call-id]";
 
+  // Create log entry for storage
+  const logEntry: GroqLogEntry = {
+    id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    timestamp: new Date().toISOString(),
+    functionName,
+    requestOptions: {
+      model: requestOptions.model,
+      temperature: requestOptions.temperature,
+      max_tokens: requestOptions.max_tokens,
+      top_p: requestOptions.top_p,
+      frequency_penalty: requestOptions.frequency_penalty,
+      presence_penalty: requestOptions.presence_penalty,
+    },
+    messages,
+    output,
+    usage: response.usage ? {
+      prompt_tokens: response.usage.prompt_tokens,
+      completion_tokens: response.usage.completion_tokens,
+      total_tokens: response.usage.total_tokens,
+    } : undefined,
+    finishReason: response.choices[0]?.finish_reason || undefined,
+  };
+
+  // Store in call context for dashboard access
+  if (callId) {
+    contextMgr.appendGroqLog(callId, logEntry);
+  }
+
+  // Console logging for server-side debugging
   console.log(`\n${separator}`);
   console.log(`${prefix} GROQ INPUT/OUTPUT LOG - ${functionName}`);
   console.log(`${separator}`);
@@ -327,7 +357,14 @@ export async function generateAssistantReply(
     context?.callId,
     "generateAssistantReply",
     messages,
-    { model, temperature, max_tokens: maxTokens, top_p: settings?.topP },
+    {
+      model,
+      temperature,
+      max_tokens: maxTokens,
+      top_p: settings?.topP,
+      frequency_penalty: settings?.frequencyPenalty,
+      presence_penalty: settings?.presencePenalty,
+    },
     response,
     output
   );

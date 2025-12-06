@@ -5,6 +5,7 @@ import { LiveTranscriptionEvents } from "@deepgram/sdk";
 import axios from "axios";
 import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
+import groqLogsRouter from "./routes/groq-logs";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
@@ -494,6 +495,8 @@ function cleanupCallState(callContext: CallContext): void {
 
   // Clean up the CallContext from the context manager
   if (callContext.callId) {
+    // Persist Groq logs before clearing (for dashboard access after call ends)
+    contextMgr.persistGroqLogs(callContext.callId);
     console.log(`📋 Clearing CallContext for call ${callContext.callId}`);
     contextMgr.clearContext(callContext.callId);
   }
@@ -589,6 +592,9 @@ function decodeMulawG711(mulaw: number): number {
 
 // OUTBOUND CALL ENDPOINT
 app.use("/api/outbound-call", outboundCallRouter);
+
+// GROQ LOGS ENDPOINT (for dashboard prompt testing)
+app.use("/api/groq-logs", groqLogsRouter);
 
 // Helper to decode client_state from Telnyx webhooks (matching Cloudflare pattern)
 function decodeClientState(encodedState: string | undefined): Record<string, any> {
