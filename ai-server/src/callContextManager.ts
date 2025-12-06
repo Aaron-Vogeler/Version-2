@@ -253,7 +253,7 @@ export function formatTurnsForSummary(turns: Turn[]): string {
   }
   return turns
     .map((turn) => {
-      const speaker = turn.speaker.toUpperCase();
+      const speaker = turn.speaker === "caller" ? "RECEIVER" : turn.speaker.toUpperCase();
       return `[${turn.timestamp}] ${speaker}: ${turn.text}`;
     })
     .join("\n");
@@ -273,7 +273,7 @@ export function formatTurnsAsMessages(
     const speakerLabel =
       turn.speaker === "assistant"
         ? ""
-        : `[${turn.speaker.toUpperCase()}] `;
+        : `[${turn.speaker === "caller" ? "RECEIVER" : turn.speaker.toUpperCase()}] `;
     return {
       role,
       content: `${speakerLabel}${turn.text}`,
