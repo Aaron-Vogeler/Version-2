@@ -5,13 +5,14 @@
  * Form to trigger outbound calls via webhook
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Phone, Send, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Phone, Send, CheckCircle2, AlertCircle, Settings2, ChevronDown, ChevronUp } from 'lucide-react';
+import { PromptControl, PromptSettings, DEFAULT_SETTINGS } from './prompt-control';
 
 interface DelegateCallProps {
   customAssistantName?: string;
@@ -24,6 +25,12 @@ export function DelegateCall({ customAssistantName = 'your AI assistant' }: Dele
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  const [showPromptControl, setShowPromptControl] = useState(false);
+  const [promptSettings, setPromptSettings] = useState<PromptSettings>(DEFAULT_SETTINGS);
+
+  const handlePromptSettingsChange = useCallback((settings: PromptSettings) => {
+    setPromptSettings(settings);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +49,7 @@ export function DelegateCall({ customAssistantName = 'your AI assistant' }: Dele
           goal,
           context,
           to_number: toNumber,
+          promptSettings: showPromptControl ? promptSettings : undefined,
         }),
       });
 
@@ -185,6 +193,23 @@ export function DelegateCall({ customAssistantName = 'your AI assistant' }: Dele
               </div>
             )}
 
+            {/* Prompt Control Toggle */}
+            <div className="pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setShowPromptControl(!showPromptControl)}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-full justify-center py-2"
+              >
+                <Settings2 className="h-4 w-4" />
+                <span>Advanced Prompt Settings</span>
+                {showPromptControl ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+
             {/* Submit Button */}
             <Button
               type="submit"
@@ -206,6 +231,17 @@ export function DelegateCall({ customAssistantName = 'your AI assistant' }: Dele
           </form>
         </CardContent>
       </Card>
+
+      {/* Prompt Control Panel */}
+      {showPromptControl && (
+        <PromptControl
+          onSettingsChange={handlePromptSettingsChange}
+          initialSettings={{
+            assistantName: customAssistantName,
+          }}
+          compact={false}
+        />
+      )}
 
     </div>
   );

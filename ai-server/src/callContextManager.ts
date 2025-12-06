@@ -16,6 +16,35 @@ export interface Turn {
 }
 
 /**
+ * Per-call prompt settings for LLM customization.
+ * These are passed from the frontend prompt control panel.
+ */
+export interface PromptSettings {
+  // Core prompt
+  systemPrompt?: string;
+  goalTemplate?: string;
+
+  // Variables
+  assistantName?: string;
+  userName?: string;
+
+  // LLM parameters
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+
+  // Stop sequences
+  stopSequences?: string[];
+
+  // Feature flags
+  includeRollingSummary?: boolean;
+  maxContextTurns?: number;
+}
+
+/**
  * Within-call context manager that maintains a rolling summary and sliding window.
  */
 export interface CallContext {
@@ -28,6 +57,9 @@ export interface CallContext {
   assistantName?: string;
   userName?: string;
   initiatedAt?: string;
+
+  // Per-call prompt settings (from frontend prompt control panel)
+  promptSettings?: PromptSettings;
 
   // Rolling summary and turn tracking
   rollingSummary: string; // Natural language summary of entire call so far

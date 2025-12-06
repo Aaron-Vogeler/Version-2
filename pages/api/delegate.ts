@@ -29,7 +29,7 @@ export default async function handler(
 
   try {
     // Validate request body
-    const { goal, to_number } = req.body;
+    const { goal, context, to_number, promptSettings } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
@@ -75,10 +75,12 @@ export default async function handler(
       headers,
       body: JSON.stringify({
         goal,
+        context,
         toNumber: to_number,
         userId,
         assistantName: customAssistantName,
         userName: firstName,
+        promptSettings,
       }),
     });
 

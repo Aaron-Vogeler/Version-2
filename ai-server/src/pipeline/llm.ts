@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
+import type { PromptSettings } from "../callContextManager";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -8,40 +9,9 @@ const groq = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
-/**
- * Re-export CallContext from the context manager for backward compatibility.
- */
-export type CallContext = contextMgr.CallContext;
-
-/**
- * Build the system prompt dynamically, optionally injecting call goal context.
- * Replaces the hardcoded assistant name and user name with custom names from the call context.
- * @param context - Optional call context with goal, assistantName, and userName
- * @returns The complete system prompt
- */
-function buildSystemPrompt(context?: CallContext): string {
-  let prompt = config.llm.systemPrompt;
-
-  // Replace the hardcoded assistant name "Ferguson" with the custom name if provided
-  const assistantName = context?.assistantName || "Ferguson";
-
-  // Replace all occurrences of "Ferguson" with the custom assistant name
-  prompt = prompt.replace(/Ferguson/g, assistantName);
-
-  // Also handle lowercase "ferguson" if it appears
-  prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
-
-  // Replace the hardcoded user name "Aaron" with the custom name if provided
-  const userName = context?.userName || "Aaron";
-
-  // Replace all occurrences of "Aaron" with the custom user name
-  prompt = prompt.replace(/Aaron/g, userName);
-
-  if (context?.goal) {
-    prompt += `
-
-CALL GOAL (YOUR ONLY MISSION):
-"${context.goal}"
+// Default goal template (used when no custom template is provided)
+const DEFAULT_GOAL_TEMPLATE = `CALL GOAL (YOUR ONLY MISSION):
+"{goal}"
 
 EXECUTION RULES FOR THIS CALL:
 - Ask ONLY questions necessary to achieve the goal above
@@ -54,6 +24,48 @@ EXECUTION RULES FOR THIS CALL:
 - Do NOT deviate from this goal
 
 Remember: You are an AI phone agent. Strict scope control is mandatory.`;
+
+/**
+ * Re-export CallContext and PromptSettings from the context manager for backward compatibility.
+ */
+export type CallContext = contextMgr.CallContext;
+export type { PromptSettings } from "../callContextManager";
+
+/**
+ * Build the system prompt dynamically, optionally injecting call goal context.
+ * Replaces the hardcoded assistant name and user name with custom names from the call context.
+ * Uses custom prompt settings if provided, otherwise falls back to defaults.
+ * @param context - Optional call context with goal, assistantName, userName, and promptSettings
+ * @returns The complete system prompt
+ */
+function buildSystemPrompt(context?: CallContext): string {
+  const settings = context?.promptSettings;
+
+  // Use custom system prompt if provided, otherwise use default from config
+  let prompt = settings?.systemPrompt || config.llm.systemPrompt;
+
+  // Replace the hardcoded assistant name "Ferguson" with the custom name if provided
+  // Priority: promptSettings.assistantName > context.assistantName > "Ferguson"
+  const assistantName = settings?.assistantName || context?.assistantName || "Ferguson";
+
+  // Replace all occurrences of "Ferguson" with the custom assistant name
+  prompt = prompt.replace(/Ferguson/g, assistantName);
+
+  // Also handle lowercase "ferguson" if it appears
+  prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
+
+  // Replace the hardcoded user name "Aaron" with the custom name if provided
+  // Priority: promptSettings.userName > context.userName > "Aaron"
+  const userName = settings?.userName || context?.userName || "Aaron";
+
+  // Replace all occurrences of "Aaron" with the custom user name
+  prompt = prompt.replace(/Aaron/g, userName);
+
+  // Inject goal using custom template or default
+  if (context?.goal) {
+    const goalTemplate = settings?.goalTemplate || DEFAULT_GOAL_TEMPLATE;
+    const goalSection = goalTemplate.replace("{goal}", context.goal);
+    prompt += "\n\n" + goalSection;
   }
 
   return prompt;
@@ -163,21 +175,29 @@ export async function maybeUpdateSummaryForCall(
 /**
  * Call Groq LLM with user text and return the AI response.
  * Includes rolling summary and recent turns for rich per-call context.
+ * Uses custom prompt settings if provided for model, temperature, max_tokens, etc.
  * @param userText - The user's input text
- * @param context - Call context with goal, call ID, and other metadata
+ * @param context - Call context with goal, call ID, promptSettings, and other metadata
  * @returns The AI-generated response, or an empty string if no response
  */
 export async function generateAssistantReply(
   userText: string,
   context?: CallContext
 ): Promise<string> {
+  const settings = context?.promptSettings;
   const systemPrompt = buildSystemPrompt(context);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemPrompt },
   ];
 
-  // Add rolling summary if available and non-empty
-  if (context?.callId) {
+  // Check if rolling summary should be included (default: true)
+  const includeRollingSummary = settings?.includeRollingSummary !== false;
+
+  // Get max context turns (default: 12)
+  const maxContextTurns = settings?.maxContextTurns ?? 12;
+
+  // Add rolling summary if available, non-empty, and not disabled
+  if (context?.callId && includeRollingSummary) {
     const callContext = contextMgr.getContext(context.callId);
     if (callContext?.rollingSummary) {
       messages.push({
@@ -185,9 +205,11 @@ export async function generateAssistantReply(
         content: `CALL CONTEXT SUMMARY:\n${callContext.rollingSummary}`,
       });
     }
+  }
 
-    // Add recent turns from the sliding window
-    const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
+  // Add recent turns from the sliding window
+  if (context?.callId) {
+    const recentTurns = contextMgr.getRecentTurns(context.callId, maxContextTurns);
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
   }
@@ -195,10 +217,37 @@ export async function generateAssistantReply(
   // Add the current user input as the final message
   messages.push({ role: "user", content: userText });
 
-  const response = await groq.chat.completions.create({
-    model: config.groq.model,
+  // Build LLM request options with custom settings
+  const model = settings?.model || config.groq.model;
+  const temperature = settings?.temperature ?? 0.4; // Default to 0.4 for consistent phone agent behavior
+  const maxTokens = settings?.maxTokens ?? 150; // Default to 150 for short phone responses
+
+  // Log LLM parameters for debugging
+  console.log(`[LLM] Generating reply with model=${model}, temp=${temperature}, max_tokens=${maxTokens}`);
+
+  // Build the request options
+  const requestOptions: OpenAI.Chat.ChatCompletionCreateParams = {
+    model,
     messages,
-  });
+    temperature,
+    max_tokens: maxTokens,
+  };
+
+  // Add optional parameters if provided
+  if (settings?.topP !== undefined) {
+    requestOptions.top_p = settings.topP;
+  }
+  if (settings?.frequencyPenalty !== undefined) {
+    requestOptions.frequency_penalty = settings.frequencyPenalty;
+  }
+  if (settings?.presencePenalty !== undefined) {
+    requestOptions.presence_penalty = settings.presencePenalty;
+  }
+  if (settings?.stopSequences && settings.stopSequences.length > 0) {
+    requestOptions.stop = settings.stopSequences;
+  }
+
+  const response = await groq.chat.completions.create(requestOptions);
 
   return response.choices[0]?.message?.content || "";
 }

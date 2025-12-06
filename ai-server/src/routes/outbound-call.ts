@@ -2,15 +2,18 @@ import express, { Router, Request, Response } from "express";
 import axios from "axios";
 import config from "../config";
 import { upsertCall, isSupabaseConfigured } from "../utils/supabase";
+import type { PromptSettings } from "../callContextManager";
 
 const router = Router();
 
 interface OutboundCallRequest {
   goal: string;
+  context?: string;
   toNumber: string;
   userId: string;
   assistantName?: string;
   userName?: string;
+  promptSettings?: PromptSettings;
 }
 
 interface TelnyxCallResponse {
@@ -28,7 +31,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName } = req.body as OutboundCallRequest;
+    const { goal, context, toNumber, userId, assistantName, userName, promptSettings } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -38,12 +41,14 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName) in base64
+    // Encode client state (goal + userId + assistantName + userName + promptSettings) in base64
     const clientStatePayload = JSON.stringify({
       goal,
+      context: context || null,
       userId,
       assistantName: assistantName || null,
       userName: userName || null,
+      promptSettings: promptSettings || null,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 
