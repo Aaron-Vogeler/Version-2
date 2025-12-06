@@ -9,6 +9,65 @@ const groq = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
+/**
+ * Log Groq LLM inputs and outputs for prompt testing and debugging.
+ * Displays the full request messages alongside the response for side-by-side comparison.
+ * @param callId - The call ID (optional, for context)
+ * @param functionName - The name of the function making the call
+ * @param messages - The messages array sent to Groq
+ * @param requestOptions - The request options (model, temperature, etc.)
+ * @param response - The raw response from Groq
+ * @param output - The extracted output string
+ */
+function logGroqInputOutput(
+  callId: string | undefined,
+  functionName: string,
+  messages: Array<{ role: string; content: string }>,
+  requestOptions: { model: string; temperature?: number; max_tokens?: number; top_p?: number },
+  response: OpenAI.Chat.ChatCompletion,
+  output: string
+): void {
+  const separator = "=".repeat(80);
+  const subSeparator = "-".repeat(40);
+  const prefix = callId ? `[${callId}]` : "[no-call-id]";
+
+  console.log(`\n${separator}`);
+  console.log(`${prefix} GROQ INPUT/OUTPUT LOG - ${functionName}`);
+  console.log(`${separator}`);
+
+  // Log request options
+  console.log(`\n${subSeparator} REQUEST OPTIONS ${subSeparator}`);
+  console.log(`Model: ${requestOptions.model}`);
+  console.log(`Temperature: ${requestOptions.temperature ?? "default"}`);
+  console.log(`Max Tokens: ${requestOptions.max_tokens ?? "default"}`);
+  if (requestOptions.top_p !== undefined) {
+    console.log(`Top P: ${requestOptions.top_p}`);
+  }
+
+  // Log input messages
+  console.log(`\n${subSeparator} INPUT MESSAGES (${messages.length} total) ${subSeparator}`);
+  messages.forEach((msg, index) => {
+    console.log(`\n[${index + 1}] Role: ${msg.role.toUpperCase()}`);
+    console.log(`Content (${msg.content.length} chars):`);
+    // Truncate very long messages for readability, but show full content for testing
+    const contentPreview = msg.content.length > 2000
+      ? msg.content.substring(0, 2000) + `\n... [truncated, ${msg.content.length - 2000} more chars]`
+      : msg.content;
+    console.log(contentPreview);
+  });
+
+  // Log output
+  console.log(`\n${subSeparator} OUTPUT ${subSeparator}`);
+  console.log(`Finish Reason: ${response.choices[0]?.finish_reason || "unknown"}`);
+  console.log(`Usage: prompt_tokens=${response.usage?.prompt_tokens}, completion_tokens=${response.usage?.completion_tokens}, total=${response.usage?.total_tokens}`);
+  console.log(`\nResponse Content (${output.length} chars):`);
+  console.log(output);
+
+  console.log(`\n${separator}`);
+  console.log(`END GROQ LOG - ${functionName}`);
+  console.log(`${separator}\n`);
+}
+
 // Default goal template (used when no custom template is provided)
 const DEFAULT_GOAL_TEMPLATE = `CALL GOAL (YOUR ONLY MISSION):
 "{goal}"
@@ -117,21 +176,34 @@ Be concise and focus on what's most important to continue this call effectively.
 
   try {
     console.log(`[${callId}] Generating rolling summary...`);
-    const response = await groq.chat.completions.create({
+    const summaryMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      {
+        role: "system",
+        content:
+          "You are a concise call summary generator. Create summaries that preserve the most important context for continuing phone conversations.",
+      },
+      { role: "user", content: summaryPrompt },
+    ];
+    const summaryRequestOptions = {
       model: config.groq.model,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a concise call summary generator. Create summaries that preserve the most important context for continuing phone conversations.",
-        },
-        { role: "user", content: summaryPrompt },
-      ],
+      messages: summaryMessages,
       temperature: 0.2, // Lower temperature for consistency
       max_tokens: config_params.maxSummaryTokensHint,
-    });
+    };
+    const response = await groq.chat.completions.create(summaryRequestOptions);
 
     const newSummary = response.choices[0]?.message?.content || "";
+
+    // Log Groq input/output for prompt testing
+    logGroqInputOutput(
+      callId,
+      "generateRollingSummary",
+      summaryMessages,
+      summaryRequestOptions,
+      response,
+      newSummary
+    );
+
     if (!newSummary) {
       console.warn(`[${callId}] LLM returned empty summary`);
       return context.rollingSummary;
@@ -248,6 +320,17 @@ export async function generateAssistantReply(
   }
 
   const response = await groq.chat.completions.create(requestOptions);
+  const output = response.choices[0]?.message?.content || "";
 
-  return response.choices[0]?.message?.content || "";
+  // Log Groq input/output for prompt testing
+  logGroqInputOutput(
+    context?.callId,
+    "generateAssistantReply",
+    messages,
+    { model, temperature, max_tokens: maxTokens, top_p: settings?.topP },
+    response,
+    output
+  );
+
+  return output;
 }
