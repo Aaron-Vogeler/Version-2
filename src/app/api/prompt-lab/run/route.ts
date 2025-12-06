@@ -95,27 +95,28 @@ export async function POST(request: NextRequest) {
             errors.push(`LLM API error: ${groqResponse.status} - ${errorText}`);
           } else {
             const data = await groqResponse.json();
-            response = data.choices?.[0]?.message?.content || '';
+            const llmResponse = (data.choices?.[0]?.message?.content || '') as string;
+            response = llmResponse;
 
             // Validate response
-            const formatResult = validateAssistantUtteranceFormat(response);
+            const formatResult = validateAssistantUtteranceFormat(llmResponse);
             errors.push(...formatResult.errors);
             warnings.push(...formatResult.warnings);
 
             if (scenario.expectations.mustPreserveRelativeDates) {
-              const dateResult = validateNoCalendarDateGenerated(response, scenario.goal);
+              const dateResult = validateNoCalendarDateGenerated(llmResponse, scenario.goal);
               errors.push(...dateResult.errors);
               warnings.push(...dateResult.warnings);
             }
 
-            if (looksLikeConfigResponse(response)) {
+            if (looksLikeConfigResponse(llmResponse)) {
               errors.push('Response looks like config acknowledgment instead of greeting');
             }
 
             // Check expectations
             if (scenario.expectations.shouldContain) {
               for (const pattern of scenario.expectations.shouldContain) {
-                if (!response.toLowerCase().includes(pattern.toLowerCase())) {
+                if (!llmResponse.toLowerCase().includes(pattern.toLowerCase())) {
                   errors.push(`Response should contain: "${pattern}"`);
                 }
               }
@@ -123,7 +124,7 @@ export async function POST(request: NextRequest) {
 
             if (scenario.expectations.shouldNotContain) {
               for (const pattern of scenario.expectations.shouldNotContain) {
-                if (response.toLowerCase().includes(pattern.toLowerCase())) {
+                if (llmResponse.toLowerCase().includes(pattern.toLowerCase())) {
                   errors.push(`Response should NOT contain: "${pattern}"`);
                 }
               }
