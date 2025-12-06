@@ -28,6 +28,7 @@ import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } fro
 import { Call } from '@/lib/types/database';
 import { LiveTranscript } from './live-transcript';
 import { ListenInBrowser } from './listen-in-browser';
+import { LiveLLMExchange } from './live-llm-exchange';
 
 interface CallDetailModalProps {
   call: Call | null;
@@ -52,9 +53,10 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
         </DialogHeader>
 
         <Tabs defaultValue="overview" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="transcript">Transcript & Recording</TabsTrigger>
+            <TabsTrigger value="transcript">Transcript</TabsTrigger>
+            <TabsTrigger value="llm">LLM Debug</TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
@@ -256,6 +258,14 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          {/* LLM Debug Tab */}
+          <TabsContent value="llm" className="space-y-4">
+            <LiveLLMExchange
+              callId={call.id}
+              status={call.status}
+            />
           </TabsContent>
 
         </Tabs>

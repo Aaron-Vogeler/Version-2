@@ -455,3 +455,91 @@ export async function safeUpdateStatus(
     };
   }
 }
+
+/**
+ * LLM Exchange record for real-time debugging
+ */
+export interface LLMExchangeRecord {
+  call_id: string;
+  model: string;
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  stop_sequences?: string[];
+  messages: Array<{ role: string; content: string }>;
+  response_text?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  finish_reason?: string;
+  duration_ms?: number;
+}
+
+/**
+ * Insert an LLM exchange for real-time dashboard debugging.
+ * This logs every Groq API call with full input/output details.
+ * @param exchange - The LLM exchange record to insert
+ * @returns Success/error result
+ */
+export async function insertLLMExchange(
+  exchange: LLMExchangeRecord
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    console.log("[Supabase] Not configured, skipping LLM exchange insert");
+    return { success: true };
+  }
+
+  // Validate required fields
+  if (!exchange.call_id || !exchange.model || !exchange.messages) {
+    return {
+      success: false,
+      error: "Missing required fields: call_id, model, messages",
+    };
+  }
+
+  try {
+    const insertRecord = {
+      call_id: exchange.call_id,
+      model: exchange.model,
+      temperature: exchange.temperature,
+      max_tokens: exchange.max_tokens,
+      top_p: exchange.top_p,
+      frequency_penalty: exchange.frequency_penalty,
+      presence_penalty: exchange.presence_penalty,
+      stop_sequences: exchange.stop_sequences,
+      messages: exchange.messages,
+      response_text: exchange.response_text,
+      prompt_tokens: exchange.prompt_tokens,
+      completion_tokens: exchange.completion_tokens,
+      total_tokens: exchange.total_tokens,
+      finish_reason: exchange.finish_reason,
+      duration_ms: exchange.duration_ms,
+      created_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from("call_llm_exchanges")
+      .insert(insertRecord);
+
+    if (error) {
+      console.error("[Supabase] Error inserting LLM exchange:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    // Debug logging
+    const callIdSuffix = exchange.call_id.substring(Math.max(0, exchange.call_id.length - 8));
+    console.log(
+      `[Supabase] LLM exchange logged (${exchange.duration_ms}ms, ${exchange.total_tokens} tokens, call: ...${callIdSuffix})`
+    );
+    return { success: true };
+  } catch (error) {
+    console.error("[Supabase] Exception inserting LLM exchange:", error instanceof Error ? error.message : error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

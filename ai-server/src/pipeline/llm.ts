@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
 import type { PromptSettings } from "../callContextManager";
+import { insertLLMExchange, isSupabaseConfigured } from "../utils/supabase";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -368,8 +369,32 @@ export async function generateAssistantReply(
   const response = await groq.chat.completions.create(requestOptions);
   const durationMs = Date.now() - startTime;
 
-  // Log the full input/output exchange side-by-side
+  // Log the full input/output exchange side-by-side (console)
   logGroqExchange(requestOptions, response, durationMs);
+
+  // Log to database for real-time dashboard display
+  if (context?.callControlId && isSupabaseConfigured()) {
+    const responseText = response.choices[0]?.message?.content || "";
+    insertLLMExchange({
+      call_id: context.callControlId,
+      model: requestOptions.model as string,
+      temperature: requestOptions.temperature,
+      max_tokens: requestOptions.max_tokens,
+      top_p: requestOptions.top_p,
+      frequency_penalty: requestOptions.frequency_penalty,
+      presence_penalty: requestOptions.presence_penalty,
+      stop_sequences: requestOptions.stop as string[] | undefined,
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      response_text: responseText,
+      prompt_tokens: response.usage?.prompt_tokens,
+      completion_tokens: response.usage?.completion_tokens,
+      total_tokens: response.usage?.total_tokens,
+      finish_reason: response.choices[0]?.finish_reason || undefined,
+      duration_ms: durationMs,
+    }).catch(err => {
+      console.error("[LLM] Failed to log exchange to database:", err);
+    });
+  }
 
   return response.choices[0]?.message?.content || "";
 }

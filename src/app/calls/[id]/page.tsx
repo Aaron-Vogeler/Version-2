@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { LiveTranscript } from '@/components/dashboard/live-transcript';
 import { ListenInBrowser } from '@/components/dashboard/listen-in-browser';
+import { LiveLLMExchange } from '@/components/dashboard/live-llm-exchange';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { formatPhoneNumber, formatDuration, formatCurrency, formatDateTime } from '@/lib/utils';
@@ -210,6 +211,10 @@ export default function CallDetailPage() {
             callId={call.id}
             initialTranscript={call.transcript}
             initialLiveTranscript={call.live_transcript}
+            status={call.status}
+          />
+          <LiveLLMExchange
+            callId={call.id}
             status={call.status}
           />
         </div>
