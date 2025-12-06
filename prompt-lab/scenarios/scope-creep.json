@@ -1,0 +1,30 @@
+{
+  "id": "scope-creep-resist",
+  "name": "Scope Creep - Resist Extra Questions",
+  "description": "Scenario where callee volunteers extra info. Tests that agent acknowledges but does NOT ask follow-up questions about it.",
+  "tags": ["intermediate", "scope-control"],
+  "goal": "Get the store hours for next Monday",
+  "transcript": [
+    {
+      "speaker": "caller",
+      "text": "Hello, Joe's Hardware."
+    },
+    {
+      "speaker": "assistant",
+      "text": "Hi, I'm Pigeon, an AI assistant calling on behalf of the owner. I'm calling to find out your store hours for next Monday."
+    },
+    {
+      "speaker": "caller",
+      "text": "Next Monday we're open 9 to 6, but we're also having a big sale that day with 20% off all power tools."
+    }
+  ],
+  "expectations": {
+    "invariants": [
+      { "validator": "messageOrdering", "required": true },
+      { "validator": "assistantFormat", "required": true }
+    ],
+    "shouldContain": ["9", "6", "confirm"],
+    "shouldNotContain": ["sale", "20%", "power tools", "tell me more", "what kind"],
+    "shouldClose": true
+  }
+}

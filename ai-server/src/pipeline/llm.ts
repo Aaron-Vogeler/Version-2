@@ -1,6 +1,27 @@
+/**
+ * LLM Pipeline - Groq Integration
+ * =================================
+ * Handles LLM calls using the centralized prompts module.
+ *
+ * THREE-PARTY MODEL:
+ * 1. OWNER/DEVELOPER - Sets system prompt + FIRST user message (owner instructions)
+ * 2. AI AGENT - Outputs spoken words only
+ * 3. CALLEE - Provides LIVE_TRANSCRIPT (all later user messages)
+ */
+
 import OpenAI from "openai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
+
+// Import from the centralized prompts module
+import {
+  createPromptConfig,
+  renderPromptBundle,
+  buildMessages,
+  ConversationTurn,
+  PromptBundle,
+  PromptConfig,
+} from "../prompts";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -14,54 +35,50 @@ const groq = new OpenAI({
 export type CallContext = contextMgr.CallContext;
 
 /**
- * Build the system prompt dynamically, optionally injecting call goal context.
- * Replaces the hardcoded assistant name and user name with custom names from the call context.
+ * Build a PromptConfig from CallContext.
+ * This adapts the existing CallContext interface to the new PromptConfig.
+ *
+ * @param context - Optional call context with goal, assistantName, and userName
+ * @returns PromptConfig for rendering
+ */
+function buildPromptConfig(context?: CallContext): PromptConfig {
+  return createPromptConfig({
+    goalText: context?.goal || "Assist the caller with their request",
+    assistantName: context?.assistantName || "Pigeon",
+    ownerName: context?.userName || "the owner",
+    recordingNotice: false, // TODO: Make configurable per-call
+  });
+}
+
+/**
+ * Convert callContextManager Turn to prompts ConversationTurn.
+ */
+function toConversationTurn(turn: contextMgr.Turn): ConversationTurn {
+  return {
+    speaker: turn.speaker as "caller" | "assistant" | "ivr" | "agent",
+    text: turn.text,
+    timestamp: turn.timestamp,
+  };
+}
+
+/**
+ * Build the system prompt dynamically using the centralized prompts module.
+ * This is kept for backward compatibility with any code that calls it directly.
+ *
+ * @deprecated Use buildPromptConfig + renderPromptBundle instead
  * @param context - Optional call context with goal, assistantName, and userName
  * @returns The complete system prompt
  */
-function buildSystemPrompt(context?: CallContext): string {
-  let prompt = config.llm.systemPrompt;
-
-  // Replace the hardcoded assistant name "Ferguson" with the custom name if provided
-  const assistantName = context?.assistantName || "Ferguson";
-
-  // Replace all occurrences of "Ferguson" with the custom assistant name
-  prompt = prompt.replace(/Ferguson/g, assistantName);
-
-  // Also handle lowercase "ferguson" if it appears
-  prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
-
-  // Replace the hardcoded user name "Aaron" with the custom name if provided
-  const userName = context?.userName || "Aaron";
-
-  // Replace all occurrences of "Aaron" with the custom user name
-  prompt = prompt.replace(/Aaron/g, userName);
-
-  if (context?.goal) {
-    prompt += `
-
-CALL GOAL (YOUR ONLY MISSION):
-"${context.goal}"
-
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Chow."
-- Do NOT deviate from this goal
-
-Remember: You are an AI phone agent. Strict scope control is mandatory.`;
-  }
-
-  return prompt;
+export function buildSystemPrompt(context?: CallContext): string {
+  const promptConfig = buildPromptConfig(context);
+  const bundle = renderPromptBundle(promptConfig);
+  return bundle.system;
 }
 
 /**
  * Generate a rolling summary of the call by calling the LLM.
  * This is called periodically as new turns accumulate.
+ *
  * @param callId - The call ID
  * @param config_override - Optional context configuration
  * @returns The updated summary, or existing summary if generation fails
@@ -140,6 +157,7 @@ Be concise and focus on what's most important to continue this call effectively.
 /**
  * Check if we should update the summary and do so if needed.
  * Call this after processing each turn.
+ *
  * @param callId - The call ID
  * @param config_override - Optional context configuration
  */
@@ -162,8 +180,13 @@ export async function maybeUpdateSummaryForCall(
 
 /**
  * Call Groq LLM with user text and return the AI response.
- * Includes rolling summary and recent turns for rich per-call context.
- * @param userText - The user's input text
+ *
+ * Uses the THREE-PARTY MODEL:
+ * - System message: Agent role definition (from OWNER)
+ * - First user message: Owner instructions with GOAL (CONFIG, not dialogue)
+ * - Subsequent user messages: CALLEE conversation (live transcript)
+ *
+ * @param userText - The user's input text (from CALLEE)
  * @param context - Call context with goal, call ID, and other metadata
  * @returns The AI-generated response, or an empty string if no response
  */
@@ -171,33 +194,43 @@ export async function generateAssistantReply(
   userText: string,
   context?: CallContext
 ): Promise<string> {
-  const systemPrompt = buildSystemPrompt(context);
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-    { role: "system", content: systemPrompt },
-  ];
+  // Build prompt config and render the bundle
+  const promptConfig = buildPromptConfig(context);
+  const bundle = renderPromptBundle(promptConfig);
 
-  // Add rolling summary if available and non-empty
+  // Get call context for rolling summary and recent turns
+  let rollingSummary: string | undefined;
+  let transcriptTurns: ConversationTurn[] = [];
+
   if (context?.callId) {
     const callContext = contextMgr.getContext(context.callId);
     if (callContext?.rollingSummary) {
-      messages.push({
-        role: "user",
-        content: `CALL CONTEXT SUMMARY:\n${callContext.rollingSummary}`,
-      });
+      rollingSummary = callContext.rollingSummary;
     }
 
-    // Add recent turns from the sliding window
+    // Get recent turns from the sliding window
     const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
-    const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
-    messages.push(...recentMessages);
+    transcriptTurns = recentTurns.map(toConversationTurn);
   }
 
-  // Add the current user input as the final message
-  messages.push({ role: "user", content: userText });
+  // Build messages using the centralized message builder
+  // This enforces the THREE-PARTY MODEL:
+  // [0] system - Agent role definition
+  // [1] user - Owner instructions (GOAL) <- OWNER_CONFIG_MODE
+  // [2] user - Rolling summary (if exists)
+  // [3+] - Transcript turns <- CALLEE_CONVERSATION_MODE
+  // [N] user - Current utterance from callee
+  const messages = buildMessages({
+    bundle,
+    rollingSummary,
+    transcriptTurns,
+    currentUtterance: userText,
+  });
 
   const response = await groq.chat.completions.create({
     model: config.groq.model,
     messages,
+    temperature: 0.2, // Low temperature for consistent, focused responses
   });
 
   return response.choices[0]?.message?.content || "";

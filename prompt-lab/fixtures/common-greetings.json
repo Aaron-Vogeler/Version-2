@@ -1,0 +1,48 @@
+{
+  "fixtures": [
+    {
+      "id": "greeting-simple",
+      "name": "Simple Greeting",
+      "description": "Basic business greeting",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "Hello, how can I help you?"
+        }
+      ]
+    },
+    {
+      "id": "greeting-business-name",
+      "name": "Business Name Greeting",
+      "description": "Greeting that includes business name",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "Thank you for calling ABC Company, this is Sarah speaking. How may I assist you today?"
+        }
+      ]
+    },
+    {
+      "id": "greeting-hold",
+      "name": "Hold Greeting",
+      "description": "Caller asks to hold",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "Hi, can you hold for just a moment?"
+        }
+      ]
+    },
+    {
+      "id": "greeting-transfer",
+      "name": "Post-Transfer Greeting",
+      "description": "Greeting after being transferred",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "This is the scheduling department, go ahead."
+        }
+      ]
+    }
+  ]
+}

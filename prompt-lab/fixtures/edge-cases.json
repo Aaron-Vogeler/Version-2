@@ -1,0 +1,70 @@
+{
+  "fixtures": [
+    {
+      "id": "edge-interruption",
+      "name": "Caller Interruption",
+      "description": "Caller interrupts mid-sentence",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "Wait wait wait, before you go on--"
+        }
+      ]
+    },
+    {
+      "id": "edge-confusion",
+      "name": "Caller Confusion",
+      "description": "Caller is confused about the call",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "I'm sorry, who is this? Who are you calling from?"
+        }
+      ]
+    },
+    {
+      "id": "edge-wrong-number",
+      "name": "Wrong Number",
+      "description": "Caller indicates wrong number",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "I think you have the wrong number. This is a residence."
+        }
+      ]
+    },
+    {
+      "id": "edge-hostile",
+      "name": "Hostile Caller",
+      "description": "Caller is upset or hostile",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "Look, I don't have time for this. What do you want?"
+        }
+      ]
+    },
+    {
+      "id": "edge-ai-question",
+      "name": "AI Identity Question",
+      "description": "Caller asks if talking to AI",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "Wait, am I talking to a robot? Is this an AI?"
+        }
+      ]
+    },
+    {
+      "id": "edge-recording-question",
+      "name": "Recording Question",
+      "description": "Caller asks about recording",
+      "turns": [
+        {
+          "speaker": "caller",
+          "text": "Are you recording this call?"
+        }
+      ]
+    }
+  ]
+}

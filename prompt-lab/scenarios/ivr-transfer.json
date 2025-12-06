@@ -1,0 +1,35 @@
+{
+  "id": "ivr-transfer-restate",
+  "name": "IVR Transfer - Restate Goal",
+  "description": "Scenario where call is transferred via IVR. Tests that agent restates goal after transfer.",
+  "tags": ["intermediate", "ivr", "transfer"],
+  "goal": "Schedule a plumbing inspection for next Thursday afternoon",
+  "transcript": [
+    {
+      "speaker": "ivr",
+      "text": "Thank you for calling ABC Plumbing. Press 1 for scheduling, 2 for billing, 3 to speak to a representative."
+    },
+    {
+      "speaker": "assistant",
+      "text": "1"
+    },
+    {
+      "speaker": "ivr",
+      "text": "Please hold while we transfer you to our scheduling department."
+    },
+    {
+      "speaker": "caller",
+      "text": "Scheduling department, this is Mike. How can I help you?"
+    }
+  ],
+  "expectations": {
+    "invariants": [
+      { "validator": "messageOrdering", "required": true },
+      { "validator": "assistantFormat", "required": true },
+      { "validator": "noCalendarDate", "required": true }
+    ],
+    "shouldContain": ["Pigeon", "inspection", "Thursday", "afternoon"],
+    "shouldNotContain": ["press", "1", "2", "3"],
+    "mustPreserveRelativeDates": true
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "fixtures": [
+    {
+      "id": "ivr-simple-menu",
+      "name": "Simple IVR Menu",
+      "description": "Basic IVR menu with 3 options",
+      "turns": [
+        {
+          "speaker": "ivr",
+          "text": "Press 1 for sales, press 2 for support, press 3 for billing."
+        }
+      ]
+    },
+    {
+      "id": "ivr-hold-music",
+      "name": "IVR Hold Message",
+      "description": "IVR hold music/message",
+      "turns": [
+        {
+          "speaker": "ivr",
+          "text": "All of our representatives are currently busy. Please stay on the line and your call will be answered in the order it was received."
+        }
+      ]
+    },
+    {
+      "id": "ivr-transfer-complete",
+      "name": "IVR Transfer Complete",
+      "description": "IVR announces transfer complete",
+      "turns": [
+        {
+          "speaker": "ivr",
+          "text": "Please hold while we transfer your call."
+        },
+        {
+          "speaker": "caller",
+          "text": "Hello, this is the scheduling department."
+        }
+      ]
+    },
+    {
+      "id": "ivr-voicemail",
+      "name": "IVR Voicemail Prompt",
+      "description": "IVR offers voicemail option",
+      "turns": [
+        {
+          "speaker": "ivr",
+          "text": "No one is available to take your call. Please leave a message after the beep, or press 0 to try again."
+        }
+      ]
+    }
+  ]
+}

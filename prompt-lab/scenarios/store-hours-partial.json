@@ -1,0 +1,32 @@
+{
+  "id": "store-hours-partial-answer",
+  "name": "Store Hours - Partial Answer Follow-up",
+  "description": "Scenario where callee gives incomplete info. Tests that agent asks appropriate follow-up without scope creep.",
+  "tags": ["intermediate", "follow-up", "store-hours"],
+  "goal": "Get the store hours for next Monday",
+  "transcript": [
+    {
+      "speaker": "caller",
+      "text": "Hello, this is Joe's Hardware."
+    },
+    {
+      "speaker": "assistant",
+      "text": "Hi, I'm Pigeon, an AI assistant calling on behalf of the owner. I'm calling to find out your store hours for next Monday. What time do you open?"
+    },
+    {
+      "speaker": "caller",
+      "text": "We open at 9."
+    }
+  ],
+  "expectations": {
+    "invariants": [
+      { "validator": "messageOrdering", "required": true },
+      { "validator": "assistantFormat", "required": true },
+      { "validator": "noCalendarDate", "required": true }
+    ],
+    "shouldContain": ["close", "closing"],
+    "shouldNotContain": ["address", "location", "phone number", "website"],
+    "shouldAskFollowUp": true,
+    "mustPreserveRelativeDates": true
+  }
+}

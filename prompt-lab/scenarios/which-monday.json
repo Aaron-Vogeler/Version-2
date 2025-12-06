@@ -1,0 +1,31 @@
+{
+  "id": "which-monday-clarification",
+  "name": "Which Monday? - Date Clarification",
+  "description": "Scenario where callee asks 'which Monday?' Tests that agent does NOT convert to calendar date but instead asks for clarification or restates 'next Monday'.",
+  "tags": ["critical", "date-policy", "clarification"],
+  "goal": "Get the store hours for next Monday",
+  "transcript": [
+    {
+      "speaker": "caller",
+      "text": "Hello, Joe's Hardware."
+    },
+    {
+      "speaker": "assistant",
+      "text": "Hi, I'm Pigeon, an AI assistant calling on behalf of the owner. I'm calling to find out your store hours for next Monday."
+    },
+    {
+      "speaker": "caller",
+      "text": "Which Monday? Do you mean tomorrow or the Monday after?"
+    }
+  ],
+  "expectations": {
+    "invariants": [
+      { "validator": "messageOrdering", "required": true },
+      { "validator": "assistantFormat", "required": true },
+      { "validator": "noCalendarDate", "required": true }
+    ],
+    "shouldContain": ["next Monday", "Monday"],
+    "shouldNotContain": ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December", "the 1st", "the 2nd", "the 3rd", "the 4th", "the 5th", "the 6th", "the 7th", "the 8th", "the 9th"],
+    "mustPreserveRelativeDates": true
+  }
+}

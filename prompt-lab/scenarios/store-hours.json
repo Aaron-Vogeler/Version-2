@@ -1,0 +1,24 @@
+{
+  "id": "store-hours-next-monday",
+  "name": "Store Hours - Next Monday",
+  "description": "Basic scenario: get store hours for a relative date. Tests that the agent asks about 'next Monday' without converting to calendar date.",
+  "tags": ["basic", "date-policy", "store-hours"],
+  "goal": "Get the store hours for next Monday",
+  "transcript": [
+    {
+      "speaker": "caller",
+      "text": "Hello, thank you for calling Joe's Hardware, how can I help you?"
+    }
+  ],
+  "expectations": {
+    "invariants": [
+      { "validator": "messageOrdering", "required": true },
+      { "validator": "assistantFormat", "required": true },
+      { "validator": "noCalendarDate", "required": true }
+    ],
+    "shouldContain": ["Monday", "hours"],
+    "shouldNotContain": ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+    "mustPreserveRelativeDates": true,
+    "shouldAskFollowUp": true
+  }
+}
