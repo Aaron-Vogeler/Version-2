@@ -14,9 +14,10 @@ const groq = new OpenAI({
 export type CallContext = contextMgr.CallContext;
 
 /**
- * Build the system prompt dynamically, optionally injecting call goal context.
+ * Build the system prompt dynamically.
  * Replaces the hardcoded assistant name and user name with custom names from the call context.
- * @param context - Optional call context with goal, assistantName, and userName
+ * Note: The GOAL is now sent as the first user message (OWNER_INSTRUCTIONS), not appended here.
+ * @param context - Optional call context with assistantName and userName
  * @returns The complete system prompt
  */
 function buildSystemPrompt(context?: CallContext): string {
@@ -37,26 +38,50 @@ function buildSystemPrompt(context?: CallContext): string {
   // Replace all occurrences of "Aaron" with the custom user name
   prompt = prompt.replace(/Aaron/g, userName);
 
-  if (context?.goal) {
-    prompt += `
+  return prompt;
+}
 
-CALL GOAL (YOUR ONLY MISSION):
-"${context.goal}"
-
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Chow."
-- Do NOT deviate from this goal
-
-Remember: You are an AI phone agent. Strict scope control is mandatory.`;
+/**
+ * Build the OWNER_INSTRUCTIONS message (first user message).
+ * This is configuration from the OWNER, not dialogue from the CALLEE.
+ * The AI should parse this silently and NOT reply to it directly.
+ * @param context - Call context with goal and other metadata
+ * @returns The OWNER_INSTRUCTIONS message content, or null if no goal
+ */
+function buildOwnerInstructions(context?: CallContext): string | null {
+  if (!context?.goal) {
+    return null;
   }
 
-  return prompt;
+  const assistantName = context.assistantName || "Ferguson";
+  const userName = context.userName || "Aaron";
+
+  return `=== OWNER_INSTRUCTIONS (CONFIG ONLY — DO NOT REPLY TO THIS MESSAGE) ===
+
+This message is from your OWNER (${userName}), not the CALLEE.
+Parse it silently. Your next output will be your OPENING to the CALLEE.
+
+GOAL FOR THIS CALL:
+"${context.goal}"
+
+CONFIGURATION:
+- Assistant Name: ${assistantName}
+- Owner Name: ${userName}
+- Recording Notice: disabled
+
+EXECUTION RULES:
+- Ask ONLY questions necessary to achieve the GOAL above.
+- Preserve EXACT wording of dates/times in the GOAL (do not convert "next Monday" to a calendar date).
+- Any example dates, times, or names in the GOAL are placeholders—ask the CALLEE for real information.
+- The CALLEE is the sole source of truth. Do not assume anything.
+- When you have what you need: confirm it back, then end with "Thank you. Chow."
+
+MODE SWITCH:
+After reading this message, you are now in CALLEE_CONVERSATION_MODE.
+All subsequent "user" messages are LIVE_TRANSCRIPT from the CALLEE.
+Respond ONLY to the CALLEE from now on.
+
+=== END OWNER_INSTRUCTIONS — BEGIN CALL ===`;
 }
 
 /**
@@ -162,10 +187,16 @@ export async function maybeUpdateSummaryForCall(
 
 /**
  * Call Groq LLM with user text and return the AI response.
- * Includes rolling summary and recent turns for rich per-call context.
- * @param userText - The user's input text
+ * Message structure:
+ * 1. System prompt (role, identity, rules)
+ * 2. OWNER_INSTRUCTIONS (first user message - config only, AI should not reply to this)
+ * 3. Rolling summary (if available, as system context)
+ * 4. Recent conversation turns (alternating user/assistant)
+ * 5. Current CALLEE input (what the person on the phone just said)
+ *
+ * @param userText - The CALLEE's input text (live transcript from the phone)
  * @param context - Call context with goal, call ID, and other metadata
- * @returns The AI-generated response, or an empty string if no response
+ * @returns The AI-generated response (spoken words only), or an empty string if no response
  */
 export async function generateAssistantReply(
   userText: string,
@@ -176,23 +207,30 @@ export async function generateAssistantReply(
     { role: "system", content: systemPrompt },
   ];
 
-  // Add rolling summary if available and non-empty
+  // Add OWNER_INSTRUCTIONS as the first user message (config from OWNER, not dialogue)
+  const ownerInstructions = buildOwnerInstructions(context);
+  if (ownerInstructions) {
+    messages.push({ role: "user", content: ownerInstructions });
+  }
+
+  // Add rolling summary as system context if available
   if (context?.callId) {
     const callContext = contextMgr.getContext(context.callId);
     if (callContext?.rollingSummary) {
+      // Insert rolling summary as a system message to keep it separate from dialogue
       messages.push({
-        role: "user",
-        content: `CALL CONTEXT SUMMARY:\n${callContext.rollingSummary}`,
+        role: "system",
+        content: `[CALL CONTEXT SUMMARY — for your reference, not dialogue]\n${callContext.rollingSummary}`,
       });
     }
 
-    // Add recent turns from the sliding window
+    // Add recent turns from the sliding window (actual conversation with CALLEE)
     const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
   }
 
-  // Add the current user input as the final message
+  // Add the current CALLEE input as the final message (LIVE_TRANSCRIPT)
   messages.push({ role: "user", content: userText });
 
   const response = await groq.chat.completions.create({
