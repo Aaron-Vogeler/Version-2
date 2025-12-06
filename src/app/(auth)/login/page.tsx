@@ -93,7 +93,7 @@ export default function LoginPage() {
               Pigeon
             </h1>
             <p className="text-lg text-foreground-secondary italic">
-              Get more done, in less time, with fewer headaches...
+              More done. Less time. Fewer headaches.
             </p>
           </div>
 
