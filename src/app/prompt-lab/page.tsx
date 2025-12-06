@@ -291,16 +291,40 @@ export default function PromptLabPage() {
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Results</h2>
 
+            {/* Mode Indicator */}
+            <div className={`p-3 rounded-lg mb-4 ${
+              liveMode
+                ? 'bg-green-100 dark:bg-green-900/30 border border-green-300'
+                : 'bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-300'
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full ${liveMode ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
+                <span className={`font-medium ${liveMode ? 'text-green-700' : 'text-yellow-700'}`}>
+                  {liveMode ? 'LIVE MODE' : 'MOCK MODE'}
+                </span>
+                <span className="text-sm text-gray-600 dark:text-gray-400">
+                  {liveMode ? '- Calls actual LLM' : '- Validates structure only (no LLM call)'}
+                </span>
+              </div>
+            </div>
+
             {!result && !loading && (
               <div className="text-center text-gray-500 py-12">
-                Select a scenario and click Run to see results
+                <p>Select a scenario and click Run to see results</p>
+                <p className="text-sm mt-2">
+                  {liveMode
+                    ? 'Will call the LLM and validate the response'
+                    : 'Will validate prompt structure and message ordering'}
+                </p>
               </div>
             )}
 
             {loading && (
               <div className="text-center py-12">
                 <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-                <p className="text-gray-600">Running scenario...</p>
+                <p className="text-gray-600">
+                  {liveMode ? 'Calling LLM...' : 'Running validators...'}
+                </p>
               </div>
             )}
 
@@ -324,6 +348,23 @@ export default function PromptLabPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Validations Run (show even when passing) */}
+                {result.passed && result.errors.length === 0 && (
+                  <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
+                    <h3 className="font-medium text-gray-700 dark:text-gray-300 mb-2">Validations Passed</h3>
+                    <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
+                      <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Message ordering correct</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">✓</span> System prompt contains required sections</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Owner instructions properly formatted</li>
+                      {!liveMode && (
+                        <li className="text-xs text-gray-500 mt-2 pt-2 border-t">
+                          Enable LIVE mode to test actual LLM responses
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                )}
 
                 {/* Errors */}
                 {result.errors.length > 0 && (
