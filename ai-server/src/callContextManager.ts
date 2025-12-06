@@ -27,6 +27,7 @@ export interface CallContext {
   goal?: string;
   assistantName?: string;
   userName?: string;
+  recordingNotice?: boolean;
   initiatedAt?: string;
 
   // Rolling summary and turn tracking

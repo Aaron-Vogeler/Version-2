@@ -14,49 +14,62 @@ const groq = new OpenAI({
 export type CallContext = contextMgr.CallContext;
 
 /**
- * Build the system prompt dynamically, optionally injecting call goal context.
- * Replaces the hardcoded assistant name and user name with custom names from the call context.
- * @param context - Optional call context with goal, assistantName, and userName
- * @returns The complete system prompt
+ * Build the system prompt dynamically by replacing assistant and user names.
+ * @param context - Optional call context with assistantName and userName
+ * @returns The complete system prompt with names substituted
  */
 function buildSystemPrompt(context?: CallContext): string {
   let prompt = config.llm.systemPrompt;
 
   // Replace the hardcoded assistant name "Ferguson" with the custom name if provided
   const assistantName = context?.assistantName || "Ferguson";
-
-  // Replace all occurrences of "Ferguson" with the custom assistant name
   prompt = prompt.replace(/Ferguson/g, assistantName);
-
-  // Also handle lowercase "ferguson" if it appears
   prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
 
   // Replace the hardcoded user name "Aaron" with the custom name if provided
   const userName = context?.userName || "Aaron";
-
-  // Replace all occurrences of "Aaron" with the custom user name
   prompt = prompt.replace(/Aaron/g, userName);
 
-  if (context?.goal) {
-    prompt += `
-
-CALL GOAL (YOUR ONLY MISSION):
-"${context.goal}"
-
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Chow."
-- Do NOT deviate from this goal
-
-Remember: You are an AI phone agent. Strict scope control is mandatory.`;
-  }
-
   return prompt;
+}
+
+/**
+ * Build the OWNER_INSTRUCTIONS message containing the GOAL and call configuration.
+ * This is sent as the first user message to set up the call context.
+ * @param context - Call context with goal, assistantName, and userName
+ * @returns The OWNER_INSTRUCTIONS message content
+ */
+function buildOwnerInstructions(context?: CallContext): string {
+  const assistantName = context?.assistantName || "Ferguson";
+  const ownerName = context?.userName || "Aaron";
+  const recordingNotice = context?.recordingNotice ? "true" : "false";
+  const goal = context?.goal || "";
+
+  return `OWNER_INSTRUCTIONS
+
+assistant_name: ${assistantName}
+owner_name: ${ownerName}
+recording_notice: ${recordingNotice}
+
+GOAL:
+${goal}
+
+CONTEXT:
+- You are placing a phone call on behalf of {{owner_name}} to complete the GOAL above.
+- Use the GOAL phrasing to explain why you are calling if the human asks.
+- Any additional details spoken during the call come from the human, not the owner.
+
+CONSTRAINTS:
+- Stay tightly focused on completing the GOAL.
+- Do NOT gather unnecessary information.
+- Do NOT guess or infer anything; ask if unclear.
+- Mirror only the information explicitly stated by the human.
+- If the human corrects a detail (e.g., time, date, price), always use their correction.
+
+CLOSING INSTRUCTIONS:
+- When the GOAL is completed or cannot be completed, provide one concise summary.
+- Confirm once if appropriate.
+- End the call by saying, "Thanks, chow."`;
 }
 
 /**
@@ -162,19 +175,35 @@ export async function maybeUpdateSummaryForCall(
 
 /**
  * Call Groq LLM with user text and return the AI response.
- * Includes rolling summary and recent turns for rich per-call context.
+ * Message structure:
+ * 1. System: buildSystemPrompt(context) - behavioral instructions
+ * 2. User: OWNER_INSTRUCTIONS - goal and call configuration (first user message only)
+ * 3. User: Rolling summary (if available)
+ * 4. Assistant/User: Recent conversation turns
+ * 5. User: Current user input
  * @param userText - The user's input text
  * @param context - Call context with goal, call ID, and other metadata
+ * @param includeOwnerInstructions - Whether to include OWNER_INSTRUCTIONS (set true on first turn)
  * @returns The AI-generated response, or an empty string if no response
  */
 export async function generateAssistantReply(
   userText: string,
-  context?: CallContext
+  context?: CallContext,
+  includeOwnerInstructions: boolean = true
 ): Promise<string> {
   const systemPrompt = buildSystemPrompt(context);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemPrompt },
   ];
+
+  // Add OWNER_INSTRUCTIONS as the first user message (configuration, not a human speaking)
+  if (includeOwnerInstructions && context?.goal) {
+    const ownerInstructions = buildOwnerInstructions(context);
+    messages.push({
+      role: "user",
+      content: ownerInstructions,
+    });
+  }
 
   // Add rolling summary if available and non-empty
   if (context?.callId) {
@@ -192,7 +221,7 @@ export async function generateAssistantReply(
     messages.push(...recentMessages);
   }
 
-  // Add the current user input as the final message
+  // Add the current user input as the final message (LIVE_TRANSCRIPT from the human)
   messages.push({ role: "user", content: userText });
 
   const response = await groq.chat.completions.create({
