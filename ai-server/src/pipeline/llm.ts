@@ -372,6 +372,9 @@ export async function generateAssistantReply(
   // Log the full input/output exchange side-by-side (console)
   logGroqExchange(requestOptions, response, durationMs);
 
+  // Debug: Log context info for troubleshooting
+  console.log(`[LLM] Debug - callId: ${context?.callId || 'UNDEFINED'}, callControlId: ${context?.callControlId || 'UNDEFINED'}, supabase: ${isSupabaseConfigured()}, hasContext: ${!!context}`);
+
   // Log to database for real-time dashboard display
   if (context?.callControlId && isSupabaseConfigured()) {
     const responseText = response.choices[0]?.message?.content || "";
