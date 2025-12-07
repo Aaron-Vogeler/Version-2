@@ -15,6 +15,7 @@ import { FilterBar, CallFilters } from '@/components/dashboard/filter-bar';
 import { CallDetailModal } from '@/components/dashboard/call-detail-modal';
 import { BillingUsage } from '@/components/dashboard/billing-usage';
 import { DelegateCall } from '@/components/dashboard/delegate-call';
+import { GroqTextChat } from '@/components/dashboard/groq-text-chat';
 import { CallsTable } from '@/components/dashboard/calls-table';
 import { RealTimeCallsTable } from '@/components/dashboard/real-time-calls-table';
 import { Button } from '@/components/ui/button';
@@ -22,7 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings } from 'lucide-react';
+import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings, MessageSquare } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
 
 export default function DashboardPage() {
@@ -379,11 +380,16 @@ export default function DashboardPage() {
       {/* Main Content - Generous Spacing & Clean Layout */}
       <main className="container-custom py-8 lg:py-12">
         <Tabs defaultValue="delegate" className="space-y-8 lg:space-y-10">
-          <TabsList className="w-full max-w-2xl mx-auto grid grid-cols-3">
+          <TabsList className="w-full max-w-3xl mx-auto grid grid-cols-4">
             <TabsTrigger value="delegate">
               <Send className="h-5 w-5 lg:mr-2" />
               <span className="hidden lg:inline">Delegate A Call</span>
               <span className="lg:hidden">Delegate</span>
+            </TabsTrigger>
+            <TabsTrigger value="groq-chat">
+              <MessageSquare className="h-5 w-5 lg:mr-2" />
+              <span className="hidden lg:inline">Groq Text</span>
+              <span className="lg:hidden">Groq</span>
             </TabsTrigger>
             <TabsTrigger value="billing">
               <DollarSign className="h-5 w-5 lg:mr-2" />
@@ -400,6 +406,11 @@ export default function DashboardPage() {
           {/* Delegate A Call Tab */}
           <TabsContent value="delegate" className="animate-fade-in">
             <DelegateCall customAssistantName={customAssistantName || 'your AI assistant'} />
+          </TabsContent>
+
+          {/* Groq Text Chat Tab */}
+          <TabsContent value="groq-chat" className="animate-fade-in">
+            <GroqTextChat />
           </TabsContent>
 
           {/* Billing & Usage Tab */}
