@@ -2,7 +2,11 @@
 
 /**
  * Groq Text Chat Component
- * Direct text interaction with Groq LLM with full settings visibility
+ * Direct text interaction with Groq LLM with call-like features:
+ * - Goal injection (dynamic)
+ * - Rolling summary generation
+ * - Recent turns context window
+ * - Full settings and context visibility
  */
 
 import { useState, useEffect, useRef } from 'react';
@@ -33,6 +37,13 @@ import {
   ChevronDown,
   ChevronUp,
   RotateCcw,
+  Target,
+  FileText,
+  User,
+  Bot,
+  RefreshCw,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 // Model type from API
@@ -42,10 +53,17 @@ interface GroqModel {
   description: string;
 }
 
-// Chat message type
+// Turn type for conversation history
+interface Turn {
+  speaker: 'caller' | 'assistant' | 'user';
+  text: string;
+  timestamp: string;
+}
+
+// Chat message type for display
 interface ChatMessage {
   id: string;
-  role: 'system' | 'user' | 'assistant';
+  role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
   usage?: {
@@ -55,33 +73,64 @@ interface ChatMessage {
   };
   latency_ms?: number;
   model?: string;
+  builtContext?: {
+    systemPrompt: string;
+    rollingSummaryIncluded: boolean;
+    turnsIncluded: number;
+    totalMessagesInRequest: number;
+  };
 }
 
-// Default system prompt
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant. Be concise and accurate in your responses.`;
+// Context config from API
+interface ContextConfig {
+  maxTurnsInWindow: number;
+  summaryUpdateIntervalTurns: number;
+  maxSummaryTokensHint: number;
+}
+
+// Default system prompt placeholder
+const DEFAULT_SYSTEM_PROMPT_PLACEHOLDER = 'Loading default system prompt...';
 
 export function GroqTextChat() {
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Call-like context state
+  const [goal, setGoal] = useState('');
+  const [additionalContext, setAdditionalContext] = useState('');
+  const [assistantName, setAssistantName] = useState('Ferguson');
+  const [userName, setUserName] = useState('Aaron');
+  const [rollingSummary, setRollingSummary] = useState('');
+  const [lastSummaryTurnIndex, setLastSummaryTurnIndex] = useState(-1);
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+
   // Settings state
   const [showSettings, setShowSettings] = useState(true);
+  const [showContextPanel, setShowContextPanel] = useState(true);
   const [models, setModels] = useState<GroqModel[]>([]);
   const [selectedModel, setSelectedModel] = useState('llama-3.1-8b-instant');
-  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
+  const [customSystemPrompt, setCustomSystemPrompt] = useState('');
+  const [defaultSystemPrompt, setDefaultSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT_PLACEHOLDER);
+  const [useCustomPrompt, setUseCustomPrompt] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [topP, setTopP] = useState(1);
+  const [contextConfig, setContextConfig] = useState<ContextConfig>({
+    maxTurnsInWindow: 12,
+    summaryUpdateIntervalTurns: 6,
+    maxSummaryTokensHint: 300,
+  });
 
   // UI state
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [expandedSystemPrompt, setExpandedSystemPrompt] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load available models on mount
+  // Load available models and defaults on mount
   useEffect(() => {
     loadModels();
   }, []);
@@ -90,6 +139,14 @@ export function GroqTextChat() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Check if we should generate a summary
+  useEffect(() => {
+    const newTurnsSinceLastSummary = turns.length - (lastSummaryTurnIndex + 1);
+    if (newTurnsSinceLastSummary >= contextConfig.summaryUpdateIntervalTurns && !generatingSummary) {
+      generateSummary();
+    }
+  }, [turns, lastSummaryTurnIndex, contextConfig.summaryUpdateIntervalTurns]);
 
   const loadModels = async () => {
     try {
@@ -105,55 +162,93 @@ export function GroqTextChat() {
           setMaxTokens(data.defaultSettings.max_tokens);
           setTopP(data.defaultSettings.top_p);
         }
+        if (data.defaultSystemPrompt) {
+          setDefaultSystemPrompt(data.defaultSystemPrompt);
+        }
+        if (data.contextConfig) {
+          setContextConfig(data.contextConfig);
+        }
       }
     } catch (err) {
       console.error('Failed to load models:', err);
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim() || loading) return;
+  const generateSummary = async () => {
+    if (turns.length === 0 || generatingSummary) return;
 
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: inputMessage.trim(),
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInputMessage('');
-    setLoading(true);
-    setError(null);
-
+    setGeneratingSummary(true);
     try {
-      // Build messages array for API
-      const apiMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
-
-      // Add system prompt
-      if (systemPrompt.trim()) {
-        apiMessages.push({ role: 'system', content: systemPrompt.trim() });
-      }
-
-      // Add conversation history
-      messages.forEach((msg) => {
-        if (msg.role !== 'system') {
-          apiMessages.push({ role: msg.role, content: msg.content });
-        }
-      });
-
-      // Add current user message
-      apiMessages.push({ role: 'user', content: userMessage.content });
+      const turnsForSummary = turns.slice(lastSummaryTurnIndex + 1);
 
       const res = await fetch('/api/groq-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: apiMessages,
+          requestType: 'generate_summary',
+          turns: turnsForSummary,
+          rollingSummary: rollingSummary || undefined,
+          model: selectedModel,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.summary) {
+        setRollingSummary(data.summary);
+        setLastSummaryTurnIndex(turns.length - 1);
+      }
+    } catch (err) {
+      console.error('Failed to generate summary:', err);
+    } finally {
+      setGeneratingSummary(false);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || loading) return;
+
+    const userMessageText = inputMessage.trim();
+    const timestamp = new Date();
+
+    // Add to display messages
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: userMessageText,
+      timestamp,
+    };
+    setMessages((prev) => [...prev, userMessage]);
+
+    // Add to turns
+    const userTurn: Turn = {
+      speaker: 'user',
+      text: userMessageText,
+      timestamp: timestamp.toISOString(),
+    };
+    setTurns((prev) => [...prev, userTurn]);
+
+    setInputMessage('');
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/groq-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userMessage: userMessageText,
+          goal: goal || undefined,
+          additionalContext: additionalContext || undefined,
+          assistantName: assistantName || undefined,
+          userName: userName || undefined,
+          turns: turns.slice(-contextConfig.maxTurnsInWindow),
+          rollingSummary: rollingSummary || undefined,
           model: selectedModel,
           temperature,
           max_tokens: maxTokens,
           top_p: topP,
+          customSystemPrompt: useCustomPrompt ? customSystemPrompt : undefined,
         }),
       });
 
@@ -163,17 +258,28 @@ export function GroqTextChat() {
         throw new Error(data.error || 'Failed to get response');
       }
 
+      const assistantTimestamp = new Date();
+
+      // Add to display messages
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
         content: data.response,
-        timestamp: new Date(),
+        timestamp: assistantTimestamp,
         usage: data.usage,
         latency_ms: data.latency_ms,
         model: data.model,
+        builtContext: data.builtContext,
       };
-
       setMessages((prev) => [...prev, assistantMessage]);
+
+      // Add to turns
+      const assistantTurn: Turn = {
+        speaker: 'assistant',
+        text: data.response,
+        timestamp: assistantTimestamp.toISOString(),
+      };
+      setTurns((prev) => [...prev, assistantTurn]);
     } catch (err: any) {
       console.error('Chat error:', err);
       setError(err.message || 'Failed to send message');
@@ -191,6 +297,9 @@ export function GroqTextChat() {
 
   const handleClearChat = () => {
     setMessages([]);
+    setTurns([]);
+    setRollingSummary('');
+    setLastSummaryTurnIndex(-1);
     setError(null);
   };
 
@@ -201,7 +310,12 @@ export function GroqTextChat() {
   };
 
   const handleResetSettings = () => {
-    setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
+    setGoal('');
+    setAdditionalContext('');
+    setAssistantName('Ferguson');
+    setUserName('Aaron');
+    setUseCustomPrompt(false);
+    setCustomSystemPrompt('');
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
@@ -215,22 +329,52 @@ export function GroqTextChat() {
     return sum + (msg.usage?.total_tokens || 0);
   }, 0);
 
+  // Get the current built system prompt for preview
+  const getBuiltSystemPromptPreview = () => {
+    let prompt = useCustomPrompt ? customSystemPrompt : defaultSystemPrompt;
+
+    // Replace names
+    const finalAssistantName = assistantName || 'Ferguson';
+    const finalUserName = userName || 'Aaron';
+    prompt = prompt.replace(/Ferguson/g, finalAssistantName);
+    prompt = prompt.replace(/ferguson/g, finalAssistantName.toLowerCase());
+    prompt = prompt.replace(/Aaron/g, finalUserName);
+
+    // Add goal
+    if (goal) {
+      prompt += `\n\nCALL GOAL (YOUR ONLY MISSION):\n"${goal}"\n\nEXECUTION RULES FOR THIS CALL:\n- Ask ONLY questions necessary to achieve the goal above\n- Preserve the EXACT specificity of the goal\n- When you have what you need: confirm it back\n- After confirmation: end with "Thank you. Goodbye."\n- Do NOT deviate from this goal`;
+    }
+
+    // Add context
+    if (additionalContext) {
+      prompt += `\n\nADDITIONAL CONTEXT:\n${additionalContext}`;
+    }
+
+    return prompt;
+  };
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-2">
           <MessageSquare className="h-6 w-6" />
           <h2 className="text-2xl font-bold">Groq Text Chat</h2>
           <Badge variant="secondary" className="ml-2">
-            Direct LLM Access
+            Call Simulation Mode
           </Badge>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {totalTokensUsed > 0 && (
             <Badge variant="outline" className="gap-1">
               <Hash className="h-3 w-3" />
               {totalTokensUsed.toLocaleString()} tokens
+            </Badge>
+          )}
+          {rollingSummary && (
+            <Badge variant="success" className="gap-1">
+              <FileText className="h-3 w-3" />
+              Summary Active
             </Badge>
           )}
           <Button
@@ -240,22 +384,25 @@ export function GroqTextChat() {
           >
             <Settings2 className="h-4 w-4 mr-2" />
             {showSettings ? 'Hide' : 'Show'} Settings
-            {showSettings ? (
-              <ChevronUp className="h-4 w-4 ml-1" />
-            ) : (
-              <ChevronDown className="h-4 w-4 ml-1" />
-            )}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowContextPanel(!showContextPanel)}
+          >
+            {showContextPanel ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+            {showContextPanel ? 'Hide' : 'Show'} Context
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
         {/* Settings Panel */}
         {showSettings && (
-          <Card className="lg:col-span-1">
+          <Card className="xl:col-span-3">
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">LLM Settings</CardTitle>
+                <CardTitle className="text-lg">Call Settings</CardTitle>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -265,53 +412,102 @@ export function GroqTextChat() {
                   <RotateCcw className="h-4 w-4" />
                 </Button>
               </div>
-              <CardDescription>Configure the Groq LLM parameters</CardDescription>
+              <CardDescription>Configure the simulated call</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
+            <CardContent className="space-y-5 max-h-[calc(100vh-300px)] overflow-y-auto">
+              {/* Goal */}
+              <div className="space-y-2">
+                <Label htmlFor="goal" className="flex items-center gap-2">
+                  <Target className="h-4 w-4" />
+                  Call Goal
+                </Label>
+                <Textarea
+                  id="goal"
+                  value={goal}
+                  onChange={(e) => setGoal(e.target.value)}
+                  placeholder="e.g., Get store hours for next Monday"
+                  className="min-h-[80px] resize-none text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  The specific objective for this conversation
+                </p>
+              </div>
+
+              {/* Additional Context */}
+              <div className="space-y-2">
+                <Label htmlFor="context" className="flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Additional Context
+                </Label>
+                <Textarea
+                  id="context"
+                  value={additionalContext}
+                  onChange={(e) => setAdditionalContext(e.target.value)}
+                  placeholder="e.g., The store is located in downtown Seattle"
+                  className="min-h-[60px] resize-none text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Background info for the assistant
+                </p>
+              </div>
+
+              {/* Names */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="assistantName" className="flex items-center gap-1 text-xs">
+                    <Bot className="h-3 w-3" />
+                    Assistant
+                  </Label>
+                  <Input
+                    id="assistantName"
+                    value={assistantName}
+                    onChange={(e) => setAssistantName(e.target.value)}
+                    placeholder="Ferguson"
+                    className="text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="userName" className="flex items-center gap-1 text-xs">
+                    <User className="h-3 w-3" />
+                    User
+                  </Label>
+                  <Input
+                    id="userName"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    placeholder="Aaron"
+                    className="text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="border-t border-border/50 pt-4">
+                <p className="text-xs font-medium text-muted-foreground mb-3">LLM Parameters</p>
+              </div>
+
               {/* Model Selection */}
               <div className="space-y-2">
                 <Label htmlFor="model">Model</Label>
                 <Select value={selectedModel} onValueChange={setSelectedModel}>
-                  <SelectTrigger>
+                  <SelectTrigger className="text-sm">
                     <SelectValue placeholder="Select a model" />
                   </SelectTrigger>
                   <SelectContent>
                     {models.map((model) => (
                       <SelectItem key={model.id} value={model.id}>
-                        <div className="flex flex-col">
-                          <span>{model.name}</span>
-                        </div>
+                        {model.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {models.find((m) => m.id === selectedModel)?.description && (
-                  <p className="text-xs text-muted-foreground">
-                    {models.find((m) => m.id === selectedModel)?.description}
-                  </p>
-                )}
-              </div>
-
-              {/* System Prompt */}
-              <div className="space-y-2">
-                <Label htmlFor="systemPrompt">System Prompt</Label>
-                <Textarea
-                  id="systemPrompt"
-                  value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                  placeholder="Enter system prompt..."
-                  className="min-h-[120px] resize-none text-sm"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Instructions that define the AI's behavior and personality
-                </p>
               </div>
 
               {/* Temperature */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="temperature">Temperature</Label>
-                  <span className="text-sm text-muted-foreground">{temperature}</span>
+                  <Label htmlFor="temperature" className="text-sm">Temperature</Label>
+                  <span className="text-xs text-muted-foreground font-mono">{temperature}</span>
                 </div>
                 <Input
                   id="temperature"
@@ -321,17 +517,15 @@ export function GroqTextChat() {
                   step="0.1"
                   value={temperature}
                   onChange={(e) => setTemperature(parseFloat(e.target.value) || 0)}
+                  className="text-sm"
                 />
-                <p className="text-xs text-muted-foreground">
-                  0 = deterministic, 2 = very creative (default: 0.7)
-                </p>
               </div>
 
               {/* Max Tokens */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="maxTokens">Max Tokens</Label>
-                  <span className="text-sm text-muted-foreground">{maxTokens}</span>
+                  <Label htmlFor="maxTokens" className="text-sm">Max Tokens</Label>
+                  <span className="text-xs text-muted-foreground font-mono">{maxTokens}</span>
                 </div>
                 <Input
                   id="maxTokens"
@@ -341,17 +535,15 @@ export function GroqTextChat() {
                   step="64"
                   value={maxTokens}
                   onChange={(e) => setMaxTokens(parseInt(e.target.value) || 1024)}
+                  className="text-sm"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Maximum tokens in the response (1-32768)
-                </p>
               </div>
 
               {/* Top P */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="topP">Top P (Nucleus Sampling)</Label>
-                  <span className="text-sm text-muted-foreground">{topP}</span>
+                  <Label htmlFor="topP" className="text-sm">Top P</Label>
+                  <span className="text-xs text-muted-foreground font-mono">{topP}</span>
                 </div>
                 <Input
                   id="topP"
@@ -361,42 +553,50 @@ export function GroqTextChat() {
                   step="0.05"
                   value={topP}
                   onChange={(e) => setTopP(parseFloat(e.target.value) || 1)}
+                  className="text-sm"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Controls diversity via nucleus sampling (0-1)
-                </p>
               </div>
 
-              {/* Current Settings Summary */}
-              <div className="pt-4 border-t border-border/50">
-                <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Active Configuration
-                </p>
-                <div className="bg-muted/30 rounded-md p-3 text-xs font-mono space-y-1">
-                  <div>model: {selectedModel}</div>
-                  <div>temperature: {temperature}</div>
-                  <div>max_tokens: {maxTokens}</div>
-                  <div>top_p: {topP}</div>
+              {/* Custom System Prompt Toggle */}
+              <div className="border-t border-border/50 pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="text-sm">Custom System Prompt</Label>
+                  <Button
+                    variant={useCustomPrompt ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setUseCustomPrompt(!useCustomPrompt)}
+                    className="h-7 text-xs"
+                  >
+                    {useCustomPrompt ? 'On' : 'Off'}
+                  </Button>
                 </div>
+                {useCustomPrompt && (
+                  <Textarea
+                    value={customSystemPrompt}
+                    onChange={(e) => setCustomSystemPrompt(e.target.value)}
+                    placeholder="Enter your custom system prompt..."
+                    className="min-h-[100px] resize-none text-xs font-mono"
+                  />
+                )}
               </div>
             </CardContent>
           </Card>
         )}
 
         {/* Chat Panel */}
-        <Card className={showSettings ? 'lg:col-span-2' : 'lg:col-span-3'}>
+        <Card className={`${showSettings && showContextPanel ? 'xl:col-span-5' : showSettings || showContextPanel ? 'xl:col-span-8' : 'xl:col-span-12'}`}>
           <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="text-lg">Conversation</CardTitle>
                 <CardDescription>
-                  Chat directly with the Groq LLM - {messages.filter((m) => m.role !== 'system').length} messages
+                  {turns.length} turns • {messages.filter((m) => m.role === 'assistant').length} responses
                 </CardDescription>
               </div>
               {messages.length > 0 && (
                 <Button variant="outline" size="sm" onClick={handleClearChat}>
                   <Trash2 className="h-4 w-4 mr-2" />
-                  Clear Chat
+                  Clear
                 </Button>
               )}
             </div>
@@ -408,9 +608,7 @@ export function GroqTextChat() {
                 <div className="flex flex-col items-center justify-center h-[350px] text-center text-muted-foreground">
                   <MessageSquare className="h-12 w-12 mb-4 opacity-20" />
                   <p className="text-lg font-medium">No messages yet</p>
-                  <p className="text-sm">
-                    Start a conversation by typing a message below
-                  </p>
+                  <p className="text-sm">Set a goal and start the conversation</p>
                 </div>
               ) : (
                 messages.map((msg) => (
@@ -426,7 +624,7 @@ export function GroqTextChat() {
                         variant={msg.role === 'user' ? 'default' : 'secondary'}
                         className="text-xs"
                       >
-                        {msg.role === 'user' ? 'You' : 'Assistant'}
+                        {msg.role === 'user' ? userName || 'You' : assistantName || 'Assistant'}
                       </Badge>
                       <span>
                         {msg.timestamp.toLocaleTimeString([], {
@@ -434,14 +632,11 @@ export function GroqTextChat() {
                           minute: '2-digit',
                         })}
                       </span>
-                      {msg.model && (
-                        <span className="text-xs opacity-60">{msg.model}</span>
-                      )}
                     </div>
 
                     {/* Message Content */}
                     <div
-                      className={`relative group max-w-[85%] rounded-lg px-4 py-3 ${
+                      className={`relative group max-w-[90%] rounded-lg px-4 py-3 ${
                         msg.role === 'user'
                           ? 'bg-primary text-primary-foreground'
                           : 'bg-card border border-border/50'
@@ -470,7 +665,7 @@ export function GroqTextChat() {
 
                     {/* Message Stats (for assistant messages) */}
                     {msg.role === 'assistant' && (msg.usage || msg.latency_ms) && (
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                         {msg.latency_ms && (
                           <span className="flex items-center gap-1">
                             <Clock className="h-3 w-3" />
@@ -478,18 +673,15 @@ export function GroqTextChat() {
                           </span>
                         )}
                         {msg.usage && (
-                          <>
-                            <span className="flex items-center gap-1">
-                              <Zap className="h-3 w-3" />
-                              {msg.usage.prompt_tokens} prompt
-                            </span>
-                            <span>
-                              {msg.usage.completion_tokens} completion
-                            </span>
-                            <span className="font-medium">
-                              ({msg.usage.total_tokens} total)
-                            </span>
-                          </>
+                          <span className="flex items-center gap-1">
+                            <Zap className="h-3 w-3" />
+                            {msg.usage.total_tokens} tokens
+                          </span>
+                        )}
+                        {msg.builtContext && (
+                          <span className="text-xs opacity-60">
+                            ({msg.builtContext.totalMessagesInRequest} msgs sent)
+                          </span>
                         )}
                       </div>
                     )}
@@ -510,11 +702,10 @@ export function GroqTextChat() {
             {/* Input Area */}
             <div className="flex gap-3">
               <Textarea
-                ref={textareaRef}
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+                placeholder={goal ? `Respond as the caller about: ${goal.slice(0, 50)}...` : 'Type your message...'}
                 className="flex-1 min-h-[60px] max-h-[150px] resize-none"
                 disabled={loading}
               />
@@ -524,26 +715,131 @@ export function GroqTextChat() {
                 className="self-end h-[60px] px-6"
               >
                 {loading ? (
-                  <>
-                    <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                    Sending...
-                  </>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                 ) : (
-                  <>
-                    <Send className="h-4 w-4 mr-2" />
-                    Send
-                  </>
+                  <Send className="h-4 w-4" />
                 )}
               </Button>
             </div>
-
-            {/* Input Hints */}
-            <p className="text-xs text-muted-foreground text-center">
-              Press <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Enter</kbd> to send,{' '}
-              <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Shift + Enter</kbd> for new line
-            </p>
           </CardContent>
         </Card>
+
+        {/* Context Visibility Panel */}
+        {showContextPanel && (
+          <Card className="xl:col-span-4">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg">Context Visibility</CardTitle>
+              <CardDescription>What's being sent to the LLM</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 max-h-[calc(100vh-300px)] overflow-y-auto">
+              {/* Rolling Summary */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-2 text-sm font-medium">
+                    <FileText className="h-4 w-4" />
+                    Rolling Summary
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    {generatingSummary && (
+                      <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground" />
+                    )}
+                    <Badge variant="outline" className="text-xs">
+                      {turns.length - (lastSummaryTurnIndex + 1)}/{contextConfig.summaryUpdateIntervalTurns} turns until update
+                    </Badge>
+                  </div>
+                </div>
+                <div className="bg-muted/30 rounded-md p-3 text-xs font-mono min-h-[60px] max-h-[120px] overflow-y-auto">
+                  {rollingSummary || <span className="text-muted-foreground italic">No summary yet (generated after {contextConfig.summaryUpdateIntervalTurns} turns)</span>}
+                </div>
+                {rollingSummary && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={generateSummary}
+                    disabled={generatingSummary}
+                    className="w-full text-xs"
+                  >
+                    <RefreshCw className={`h-3 w-3 mr-2 ${generatingSummary ? 'animate-spin' : ''}`} />
+                    Regenerate Summary
+                  </Button>
+                )}
+              </div>
+
+              {/* Recent Turns */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2 text-sm font-medium">
+                  <MessageSquare className="h-4 w-4" />
+                  Recent Turns ({Math.min(turns.length, contextConfig.maxTurnsInWindow)}/{contextConfig.maxTurnsInWindow} max)
+                </Label>
+                <div className="bg-muted/30 rounded-md p-3 text-xs font-mono max-h-[150px] overflow-y-auto space-y-1">
+                  {turns.length === 0 ? (
+                    <span className="text-muted-foreground italic">No turns yet</span>
+                  ) : (
+                    turns.slice(-contextConfig.maxTurnsInWindow).map((turn, i) => (
+                      <div key={i} className={`${turn.speaker === 'assistant' ? 'text-blue-600 dark:text-blue-400' : ''}`}>
+                        <span className="font-semibold">{turn.speaker.toUpperCase()}:</span> {turn.text.slice(0, 100)}{turn.text.length > 100 ? '...' : ''}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Built System Prompt Preview */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-2 text-sm font-medium">
+                    <Settings2 className="h-4 w-4" />
+                    System Prompt Preview
+                  </Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setExpandedSystemPrompt(!expandedSystemPrompt)}
+                    className="h-6 text-xs"
+                  >
+                    {expandedSystemPrompt ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </Button>
+                </div>
+                <div className={`bg-muted/30 rounded-md p-3 text-xs font-mono overflow-y-auto ${expandedSystemPrompt ? 'max-h-[400px]' : 'max-h-[100px]'}`}>
+                  <pre className="whitespace-pre-wrap">
+                    {getBuiltSystemPromptPreview()}
+                  </pre>
+                </div>
+              </div>
+
+              {/* Current Config Summary */}
+              <div className="border-t border-border/50 pt-4">
+                <Label className="text-xs font-medium text-muted-foreground mb-2 block">Request Summary</Label>
+                <div className="bg-muted/30 rounded-md p-3 text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Model:</span>
+                    <span className="font-mono">{selectedModel}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Temperature:</span>
+                    <span className="font-mono">{temperature}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Max Tokens:</span>
+                    <span className="font-mono">{maxTokens}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Goal Set:</span>
+                    <span className="font-mono">{goal ? 'Yes' : 'No'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Summary Active:</span>
+                    <span className="font-mono">{rollingSummary ? 'Yes' : 'No'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Turns in Context:</span>
+                    <span className="font-mono">{Math.min(turns.length, contextConfig.maxTurnsInWindow)}</span>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
