@@ -1095,10 +1095,54 @@ export function GroqTextChat() {
                 </div>
               </div>
 
-              {/* Full Messages Array */}
+              {/* Full Messages Array - Parsed View */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Complete Messages Array (as sent to API)</Label>
-                <div className="bg-muted/30 rounded-md p-4 text-xs font-mono max-h-[300px] overflow-y-auto">
+                <div className="bg-muted/30 rounded-md p-4 max-h-[400px] overflow-y-auto space-y-4">
+                  {selectedRequestInfo.fullMessages.map((msg, i) => (
+                    <div key={i} className="border-b border-border/30 pb-3 last:border-0 last:pb-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Badge
+                          variant={msg.role === 'system' ? 'outline' : msg.role === 'assistant' ? 'secondary' : 'default'}
+                          className="text-xs font-mono"
+                        >
+                          [{i}] {msg.role.toUpperCase()}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {msg.content.length.toLocaleString()} chars
+                        </span>
+                      </div>
+                      <div className={`text-xs rounded-md p-3 ${
+                        msg.role === 'system'
+                          ? 'bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800'
+                          : msg.role === 'assistant'
+                            ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800'
+                            : 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
+                      }`}>
+                        <pre className="whitespace-pre-wrap font-mono">{msg.content}</pre>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Raw JSON */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium text-muted-foreground">Raw JSON</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(selectedRequestInfo.fullMessages, null, 2));
+                    }}
+                    className="h-6 text-xs"
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copy
+                  </Button>
+                </div>
+                <div className="bg-muted/30 rounded-md p-4 text-xs font-mono max-h-[200px] overflow-y-auto">
                   <pre className="whitespace-pre-wrap">{JSON.stringify(selectedRequestInfo.fullMessages, null, 2)}</pre>
                 </div>
               </div>
