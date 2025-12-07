@@ -90,6 +90,22 @@ interface ChatMessage {
   content: string;
 }
 
+// Default goal injection template
+const DEFAULT_GOAL_TEMPLATE = `CALL GOAL (YOUR ONLY MISSION):
+"{goal}"
+
+EXECUTION RULES FOR THIS CALL:
+- Ask ONLY questions necessary to achieve the goal above
+- Preserve the EXACT specificity of the goal (dates, times, details)
+- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
+- Do NOT ask for names, store info, account details, or anything else unless directly needed
+- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
+- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
+- After confirmation: end with "Thank you. Goodbye."
+- Do NOT deviate from this goal
+
+Remember: You are an AI assistant. Strict scope control is mandatory.`;
+
 // Request body interface
 interface GroqChatRequest {
   // New message
@@ -97,6 +113,7 @@ interface GroqChatRequest {
 
   // Call-like context
   goal?: string;
+  goalTemplate?: string;
   additionalContext?: string;
   assistantName?: string;
   userName?: string;
@@ -149,6 +166,7 @@ interface GroqResponse {
 function buildSystemPrompt(
   basePrompt: string,
   goal?: string,
+  goalTemplate?: string,
   assistantName?: string,
   userName?: string,
   additionalContext?: string
@@ -164,32 +182,16 @@ function buildSystemPrompt(
   const finalUserName = userName || 'Aaron';
   prompt = prompt.replace(/Aaron/g, finalUserName);
 
-  // Add goal if provided
+  // Add goal if provided, using custom template or default
   if (goal) {
-    prompt += `
-
-CALL GOAL (YOUR ONLY MISSION):
-"${goal}"
-
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Goodbye."
-- Do NOT deviate from this goal
-
-Remember: You are an AI assistant. Strict scope control is mandatory.`;
+    const template = goalTemplate || DEFAULT_GOAL_TEMPLATE;
+    const processedTemplate = template.replace('{goal}', goal);
+    prompt += '\n\n' + processedTemplate;
   }
 
   // Add additional context if provided
   if (additionalContext) {
-    prompt += `
-
-ADDITIONAL CONTEXT:
-${additionalContext}`;
+    prompt += `\n\nADDITIONAL CONTEXT:\n${additionalContext}`;
   }
 
   return prompt;
@@ -278,6 +280,7 @@ export async function POST(req: NextRequest) {
     const {
       userMessage,
       goal,
+      goalTemplate,
       additionalContext,
       assistantName,
       userName,
@@ -359,6 +362,7 @@ Be concise and focus on what's most important to continue this conversation effe
     const systemPrompt = buildSystemPrompt(
       basePrompt,
       goal,
+      goalTemplate,
       assistantName,
       userName,
       additionalContext
@@ -442,6 +446,7 @@ export async function GET() {
       top_p: 1,
     },
     defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+    defaultGoalTemplate: DEFAULT_GOAL_TEMPLATE,
     contextConfig: {
       maxTurnsInWindow: 12,
       summaryUpdateIntervalTurns: 6,
