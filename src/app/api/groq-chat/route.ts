@@ -1,11 +1,18 @@
+/**
+ * API route for direct Groq LLM chat
+ * Uses NextAuth for auth + native fetch for Groq API
+ */
+
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
-import OpenAI from 'openai';
+import { authOptions } from '@/../pages/api/auth/[...nextauth]';
 
 // Groq API configuration
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEFAULT_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // Available Groq models for selection
 export const GROQ_MODELS = [
@@ -31,7 +38,31 @@ interface GroqChatRequest {
   temperature?: number;
   max_tokens?: number;
   top_p?: number;
-  stream?: boolean;
+}
+
+// Groq API response types
+interface GroqChoice {
+  index: number;
+  message: {
+    role: string;
+    content: string;
+  };
+  finish_reason: string;
+}
+
+interface GroqUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+interface GroqResponse {
+  id: string;
+  object: string;
+  created: number;
+  model: string;
+  choices: GroqChoice[];
+  usage: GroqUsage;
 }
 
 export async function POST(req: NextRequest) {
@@ -68,31 +99,60 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Create Groq client (using OpenAI-compatible interface)
-    const groq = new OpenAI({
-      apiKey: GROQ_API_KEY,
-      baseURL: 'https://api.groq.com/openai/v1',
+    // Call Groq API using native fetch
+    const startTime = Date.now();
+    const groqResponse = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        top_p,
+      }),
     });
 
-    // Call Groq API
-    const startTime = Date.now();
-    const response = await groq.chat.completions.create({
-      model,
-      messages,
-      temperature,
-      max_tokens,
-      top_p,
-    });
     const endTime = Date.now();
 
+    // Handle non-OK responses
+    if (!groqResponse.ok) {
+      const errorData = await groqResponse.json().catch(() => ({}));
+
+      if (groqResponse.status === 429) {
+        return NextResponse.json(
+          { error: 'Rate limit exceeded. Please try again in a moment.' },
+          { status: 429 }
+        );
+      }
+
+      if (groqResponse.status === 400) {
+        return NextResponse.json(
+          { error: errorData.error?.message || 'Invalid request to Groq API' },
+          { status: 400 }
+        );
+      }
+
+      return NextResponse.json(
+        { error: errorData.error?.message || `Groq API error: ${groqResponse.status}` },
+        { status: groqResponse.status }
+      );
+    }
+
+    // Parse successful response
+    const data: GroqResponse = await groqResponse.json();
+
     // Extract response data
-    const completion = response.choices[0]?.message?.content || '';
-    const usage = response.usage;
+    const completion = data.choices[0]?.message?.content || '';
+    const usage = data.usage;
 
     return NextResponse.json({
       success: true,
       response: completion,
-      model: response.model,
+      model: data.model,
       usage: {
         prompt_tokens: usage?.prompt_tokens || 0,
         completion_tokens: usage?.completion_tokens || 0,
@@ -102,21 +162,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error('Groq chat error:', error);
-
-    // Handle specific error types
-    if (error?.status === 429) {
-      return NextResponse.json(
-        { error: 'Rate limit exceeded. Please try again in a moment.' },
-        { status: 429 }
-      );
-    }
-
-    if (error?.status === 400) {
-      return NextResponse.json(
-        { error: error.message || 'Invalid request to Groq API' },
-        { status: 400 }
-      );
-    }
 
     return NextResponse.json(
       { error: error.message || 'Failed to generate response' },
