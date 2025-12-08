@@ -21,7 +21,9 @@ export async function GET(
   try {
     // Check authentication
     const session = await getServerSession(authOptions);
+    console.log('[LLM-Logs API] Session check:', session ? 'found' : 'null', session?.user ? 'has user' : 'no user');
     if (!session?.user) {
+      console.log('[LLM-Logs API] Returning 401 - no session or user');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
