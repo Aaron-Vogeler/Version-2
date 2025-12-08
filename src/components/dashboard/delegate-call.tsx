@@ -248,7 +248,6 @@ export function DelegateCall({
 
   const llmLogRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
-  const llmActivityRef = useRef<any[]>([]);
 
   // Auto-scroll LLM logs
   useEffect(() => {
@@ -314,33 +313,25 @@ export function DelegateCall({
             });
           }
 
-          // Handle LLM logs from Supabase
+          // Handle LLM logs from Supabase - directly set from database
           if (newCall.llm_logs && Array.isArray(newCall.llm_logs)) {
-            const newLogs = newCall.llm_logs;
-
-            // Process each log entry and display it
-            newLogs.forEach((log: any) => {
-              // Only log entries we haven't seen before
-              const logKey = `${log.timestamp}-${log.type}`;
-              if (!llmActivityRef.current.includes(logKey)) {
-                llmActivityRef.current.push(logKey);
-
-                logLLMInteraction({
-                  type: log.type === 'request' ? 'request' :
-                         log.type === 'response' ? 'response' :
-                         log.type === 'summary_request' ? 'system' :
-                         log.type === 'summary_response' ? 'system' :
-                         'system',
-                  model: log.type === 'summary_request' || log.type === 'summary_response' ? 'rolling-summary' : undefined,
-                  response: log.type === 'response' ? log.data?.response :
-                           log.type === 'summary_response' ? log.data?.summary :
-                           log.type === 'error' ? `Error: ${log.data?.error}` :
-                           log.type === 'summary_error' ? `Summary Error: ${log.data?.error}` :
-                           JSON.stringify(log.data),
-                  tokens: log.data?.tokens,
-                });
-              }
-            });
+            const displayLogs = newCall.llm_logs.map((log: any, index: number) => ({
+              id: `${activeCall?.callControlId}-${index}`,
+              timestamp: log.timestamp,
+              type: log.type === 'request' ? 'request' :
+                     log.type === 'response' ? 'response' :
+                     log.type === 'summary_request' ? 'system' :
+                     log.type === 'summary_response' ? 'system' :
+                     'system' as const,
+              model: log.type === 'summary_request' || log.type === 'summary_response' ? 'rolling-summary' : undefined,
+              response: log.type === 'response' ? log.data?.response :
+                       log.type === 'summary_response' ? log.data?.summary :
+                       log.type === 'error' ? `Error: ${log.data?.error}` :
+                       log.type === 'summary_error' ? `Summary Error: ${log.data?.error}` :
+                       JSON.stringify(log.data),
+              tokens: log.data?.tokens,
+            }));
+            setLlmLogs(displayLogs);
           }
 
           // Update call status
