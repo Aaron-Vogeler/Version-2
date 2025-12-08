@@ -12,6 +12,7 @@ interface OutboundCallRequest {
   assistantName?: string;
   userName?: string;
   systemPrompt?: string;
+  rollingSummaryPrompt?: string;
 }
 
 interface TelnyxCallResponse {
@@ -29,7 +30,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName, systemPrompt } = req.body as OutboundCallRequest;
+    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -47,13 +48,14 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName + systemPrompt) in base64
+    // Encode client state (goal + userId + assistantName + userName + systemPrompt + rollingSummaryPrompt) in base64
     const clientStatePayload = JSON.stringify({
       goal,
       userId,
       assistantName: assistantName || null,
       userName: userName || null,
       systemPrompt: systemPrompt,
+      rollingSummaryPrompt: rollingSummaryPrompt || null,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

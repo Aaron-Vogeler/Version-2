@@ -1240,6 +1240,7 @@ wss.on("connection", async (ws) => {
           managedContext.assistantName = decoded.assistantName || null;
           managedContext.userName = decoded.userName || null;
           managedContext.systemPrompt = decoded.systemPrompt || null;
+          managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";

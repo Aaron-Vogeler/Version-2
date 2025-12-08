@@ -423,6 +423,7 @@ export async function GET() {
     goalFormat: 'CALL GOAL (YOUR ONLY MISSION): "{goal}"',
     defaultSummaryTemplate: DEFAULT_SUMMARY_TEMPLATE,
     defaultSummarySystemMessage: DEFAULT_SUMMARY_SYSTEM_MESSAGE,
+    rollingSummaryPrompt: DEFAULT_SUMMARY_TEMPLATE, // Alias for frontend consistency
     contextConfig: {
       maxTurnsInWindow: 12,
       summaryUpdateIntervalTurns: 6,

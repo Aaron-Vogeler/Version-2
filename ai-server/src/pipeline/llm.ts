@@ -85,9 +85,10 @@ export async function generateRollingSummary(
   const turnsText = contextMgr.formatTurnsForSummary(newTurns);
   const existingSummary = context.rollingSummary || "(empty)";
 
-  // Use configurable rolling summary prompt from config
+  // Use rolling summary prompt from context (if provided), otherwise fall back to config
   // Replace placeholders: {EXISTING_SUMMARY}, {TURNS_TEXT}, {MAX_TOKENS}
-  const summaryPrompt = config.llm.rollingSummaryPrompt
+  const summaryPromptTemplate = context.rollingSummaryPrompt || config.llm.rollingSummaryPrompt;
+  const summaryPrompt = summaryPromptTemplate
     .replace(/\{EXISTING_SUMMARY\}/g, existingSummary)
     .replace(/\{TURNS_TEXT\}/g, turnsText)
     .replace(/\{MAX_TOKENS\}/g, String(config_params.maxSummaryTokensHint));
