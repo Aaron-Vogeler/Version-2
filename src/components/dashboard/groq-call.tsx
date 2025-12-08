@@ -315,11 +315,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           setMaxTokens(data.defaultSettings.max_tokens);
           setTopP(data.defaultSettings.top_p);
         }
-        if (data.defaultSystemPrompt) {
-          setDefaultSystemPrompt(data.defaultSystemPrompt);
-        }
+        // No default system prompt - must be provided by user
         if (data.contextConfig) {
           setContextConfig(data.contextConfig);
+        }
+        if (data.callControlDefaults) {
+          setCallControlSettings(data.callControlDefaults);
         }
       }
     } catch (err) {
