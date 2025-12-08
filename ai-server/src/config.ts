@@ -73,6 +73,9 @@ const config = {
     ttsDebounceMs: getEnvInt("TTS_DEBOUNCE_MS", 500),
     // Barge-in cooldown - milliseconds between stop commands to prevent spam
     bargeInCooldownMs: getEnvInt("BARGE_IN_COOLDOWN_MS", 300),
+    // Barge-in grace period - milliseconds after TTS starts before barge-in is enabled
+    // This prevents echo from immediately cutting off the AI
+    bargeInGracePeriodMs: getEnvInt("BARGE_IN_GRACE_PERIOD_MS", 800),
     // Caller utterance flush timeout - milliseconds to wait before flushing utterance
     callerUtteranceFlushMs: getEnvInt("CALLER_UTTERANCE_FLUSH_MS", 300),
     // Hangup delay after "Chow" - milliseconds to wait for TTS before hangup

@@ -925,7 +925,13 @@ wss.on("connection", async (ws) => {
       if (callContext.ttsState === "speaking" && callContext.callControlId) {
         // Apply cooldown to prevent spamming the stop endpoint
         const now = Date.now();
-        if (!callContext.bargeInCooldownUntil || now >= callContext.bargeInCooldownUntil) {
+
+        // Check grace period - don't trigger barge-in too soon after TTS starts (prevents echo issues)
+        const gracePeriodMs = config.callControl.bargeInGracePeriodMs;
+        const timeSinceTtsStart = callContext.speakStartedAt ? now - callContext.speakStartedAt : Infinity;
+        if (timeSinceTtsStart < gracePeriodMs) {
+          console.log(`[BARGE-IN] ⏳ Ignoring during grace period (${timeSinceTtsStart}ms < ${gracePeriodMs}ms): "${userText}"`);
+        } else if (!callContext.bargeInCooldownUntil || now >= callContext.bargeInCooldownUntil) {
           console.log(`[BARGE-IN] 🛑 Words detected while AI speaking: "${userText}" (callControlId: ${callContext.callControlId})`);
 
           // Set cooldown to prevent multiple rapid stops (uses configurable cooldown)
