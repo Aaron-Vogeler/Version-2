@@ -8,9 +8,11 @@
  * - Full settings and context visibility
  * - Expandable panels
  * - Phone number input for actual calls
+ * - Live LLM input/output logs during calls
  */
 
 import { useState, useEffect } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,6 +48,12 @@ import {
   Minimize2,
   Code,
   PhoneCall,
+  Brain,
+  PhoneOff,
+  Zap,
+  Clock,
+  MessageSquare,
+  RefreshCw,
 } from 'lucide-react';
 
 // Model type from API
@@ -60,6 +68,35 @@ interface ContextConfig {
   maxTurnsInWindow: number;
   summaryUpdateIntervalTurns: number;
   maxSummaryTokensHint: number;
+}
+
+// LLM log record type
+interface LlmLog {
+  id: string;
+  call_id: string;
+  request_type: 'chat' | 'summary';
+  model: string;
+  temperature?: number;
+  max_tokens?: number;
+  system_prompt?: string;
+  messages: Array<{ role: string; content: string }>;
+  user_input?: string;
+  assistant_response?: string;
+  rolling_summary?: string;
+  recent_turns_count?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  latency_ms?: number;
+  created_at: string;
+}
+
+// Call status type
+interface ActiveCall {
+  id: string;
+  status: 'initiated' | 'ringing' | 'answered' | 'completed' | 'failed';
+  goal?: string;
+  started_at?: string;
 }
 
 // Default goal injection template
@@ -93,6 +130,14 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
 
+  // Active call tracking for live LLM logs
+  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
+  const [llmLogs, setLlmLogs] = useState<LlmLog[]>([]);
+  const [selectedLlmLog, setSelectedLlmLog] = useState<LlmLog | null>(null);
+  const [showLlmLogModal, setShowLlmLogModal] = useState(false);
+  const [expandedLlmLogs, setExpandedLlmLogs] = useState<Set<string>>(new Set());
+  const [showLlmLogs, setShowLlmLogs] = useState(true);
+
   // Call-like context state
   const [goal, setGoal] = useState('');
   const [goalTemplate, setGoalTemplate] = useState(DEFAULT_GOAL_TEMPLATE);
@@ -123,7 +168,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [showGoalTemplateEditor, setShowGoalTemplateEditor] = useState(false);
 
   // Expanded panel states
-  const [expandedPanel, setExpandedPanel] = useState<'settings' | 'call' | 'context' | null>(null);
+  const [expandedPanel, setExpandedPanel] = useState<'settings' | 'call' | 'context' | 'logs' | null>(null);
 
   // Update names when props change
   useEffect(() => {
@@ -138,6 +183,83 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   useEffect(() => {
     loadModels();
   }, []);
+
+  // Subscribe to call status updates
+  useEffect(() => {
+    if (!activeCall?.id) return;
+
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`call-status-${activeCall.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'calls',
+          filter: `id=eq.${activeCall.id}`,
+        },
+        (payload) => {
+          const updatedCall = payload.new as any;
+          setActiveCall((prev) =>
+            prev ? { ...prev, status: updatedCall.status } : null
+          );
+          // Clear active call when completed or failed
+          if (['completed', 'failed'].includes(updatedCall.status)) {
+            // Keep the logs visible but mark as inactive
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeCall?.id]);
+
+  // Subscribe to LLM logs for active call
+  useEffect(() => {
+    if (!activeCall?.id) return;
+
+    const supabase = createClient();
+
+    // Initial fetch of existing logs
+    const fetchLogs = async () => {
+      try {
+        const res = await fetch(`/api/calls/${activeCall.id}/llm-logs`);
+        if (res.ok) {
+          const data = await res.json();
+          setLlmLogs(data.logs || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch LLM logs:', err);
+      }
+    };
+    fetchLogs();
+
+    // Subscribe to new logs
+    const channel = supabase
+      .channel(`llm-logs-${activeCall.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'call_llm_logs',
+          filter: `call_id=eq.${activeCall.id}`,
+        },
+        (payload) => {
+          const newLog = payload.new as LlmLog;
+          setLlmLogs((prev) => [...prev, newLog]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeCall?.id]);
 
   const loadModels = async () => {
     try {
@@ -196,6 +318,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     setLoading(true);
     setStatus('idle');
     setMessage('');
+    setLlmLogs([]); // Clear previous logs
 
     try {
       const response = await fetch('/api/delegate', {
@@ -220,7 +343,18 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       }
 
       setStatus('success');
-      setMessage('Call delegated successfully! Your AI assistant will make the call shortly.');
+      setMessage('Call delegated successfully! LLM logs will appear below as the call progresses.');
+
+      // Extract call ID from response to track LLM logs
+      const callControlId = data.flyResponse?.call_control_id;
+      if (callControlId) {
+        setActiveCall({
+          id: callControlId,
+          status: 'initiated',
+          goal: goal,
+          started_at: new Date().toISOString(),
+        });
+      }
 
       // Clear phone number only, keep settings for potential re-use
       setToNumber('');
@@ -231,6 +365,11 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleClearActiveCall = () => {
+    setActiveCall(null);
+    setLlmLogs([]);
   };
 
   const handleCopyPrompt = () => {
@@ -255,9 +394,38 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     }
   };
 
+  // Helper functions for LLM logs
+  const toggleLlmLogExpanded = (logId: string) => {
+    setExpandedLlmLogs((prev) => {
+      const next = new Set(prev);
+      if (next.has(logId)) {
+        next.delete(logId);
+      } else {
+        next.add(logId);
+      }
+      return next;
+    });
+  };
+
+  const formatLogTime = (timestamp: string) => {
+    return new Date(timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  };
+
+  // Calculate LLM log totals
+  const totalLlmTokens = llmLogs.reduce((sum, log) => sum + (log.total_tokens || 0), 0);
+  const avgLlmLatency = llmLogs.length > 0
+    ? Math.round(llmLogs.reduce((sum, log) => sum + (log.latency_ms || 0), 0) / llmLogs.length)
+    : 0;
+
+  const isCallActive = activeCall && ['initiated', 'ringing', 'answered'].includes(activeCall.status);
+
   // Render expandable panel wrapper
   const renderPanel = (
-    panelKey: 'settings' | 'call' | 'context',
+    panelKey: 'settings' | 'call' | 'context' | 'logs',
     title: string,
     description: string,
     content: React.ReactNode,
@@ -720,6 +888,231 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     </div>
   );
 
+  // LLM Logs panel content
+  const logsContent = (
+    <div className="space-y-4">
+      {/* Active Call Header */}
+      {activeCall && (
+        <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+          <div className="flex items-center gap-3">
+            {isCallActive ? (
+              <Badge variant="success" className="animate-pulse">
+                <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
+                {activeCall.status.charAt(0).toUpperCase() + activeCall.status.slice(1)}
+              </Badge>
+            ) : (
+              <Badge variant="secondary">
+                <PhoneOff className="h-3 w-3 mr-1" />
+                {activeCall.status.charAt(0).toUpperCase() + activeCall.status.slice(1)}
+              </Badge>
+            )}
+            <span className="text-sm text-muted-foreground truncate max-w-[200px]">
+              {activeCall.goal}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {llmLogs.length > 0 && (
+              <>
+                <Badge variant="outline" className="gap-1">
+                  <Zap className="h-3 w-3" />
+                  {totalLlmTokens.toLocaleString()}
+                </Badge>
+                <Badge variant="outline" className="gap-1">
+                  <Clock className="h-3 w-3" />
+                  ~{avgLlmLatency}ms
+                </Badge>
+              </>
+            )}
+            {!isCallActive && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClearActiveCall}
+                className="h-7 text-xs"
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* LLM Logs List */}
+      {!activeCall ? (
+        <div className="text-center py-8 text-muted-foreground">
+          <Brain className="h-10 w-10 mx-auto mb-3 opacity-20" />
+          <p>No active call</p>
+          <p className="text-xs mt-1">Make a call to see live LLM logs</p>
+        </div>
+      ) : llmLogs.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground">
+          <Brain className="h-10 w-10 mx-auto mb-3 opacity-20" />
+          {isCallActive ? (
+            <>
+              <RefreshCw className="h-5 w-5 mx-auto mb-2 animate-spin" />
+              <p>Waiting for LLM interactions...</p>
+              <p className="text-xs mt-1">Logs will appear as the AI processes the call</p>
+            </>
+          ) : (
+            <>
+              <p>No LLM logs recorded</p>
+              <p className="text-xs mt-1">The call may have ended before any LLM interactions</p>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+          {llmLogs.map((log) => {
+            const isExpanded = expandedLlmLogs.has(log.id);
+            return (
+              <div
+                key={log.id}
+                className={`border rounded-lg p-3 ${
+                  log.request_type === 'summary'
+                    ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800'
+                    : 'bg-card'
+                }`}
+              >
+                {/* Log Header */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant={log.request_type === 'summary' ? 'secondary' : 'default'}
+                      className="text-xs"
+                    >
+                      {log.request_type === 'summary' ? (
+                        <>
+                          <FileText className="h-3 w-3 mr-1" />
+                          Summary
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquare className="h-3 w-3 mr-1" />
+                          Chat
+                        </>
+                      )}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {formatLogTime(log.created_at)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {log.total_tokens && (
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Zap className="h-3 w-3" />
+                        {log.total_tokens}
+                      </span>
+                    )}
+                    {log.latency_ms && (
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {log.latency_ms}ms
+                      </span>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleLlmLogExpanded(log.id)}
+                      className="h-6 w-6 p-0"
+                    >
+                      {isExpanded ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* User Input Preview */}
+                {log.user_input && (
+                  <div className="mb-2">
+                    <p className="text-xs text-muted-foreground mb-1">Input:</p>
+                    <div className="bg-muted/50 rounded p-2 text-xs font-mono max-h-16 overflow-hidden">
+                      {log.user_input.slice(0, 150)}
+                      {log.user_input.length > 150 && '...'}
+                    </div>
+                  </div>
+                )}
+
+                {/* Assistant Response Preview */}
+                {log.assistant_response && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Output:</p>
+                    <div className="bg-green-50 dark:bg-green-900/20 rounded p-2 text-xs font-mono max-h-16 overflow-hidden">
+                      {log.assistant_response.slice(0, 200)}
+                      {log.assistant_response.length > 200 && '...'}
+                    </div>
+                  </div>
+                )}
+
+                {/* Expanded Details */}
+                {isExpanded && (
+                  <div className="mt-3 pt-3 border-t border-border/50 space-y-3">
+                    {/* Model & Parameters */}
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline" className="text-xs">{log.model}</Badge>
+                      {log.temperature !== undefined && (
+                        <Badge variant="outline" className="text-xs">Temp: {log.temperature}</Badge>
+                      )}
+                      {log.recent_turns_count !== undefined && (
+                        <Badge variant="outline" className="text-xs">{log.recent_turns_count} turns</Badge>
+                      )}
+                    </div>
+
+                    {/* Rolling Summary */}
+                    {log.rolling_summary && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Rolling Summary:</p>
+                        <div className="bg-muted/30 rounded p-2 text-xs font-mono max-h-20 overflow-y-auto">
+                          {log.rolling_summary}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Full User Input */}
+                    {log.user_input && log.user_input.length > 150 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Full Input:</p>
+                        <div className="bg-muted/50 rounded p-2 text-xs font-mono max-h-32 overflow-y-auto">
+                          {log.user_input}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Full Response */}
+                    {log.assistant_response && log.assistant_response.length > 200 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Full Output:</p>
+                        <div className="bg-green-50 dark:bg-green-900/20 rounded p-2 text-xs font-mono max-h-32 overflow-y-auto">
+                          {log.assistant_response}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* View Full Details Button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedLlmLog(log);
+                        setShowLlmLogModal(true);
+                      }}
+                      className="text-xs"
+                    >
+                      <Code className="h-3 w-3 mr-1" />
+                      View Full Messages Array
+                    </Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -732,16 +1125,28 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           </Badge>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {goal && (
+          {isCallActive && (
+            <Badge variant="success" className="gap-1 animate-pulse">
+              <span className="h-2 w-2 rounded-full bg-green-500 mr-1" />
+              Call Active
+            </Badge>
+          )}
+          {goal && !isCallActive && (
             <Badge variant="outline" className="gap-1">
               <Target className="h-3 w-3" />
               Goal Set
             </Badge>
           )}
-          {toNumber && (
+          {toNumber && !isCallActive && (
             <Badge variant="success" className="gap-1">
               <Phone className="h-3 w-3" />
               Ready to Call
+            </Badge>
+          )}
+          {llmLogs.length > 0 && (
+            <Badge variant="outline" className="gap-1">
+              <Brain className="h-3 w-3" />
+              {llmLogs.length} LLM Calls
             </Badge>
           )}
           {!expandedPanel && (
@@ -761,6 +1166,14 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               >
                 {showContextPanel ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
                 {showContextPanel ? 'Hide' : 'Show'} Context
+              </Button>
+              <Button
+                variant={showLlmLogs ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setShowLlmLogs(!showLlmLogs)}
+              >
+                <Brain className="h-4 w-4 mr-2" />
+                {showLlmLogs ? 'Hide' : 'Show'} LLM Logs
               </Button>
             </>
           )}
@@ -809,6 +1222,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           )}
       </div>
 
+      {/* LLM Logs Panel - Separate full-width section below */}
+      {(showLlmLogs || expandedPanel === 'logs') && (
+        <div className="mt-6">
+          {renderPanel(
+            'logs',
+            'Live LLM Logs',
+            activeCall ? `Call ${activeCall.id.slice(-8)} - ${llmLogs.length} interactions` : 'Real-time AI input/output during calls',
+            logsContent,
+            'xl:col-span-12'
+          )}
+        </div>
+      )}
+
       {/* Goal Template Editor Dialog */}
       <Dialog open={showGoalTemplateEditor} onOpenChange={setShowGoalTemplateEditor}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -836,6 +1262,122 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* LLM Log Detail Modal */}
+      <Dialog open={showLlmLogModal} onOpenChange={setShowLlmLogModal}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>LLM Interaction Details</DialogTitle>
+          </DialogHeader>
+          {selectedLlmLog && (
+            <div className="space-y-4 py-4">
+              {/* Metadata */}
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline">Type: {selectedLlmLog.request_type}</Badge>
+                <Badge variant="outline">Model: {selectedLlmLog.model}</Badge>
+                {selectedLlmLog.temperature !== undefined && (
+                  <Badge variant="outline">Temp: {selectedLlmLog.temperature}</Badge>
+                )}
+                {selectedLlmLog.max_tokens && (
+                  <Badge variant="outline">Max Tokens: {selectedLlmLog.max_tokens}</Badge>
+                )}
+                {selectedLlmLog.latency_ms && (
+                  <Badge variant="outline">Latency: {selectedLlmLog.latency_ms}ms</Badge>
+                )}
+                {selectedLlmLog.total_tokens && (
+                  <Badge variant="outline">
+                    Tokens: {selectedLlmLog.prompt_tokens} + {selectedLlmLog.completion_tokens} = {selectedLlmLog.total_tokens}
+                  </Badge>
+                )}
+              </div>
+
+              {/* System Prompt */}
+              {selectedLlmLog.system_prompt && (
+                <div>
+                  <p className="text-sm font-medium mb-2">System Prompt</p>
+                  <div className="bg-purple-50 dark:bg-purple-900/20 rounded-md p-3 text-xs font-mono max-h-60 overflow-y-auto">
+                    <pre className="whitespace-pre-wrap">{selectedLlmLog.system_prompt}</pre>
+                  </div>
+                </div>
+              )}
+
+              {/* Rolling Summary */}
+              {selectedLlmLog.rolling_summary && (
+                <div>
+                  <p className="text-sm font-medium mb-2">
+                    Rolling Summary ({selectedLlmLog.recent_turns_count || 0} turns in context)
+                  </p>
+                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-md p-3 text-xs font-mono max-h-40 overflow-y-auto">
+                    <pre className="whitespace-pre-wrap">{selectedLlmLog.rolling_summary}</pre>
+                  </div>
+                </div>
+              )}
+
+              {/* Full Messages Array */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium">Messages Array ({selectedLlmLog.messages.length} messages)</p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(selectedLlmLog.messages, null, 2));
+                    }}
+                    className="text-xs"
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copy JSON
+                  </Button>
+                </div>
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {selectedLlmLog.messages.map((msg, i) => (
+                    <div
+                      key={i}
+                      className={`rounded-md p-3 text-xs ${
+                        msg.role === 'system'
+                          ? 'bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800'
+                          : msg.role === 'assistant'
+                          ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800'
+                          : 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant="outline" className="text-xs font-mono">
+                          [{i}] {msg.role.toUpperCase()}
+                        </Badge>
+                        <span className="text-muted-foreground">
+                          {msg.content.length.toLocaleString()} chars
+                        </span>
+                      </div>
+                      <pre className="whitespace-pre-wrap font-mono">{msg.content}</pre>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* User Input */}
+              {selectedLlmLog.user_input && (
+                <div>
+                  <p className="text-sm font-medium mb-2">User Input (this turn)</p>
+                  <div className="bg-green-50 dark:bg-green-900/20 rounded-md p-3 text-xs font-mono">
+                    <pre className="whitespace-pre-wrap">{selectedLlmLog.user_input}</pre>
+                  </div>
+                </div>
+              )}
+
+              {/* Assistant Response */}
+              {selectedLlmLog.assistant_response && (
+                <div>
+                  <p className="text-sm font-medium mb-2">Assistant Response</p>
+                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-md p-3 text-xs font-mono">
+                    <pre className="whitespace-pre-wrap">{selectedLlmLog.assistant_response}</pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
