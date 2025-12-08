@@ -407,7 +407,8 @@ export async function uploadCustomCallRecording(
 }
 
 /**
- * LLM log record interface for call_llm_logs table
+ * LLM log record interface for call_llm_exchanges table
+ * Uses the existing table structure with enhanced columns for live visibility
  */
 export interface LlmLogRecord {
   call_id: string;
@@ -430,6 +431,7 @@ export interface LlmLogRecord {
 /**
  * Insert an LLM log entry for a call (insert-only)
  * Logs the full LLM request/response for live visibility during calls
+ * Uses the existing call_llm_exchanges table with realtime enabled
  * @param log - The LLM log record to insert
  * @returns Success/error result
  */
@@ -451,6 +453,8 @@ export async function insertLlmLog(
   }
 
   try {
+    // Map to call_llm_exchanges table columns
+    // Note: response_text = assistant_response, duration_ms = latency_ms
     const insertRecord = {
       call_id: log.call_id,
       request_type: log.request_type || "chat",
@@ -460,20 +464,20 @@ export async function insertLlmLog(
       system_prompt: log.system_prompt,
       messages: log.messages,
       user_input: log.user_input,
-      assistant_response: log.assistant_response,
+      response_text: log.assistant_response, // Maps to existing column
       rolling_summary: log.rolling_summary,
       recent_turns_count: log.recent_turns_count,
       prompt_tokens: log.prompt_tokens,
       completion_tokens: log.completion_tokens,
       total_tokens: log.total_tokens,
-      latency_ms: log.latency_ms,
+      duration_ms: log.latency_ms, // Maps to existing column
       created_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase.from("call_llm_logs").insert(insertRecord);
+    const { error } = await supabase.from("call_llm_exchanges").insert(insertRecord);
 
     if (error) {
-      console.error("[Supabase] Error inserting LLM log:", error.message);
+      console.error("[Supabase] Error inserting LLM exchange:", error.message);
       return { success: false, error: error.message };
     }
 
@@ -482,12 +486,12 @@ export async function insertLlmLog(
       Math.max(0, log.call_id.length - 8)
     );
     console.log(
-      `[Supabase] LLM log inserted (${log.request_type}, ${log.total_tokens || 0} tokens, call: ...${callIdSuffix})`
+      `[Supabase] LLM exchange inserted (${log.request_type}, ${log.total_tokens || 0} tokens, call: ...${callIdSuffix})`
     );
     return { success: true };
   } catch (error) {
     console.error(
-      "[Supabase] Exception inserting LLM log:",
+      "[Supabase] Exception inserting LLM exchange:",
       error instanceof Error ? error.message : error
     );
     return {

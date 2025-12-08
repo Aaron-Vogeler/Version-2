@@ -1,6 +1,7 @@
 /**
  * API route for fetching LLM logs for a specific call
  * Used by the Groq Call component to display live LLM input/output
+ * Queries the existing call_llm_exchanges table with realtime enabled
  */
 
 export const dynamic = 'force-dynamic';
@@ -57,23 +58,32 @@ export async function GET(
       );
     }
 
-    // Fetch LLM logs for this call, ordered by creation time
+    // Fetch LLM exchanges for this call, ordered by creation time
+    // Uses the existing call_llm_exchanges table with realtime enabled
     const { data: logs, error: logsError } = await supabase
-      .from('call_llm_logs')
+      .from('call_llm_exchanges')
       .select('*')
       .eq('call_id', callId)
       .order('created_at', { ascending: true });
 
     if (logsError) {
-      console.error('Error fetching LLM logs:', logsError);
+      console.error('Error fetching LLM exchanges:', logsError);
       return NextResponse.json(
         { error: 'Failed to fetch LLM logs' },
         { status: 500 }
       );
     }
 
+    // Map call_llm_exchanges columns to expected frontend format
+    // response_text -> assistant_response, duration_ms -> latency_ms
+    const mappedLogs = (logs || []).map((log: any) => ({
+      ...log,
+      assistant_response: log.response_text,
+      latency_ms: log.duration_ms,
+    }));
+
     return NextResponse.json({
-      logs: logs || [],
+      logs: mappedLogs,
       call_id: callId,
     });
   } catch (error: any) {

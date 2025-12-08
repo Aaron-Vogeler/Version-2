@@ -238,19 +238,25 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     };
     fetchLogs();
 
-    // Subscribe to new logs
+    // Subscribe to new logs from call_llm_exchanges table (existing table with realtime)
     const channel = supabase
-      .channel(`llm-logs-${activeCall.id}`)
+      .channel(`llm-exchanges-${activeCall.id}`)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
-          table: 'call_llm_logs',
+          table: 'call_llm_exchanges',
           filter: `call_id=eq.${activeCall.id}`,
         },
         (payload) => {
-          const newLog = payload.new as LlmLog;
+          const rawLog = payload.new as any;
+          // Map call_llm_exchanges columns to expected format
+          const newLog: LlmLog = {
+            ...rawLog,
+            assistant_response: rawLog.response_text,
+            latency_ms: rawLog.duration_ms,
+          };
           setLlmLogs((prev) => [...prev, newLog]);
         }
       )
