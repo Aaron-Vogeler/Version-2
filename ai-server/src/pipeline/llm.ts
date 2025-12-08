@@ -172,6 +172,9 @@ export async function generateAssistantReply(
   userText: string,
   context?: CallContext
 ): Promise<string> {
+  const callId = context?.callId || "unknown";
+  const startTime = Date.now();
+
   const systemPrompt = buildSystemPrompt(context);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemPrompt },
@@ -199,10 +202,50 @@ export async function generateAssistantReply(
   // Add the current user input as the final message
   messages.push({ role: "user", content: userText });
 
-  const response = await groq.chat.completions.create({
-    model: config.groq.model,
-    messages,
-  });
+  try {
+    // Log the LLM request details
+    console.log(`
+🤖 ========================================
+🤖 LLM REQUEST (${config.groq.model})
+🤖 ========================================
+[${callId}] Calling Groq with ${messages.length} messages
+  - System: ${systemPrompt.length} chars
+  - Messages: ${messages.map((m, i) => `${m.role}(${m.content.length} chars)`).join(", ")}
+  - User input: "${userText.slice(0, 100)}${userText.length > 100 ? "..." : ""}"`);
 
-  return response.choices[0]?.message?.content || "";
+    const response = await groq.chat.completions.create({
+      model: config.groq.model,
+      messages,
+    });
+
+    const aiText = response.choices[0]?.message?.content || "";
+    const latency = Date.now() - startTime;
+
+    // Log the LLM response details
+    console.log(`
+🤖 ========================================
+🤖 LLM RESPONSE
+🤖 ========================================
+[${callId}] Groq responded in ${latency}ms
+  - Response: "${aiText.slice(0, 100)}${aiText.length > 100 ? "..." : ""}"
+  - Length: ${aiText.length} chars
+  - Tokens used: input=${response.usage?.prompt_tokens || 0}, output=${response.usage?.completion_tokens || 0}, total=${response.usage?.total_tokens || 0}
+  - Model: ${response.model}
+  - Finish reason: ${response.choices[0]?.finish_reason || "unknown"}`);
+
+    return aiText;
+  } catch (error) {
+    const latency = Date.now() - startTime;
+    console.error(`
+❌ ========================================
+❌ LLM ERROR
+❌ ========================================
+[${callId}] Groq API call failed after ${latency}ms
+  - Error: ${error instanceof Error ? error.message : String(error)}
+  - User input: "${userText.slice(0, 100)}${userText.length > 100 ? "..." : ""}"
+  ${error instanceof Error && error.stack ? `\n  Stack: ${error.stack}` : ""}`);
+
+    // Rethrow to allow caller to handle
+    throw error;
+  }
 }
