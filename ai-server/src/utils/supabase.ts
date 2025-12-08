@@ -407,6 +407,50 @@ export async function uploadCustomCallRecording(
 }
 
 /**
+ * Insert an LLM log entry for a call
+ * Uses insert-only pattern for real-time streaming to frontend
+ */
+export async function logLLMEvent(
+  callId: string,
+  event: {
+    type: 'request' | 'response' | 'error' | 'summary_request' | 'summary_response' | 'summary_error';
+    timestamp: string;
+    data: any;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    console.log("[Supabase] Not configured, skipping LLM log");
+    return { success: true };
+  }
+
+  try {
+    // Insert log directly into call_llm_logs table for real-time streaming
+    const { error } = await supabase
+      .from("call_llm_logs")
+      .insert({
+        call_id: callId,
+        type: event.type,
+        timestamp: event.timestamp,
+        data: event.data,
+      });
+
+    if (error) {
+      console.error("[Supabase] Error inserting LLM log:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("[Supabase] Exception logging LLM event:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
  * Terminal status check - prevents status regressions
  */
 export function isTerminalStatus(status: string | undefined): boolean {

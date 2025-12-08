@@ -207,6 +207,12 @@ export function DelegateCall({
   const [summaryUpdateInterval, setSummaryUpdateInterval] = useState(DEFAULT_AI_CONFIG.summaryUpdateInterval);
   const [silenceTimeoutMs, setSilenceTimeoutMs] = useState(DEFAULT_AI_CONFIG.silenceTimeoutMs);
 
+  // Rolling Summary Prompt (editable)
+  const DEFAULT_SUMMARY_PROMPT = `Summarize the conversation concisely, capturing key points, decisions, and action items.`;
+  const [summaryPrompt, setSummaryPrompt] = useState(DEFAULT_SUMMARY_PROMPT);
+  const [isEditingSummaryPrompt, setIsEditingSummaryPrompt] = useState(false);
+  const [editSummaryPromptValue, setEditSummaryPromptValue] = useState('');
+
   // Telephony & Voice Settings
   const [interruptionMode, setInterruptionMode] = useState<'normal' | 'sensitive' | 'patient'>(DEFAULT_AI_CONFIG.interruptionMode);
   const [voiceId, setVoiceId] = useState(DEFAULT_AI_CONFIG.voiceId);
@@ -217,6 +223,9 @@ export function DelegateCall({
   const [rollingSummary, setRollingSummary] = useState('');
   const [isEditingSummary, setIsEditingSummary] = useState(false);
   const [editSummaryValue, setEditSummaryValue] = useState('');
+
+  // LLM Logs fullscreen
+  const [isLogsFullscreen, setIsLogsFullscreen] = useState(false);
 
   // Conversation turns (from live call)
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -231,11 +240,15 @@ export function DelegateCall({
   const [liveTranscript, setLiveTranscript] = useState('');
   const [isCallLive, setIsCallLive] = useState(false);
 
+  // WebSocket connection for LLM logs
+  const wsRef = useRef<WebSocket | null>(null);
+
   // Supabase client for realtime
   const supabase = useMemo(() => createClient(), []);
 
   const llmLogRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const seenLogIdsRef = useRef<Set<number>>(new Set());
 
   // Auto-scroll LLM logs
   useEffect(() => {
@@ -332,12 +345,65 @@ export function DelegateCall({
     };
   }, [activeCall?.callControlId, supabase]);
 
+  // Subscribe to real-time LLM logs via call_llm_logs table
+  useEffect(() => {
+    if (!activeCall?.callControlId) return;
+
+    console.log('Setting up LLM logs realtime subscription for:', activeCall.callControlId);
+    seenLogIdsRef.current.clear(); // Reset on new call
+
+    const channel = supabase
+      .channel(`call-llm-logs-${activeCall.callControlId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'call_llm_logs',
+          filter: `call_id=eq.${activeCall.callControlId}`,
+        },
+        (payload) => {
+          const log = payload.new as any;
+          console.log('Received LLM log:', log.type, log.id);
+
+          // Only process if we haven't seen this log ID before
+          if (!seenLogIdsRef.current.has(log.id)) {
+            seenLogIdsRef.current.add(log.id);
+
+            logLLMInteraction({
+              type: log.type === 'request' ? 'request' :
+                     log.type === 'response' ? 'response' :
+                     log.type === 'summary_request' ? 'system' :
+                     log.type === 'summary_response' ? 'system' :
+                     'system',
+              model: log.type === 'summary_request' || log.type === 'summary_response' ? 'rolling-summary' : undefined,
+              response: log.type === 'response' ? log.data?.response :
+                       log.type === 'summary_response' ? log.data?.summary :
+                       log.type === 'error' ? `Error: ${log.data?.error}` :
+                       log.type === 'summary_error' ? `Summary Error: ${log.data?.error}` :
+                       JSON.stringify(log.data),
+              tokens: log.data?.tokens,
+            });
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('LLM logs subscription status:', status);
+      });
+
+    return () => {
+      console.log('Cleaning up LLM logs subscription');
+      supabase.removeChannel(channel);
+    };
+  }, [activeCall?.callControlId, supabase]);
+
   // Sync response delay with interruption mode
   useEffect(() => {
     const modeConfig = INTERRUPTION_MODES[interruptionMode];
     setResponseDelaySec(modeConfig.silenceMs / 1000);
     setSilenceTimeoutMs(modeConfig.silenceMs);
   }, [interruptionMode]);
+
 
   // Build the effective system prompt with name replacements and goal injection
   const buildEffectiveSystemPrompt = () => {
@@ -389,6 +455,49 @@ CALL GOAL (YOUR ONLY MISSION):
     setEditSummaryValue('');
   };
 
+  // Handle editing summary prompt
+  const handleEditSummaryPrompt = () => {
+    setEditSummaryPromptValue(summaryPrompt);
+    setIsEditingSummaryPrompt(true);
+  };
+
+  // Handle saving summary prompt
+  const handleSaveSummaryPrompt = () => {
+    setSummaryPrompt(editSummaryPromptValue);
+    setIsEditingSummaryPrompt(false);
+  };
+
+  // Handle canceling summary prompt edit
+  const handleCancelSummaryPromptEdit = () => {
+    setIsEditingSummaryPrompt(false);
+    setEditSummaryPromptValue('');
+  };
+
+  // Export LLM logs as JSON
+  const exportLLMLogs = () => {
+    const data = {
+      exportedAt: new Date().toISOString(),
+      callControlId: activeCall?.callControlId || 'no-active-call',
+      logs: llmLogs,
+      summary: {
+        totalLogs: llmLogs.length,
+        byType: {
+          requests: llmLogs.filter(l => l.type === 'request').length,
+          responses: llmLogs.filter(l => l.type === 'response').length,
+          transcripts: llmLogs.filter(l => l.type === 'transcript').length,
+          system: llmLogs.filter(l => l.type === 'system').length,
+        },
+      },
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `llm-logs-${activeCall?.callControlId || 'export'}-${new Date().getTime()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Reset all settings to defaults
   const resetAllSettings = () => {
     setAssistantName(customAssistantName);
@@ -401,6 +510,7 @@ CALL GOAL (YOUR ONLY MISSION):
     setSystemPrompt('');
     setMaxTurnsInWindow(DEFAULT_AI_CONFIG.maxTurnsInWindow);
     setSummaryUpdateInterval(DEFAULT_AI_CONFIG.summaryUpdateInterval);
+    setSummaryPrompt(DEFAULT_SUMMARY_PROMPT);
     setSilenceTimeoutMs(DEFAULT_AI_CONFIG.silenceTimeoutMs);
     setInterruptionMode(DEFAULT_AI_CONFIG.interruptionMode);
     setVoiceId(DEFAULT_AI_CONFIG.voiceId);
@@ -466,6 +576,11 @@ CALL GOAL (YOUR ONLY MISSION):
 
       if (useCustomPrompt && systemPrompt.trim()) {
         aiConfig.systemPrompt = systemPrompt.trim();
+      }
+
+      // Always include summary prompt
+      if (summaryPrompt.trim()) {
+        aiConfig.summaryPrompt = summaryPrompt.trim();
       }
 
       // Always include silence timeout based on response delay
@@ -756,6 +871,89 @@ CALL GOAL (YOUR ONLY MISSION):
                   </div>
                 </div>
 
+                {/* Context Window Settings Section */}
+                <div className="space-y-3 pt-2 border-t">
+                  <Label className="text-sm font-medium">Context Window</Label>
+
+                  {/* Rolling Summary Prompt */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">Rolling Summary Prompt</Label>
+                      {!isEditingSummaryPrompt && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 w-5 p-0"
+                          onClick={handleEditSummaryPrompt}
+                        >
+                          <Edit3 className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+                    {isEditingSummaryPrompt ? (
+                      <div className="space-y-2">
+                        <Textarea
+                          value={editSummaryPromptValue}
+                          onChange={(e) => setEditSummaryPromptValue(e.target.value)}
+                          className="resize-none text-xs font-mono"
+                          rows={3}
+                        />
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleSaveSummaryPrompt}>
+                            <Save className="h-3 w-3 mr-1" /> Save
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={handleCancelSummaryPromptEdit}>
+                            <X className="h-3 w-3 mr-1" /> Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-2 bg-muted/30 rounded text-xs font-mono max-h-[80px] overflow-y-auto">
+                        {summaryPrompt}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Max Turns in Window */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between">
+                      <Label className="text-xs text-muted-foreground">Recent Turns Max</Label>
+                      <span className="text-xs font-mono">{maxTurnsInWindow}</span>
+                    </div>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={maxTurnsInWindow}
+                      onChange={(e) => setMaxTurnsInWindow(parseInt(e.target.value) || 12)}
+                      className="h-8 text-sm"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Max recent turns to keep in context window
+                    </p>
+                  </div>
+
+                  {/* Summary Update Interval */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between">
+                      <Label className="text-xs text-muted-foreground">Summary Refresh Turns</Label>
+                      <span className="text-xs font-mono">{summaryUpdateInterval}</span>
+                    </div>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={summaryUpdateInterval}
+                      onChange={(e) => setSummaryUpdateInterval(parseInt(e.target.value) || 6)}
+                      className="h-8 text-sm"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Update rolling summary after this many new turns
+                    </p>
+                  </div>
+                </div>
+
                 {/* LLM Parameters Section */}
                 <div className="space-y-3 pt-2 border-t">
                   <Label className="text-sm font-medium">LLM Parameters</Label>
@@ -963,6 +1161,84 @@ CALL GOAL (YOUR ONLY MISSION):
                 </div>
               </form>
 
+              {/* LLM Activity Logs - Fullscreen Modal */}
+              {isLogsFullscreen && (
+                <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+                  <Card className="w-full h-full max-w-4xl flex flex-col">
+                    <CardContent className="p-4 flex flex-col h-full">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-bold text-lg">All LLM Activity</h3>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={exportLLMLogs}
+                            disabled={llmLogs.length === 0}
+                          >
+                            <FileText className="h-4 w-4 mr-2" />
+                            Export JSON
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setIsLogsFullscreen(false)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex-1 overflow-y-auto border rounded-lg p-4 bg-muted/20">
+                        {llmLogs.length === 0 ? (
+                          <span className="text-muted-foreground italic">No activity yet</span>
+                        ) : (
+                          llmLogs.map((log) => (
+                            <div key={log.id} className="mb-4 pb-4 border-b border-muted last:border-0">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                                  log.type === 'request'
+                                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                                    : log.type === 'response'
+                                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                                    : log.type === 'transcript'
+                                    ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
+                                    : 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400'
+                                }`}>
+                                  {log.type === 'system' ? 'SYSTEM' : log.type.toUpperCase()}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {new Date(log.timestamp).toLocaleTimeString()}
+                                </span>
+                              </div>
+                              {log.type === 'request' && log.messages && (
+                                <div className="text-sm text-muted-foreground mb-2">
+                                  <div className="font-medium text-sm mb-1">{log.messages.length} messages • {log.model}</div>
+                                  {log.messages.map((msg, i) => (
+                                    <div key={i} className="ml-4 mb-2 text-xs">
+                                      <span className="font-mono text-xs text-blue-600 dark:text-blue-400">[{msg.role}]</span>
+                                      <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{msg.content.slice(0, 300)}{msg.content.length > 300 ? '...' : ''}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {(log.type === 'response' || log.type === 'system' || log.type === 'transcript') && log.response && (
+                                <div className="text-sm whitespace-pre-wrap break-words">
+                                  {log.response}
+                                  {log.tokens && (
+                                    <div className="text-xs text-muted-foreground mt-1">
+                                      Tokens - In: {log.tokens.input}, Out: {log.tokens.output}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
               {/* Live Transcript Display */}
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="flex items-center justify-between mb-2">
@@ -1026,6 +1302,99 @@ CALL GOAL (YOUR ONLY MISSION):
                       )}
                     </div>
                   )}
+                </div>
+
+                {/* LLM Activity Logs - Below Transcript */}
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap className="h-4 w-4" />
+                      <Label className="text-sm font-medium">LLM Activity ({llmLogs.length})</Label>
+                    </div>
+                    <div className="flex gap-1">
+                      {llmLogs.length > 0 && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs"
+                            onClick={exportLLMLogs}
+                          >
+                            <FileText className="h-3 w-3 mr-1" />
+                            Export
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs"
+                            onClick={() => setIsLogsFullscreen(true)}
+                          >
+                            <Maximize2 className="h-3 w-3 mr-1" />
+                            Fullscreen
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs"
+                            onClick={() => setLlmLogs([])}
+                          >
+                            Clear
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    ref={llmLogRef}
+                    className="border rounded-lg p-3 bg-muted/20 overflow-y-auto max-h-[300px] text-xs font-mono"
+                  >
+                    {llmLogs.length === 0 ? (
+                      <span className="text-muted-foreground italic">
+                        Activity will appear here during calls
+                      </span>
+                    ) : (
+                      llmLogs.map((log) => (
+                        <div key={log.id} className="mb-2 pb-2 border-b border-muted/50 last:border-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                              log.type === 'request'
+                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                                : log.type === 'response'
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                                : log.type === 'transcript'
+                                ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
+                                : 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400'
+                            }`}>
+                              {log.type === 'system' ? 'SYS' : log.type.toUpperCase().slice(0, 4)}
+                            </span>
+                            <span className="text-muted-foreground text-[10px]">
+                              {new Date(log.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          {log.type === 'request' && log.messages && (
+                            <div className="text-[10px] text-muted-foreground ml-4">
+                              {log.messages.length} messages ({log.model})
+                              {log.messages.map((msg, i) => (
+                                <div key={i} className="text-[9px] mt-0.5 truncate">
+                                  <span className="text-blue-600 dark:text-blue-400">[{msg.role}]</span> {msg.content.slice(0, 60)}...
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {(log.type === 'response' || log.type === 'system' || log.type === 'transcript') && log.response && (
+                            <div className="text-[10px] break-words ml-4">
+                              {log.response.slice(0, 150)}{log.response.length > 150 ? '...' : ''}
+                              {log.tokens && (
+                                <span className="text-muted-foreground ml-1">
+                                  (in:{log.tokens.input} out:{log.tokens.output})
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </CardContent>
@@ -1163,67 +1532,31 @@ CALL GOAL (YOUR ONLY MISSION):
                   </div>
                 </div>
 
-                {/* LLM I/O Log */}
+                {/* Activity Summary */}
                 <div className="space-y-2 pt-2 border-t">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Activity Log</Label>
-                    {llmLogs.length > 0 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-5 text-[10px]"
-                        onClick={() => setLlmLogs([])}
-                      >
-                        Clear
-                      </Button>
-                    )}
+                  <Label className="text-sm font-medium">Activity Summary</Label>
+                  <div className="grid grid-cols-2 gap-1 text-xs">
+                    <span className="text-muted-foreground">Total Events:</span>
+                    <span className="text-right font-mono">{llmLogs.length}</span>
+
+                    <span className="text-muted-foreground">Requests:</span>
+                    <span className="text-right font-mono text-blue-600 dark:text-blue-400">
+                      {llmLogs.filter(l => l.type === 'request').length}
+                    </span>
+
+                    <span className="text-muted-foreground">Responses:</span>
+                    <span className="text-right font-mono text-green-600 dark:text-green-400">
+                      {llmLogs.filter(l => l.type === 'response').length}
+                    </span>
+
+                    <span className="text-muted-foreground">System Events:</span>
+                    <span className="text-right font-mono text-gray-600 dark:text-gray-400">
+                      {llmLogs.filter(l => l.type === 'system').length}
+                    </span>
                   </div>
-                  <div
-                    ref={llmLogRef}
-                    className="p-2 bg-muted/30 rounded text-xs font-mono max-h-[300px] overflow-y-auto"
-                  >
-                    {llmLogs.length === 0 ? (
-                      <span className="text-muted-foreground italic">
-                        Activity will appear here during calls
-                      </span>
-                    ) : (
-                      llmLogs.map((log) => (
-                        <div key={log.id} className="mb-2 pb-2 border-b border-muted last:border-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                              log.type === 'request'
-                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
-                                : log.type === 'response'
-                                ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                                : log.type === 'transcript'
-                                ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
-                                : 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400'
-                            }`}>
-                              {log.type === 'system' ? 'SYS' : log.type.toUpperCase().slice(0, 4)}
-                            </span>
-                            <span className="text-muted-foreground text-[10px]">
-                              {new Date(log.timestamp).toLocaleTimeString()}
-                            </span>
-                          </div>
-                          {log.type === 'request' && log.messages && (
-                            <div className="text-[10px] text-muted-foreground">
-                              {log.messages.length} messages ({log.model})
-                            </div>
-                          )}
-                          {(log.type === 'response' || log.type === 'system' || log.type === 'transcript') && log.response && (
-                            <div className="text-[10px] break-words">
-                              {log.response.slice(0, 150)}{log.response.length > 150 ? '...' : ''}
-                              {log.tokens && (
-                                <span className="text-muted-foreground ml-1">
-                                  (in:{log.tokens.input} out:{log.tokens.output})
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    See full logs in the LLM Activity section below the transcript
+                  </p>
                 </div>
               </CardContent>
             </Card>
