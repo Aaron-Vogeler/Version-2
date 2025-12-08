@@ -5,6 +5,7 @@
  * Each call is scoped to a single Telnyx call ID and cleared on call end.
  * No cross-call memory is persisted.
  */
+import config from "./config";
 
 /**
  * Represents a single turn in the conversation.
@@ -79,11 +80,11 @@ export interface ContextConfig {
   maxSummaryTokensHint: number; // Approximate max tokens for summary (e.g., 300)
 }
 
-// Default configuration
+// Default configuration - uses values from main config
 const defaultConfig: ContextConfig = {
-  maxTurnsInWindow: 12,
-  summaryUpdateIntervalTurns: 6,
-  maxSummaryTokensHint: 300,
+  maxTurnsInWindow: config.context.maxTurnsInWindow,
+  summaryUpdateIntervalTurns: config.context.summaryUpdateIntervalTurns,
+  maxSummaryTokensHint: config.context.maxSummaryTokensHint,
 };
 
 // In-memory store: Map of callId -> CallContext

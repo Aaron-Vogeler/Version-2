@@ -19,8 +19,8 @@ import {
   getCustomRecordingMaxBytes,
 } from "./pipeline/recording";
 
-// Constants
-const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
+// Call control settings are now in config.callControl
+// TTS_DEBOUNCE_MS, BARGE_IN_COOLDOWN_MS, CALLER_UTTERANCE_FLUSH_MS, HANGUP_DELAY_MS
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -90,10 +90,10 @@ function queueUserTranscript(
     clearTimeout(callContext.ttsDebounceTimer);
   }
 
-  // Schedule a new TTS response timer
+  // Schedule a new TTS response timer (uses configurable debounce)
   callContext.ttsDebounceTimer = setTimeout(() => {
     scheduleTtsResponse(callContext, ws, currentSeq);
-  }, TTS_DEBOUNCE_MS);
+  }, config.callControl.ttsDebounceMs);
 }
 
 /**
@@ -301,10 +301,10 @@ async function sendTtsResponse(
     // The HTTP response returns BEFORE audio finishes playing.
     // Telnyx webhooks (call.speak.ended) will set ttsState='idle' when playback truly ends.
 
-    // If AI said "Chow", wait a moment then hangup
+    // If AI said "Chow", wait a moment then hangup (uses configurable delay)
     if (shouldHangup && callContext.callControlId) {
-      console.log("⏳ Waiting 2 seconds for TTS to complete before hangup...");
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log(`⏳ Waiting ${config.callControl.hangupDelayMs}ms for TTS to complete before hangup...`);
+      await new Promise(resolve => setTimeout(resolve, config.callControl.hangupDelayMs));
 
       try {
         await hangupCall(callContext.callControlId);
@@ -928,8 +928,8 @@ wss.on("connection", async (ws) => {
         if (!callContext.bargeInCooldownUntil || now >= callContext.bargeInCooldownUntil) {
           console.log(`[BARGE-IN] 🛑 Words detected while AI speaking: "${userText}" (callControlId: ${callContext.callControlId})`);
 
-          // Set cooldown (300ms) to prevent multiple rapid stops
-          callContext.bargeInCooldownUntil = now + 300;
+          // Set cooldown to prevent multiple rapid stops (uses configurable cooldown)
+          callContext.bargeInCooldownUntil = now + config.callControl.bargeInCooldownMs;
 
           // Mark as stopping
           callContext.ttsState = "stopping";
@@ -1013,16 +1013,16 @@ wss.on("connection", async (ws) => {
           clearTimeout(callContext.callerFinalFlushTimer);
         }
 
-        // Schedule flush timer (300ms of silence = utterance boundary)
+        // Schedule flush timer (configurable silence = utterance boundary)
         // Capture callContext in local variable to avoid closure issues with TypeScript
         const ctx = callContext;
         callContext.callerFinalFlushTimer = setTimeout(() => {
-          console.log("[TRANSCRIPT] Flush timer fired (300ms with no new final chunks)");
+          console.log(`[TRANSCRIPT] Flush timer fired (${config.callControl.callerUtteranceFlushMs}ms with no new final chunks)`);
           if (ctx) {
             flushCallerUtterance(ctx);
             ctx.callerFinalFlushTimer = undefined;
           }
-        }, 300);
+        }, config.callControl.callerUtteranceFlushMs);
       }
 
       // Queue the transcript with debounce for LLM response

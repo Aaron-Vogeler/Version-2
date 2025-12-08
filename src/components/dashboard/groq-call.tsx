@@ -99,24 +99,24 @@ interface ActiveCall {
   started_at?: string;
 }
 
-// Default goal injection template
-const DEFAULT_GOAL_TEMPLATE = `CALL GOAL (YOUR ONLY MISSION):
-"{goal}"
+// =============================================================================
+// VARIABLE KEYS (use these placeholders in prompts)
+// =============================================================================
+// {ASSISTANT_NAME} - Replaced with the assistant's name
+// {USER_NAME} - Replaced with the user's name
+// =============================================================================
 
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Goodbye."
-- Do NOT deviate from this goal
+// No default system prompt - must be provided by user
+const SYSTEM_PROMPT_REQUIRED_MESSAGE = `⚠️ CUSTOM SYSTEM PROMPT REQUIRED
 
-Remember: You are an AI assistant. Strict scope control is mandatory.`;
+You must provide a custom system prompt to start calls.
 
-// Default system prompt placeholder
-const DEFAULT_SYSTEM_PROMPT_PLACEHOLDER = 'Loading default system prompt...';
+Available variable keys:
+• {ASSISTANT_NAME} - Will be replaced with the assistant name
+• {USER_NAME} - Will be replaced with the user name
+
+The call goal will be automatically appended at the bottom:
+CALL GOAL (YOUR ONLY MISSION): "your goal here"`;
 
 interface GroqCallProps {
   customAssistantName?: string;
@@ -140,7 +140,6 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
 
   // Call-like context state
   const [goal, setGoal] = useState('');
-  const [goalTemplate, setGoalTemplate] = useState(DEFAULT_GOAL_TEMPLATE);
   const [additionalContext, setAdditionalContext] = useState('');
   const [assistantName, setAssistantName] = useState(customAssistantName);
   const [userName, setUserName] = useState(firstName);
@@ -150,9 +149,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [showContextPanel, setShowContextPanel] = useState(true);
   const [models, setModels] = useState<GroqModel[]>([]);
   const [selectedModel, setSelectedModel] = useState('llama-3.1-8b-instant');
+  // Custom system prompt is REQUIRED - no default
   const [customSystemPrompt, setCustomSystemPrompt] = useState('');
-  const [defaultSystemPrompt, setDefaultSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT_PLACEHOLDER);
-  const [useCustomPrompt, setUseCustomPrompt] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [topP, setTopP] = useState(1);
@@ -162,10 +160,18 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     maxSummaryTokensHint: 300,
   });
 
+  // Call control settings
+  const [callControlSettings, setCallControlSettings] = useState({
+    ttsDebounceMs: 500,
+    bargeInCooldownMs: 300,
+    callerUtteranceFlushMs: 300,
+    hangupDelayMs: 2000,
+  });
+  const [showCallControlSettings, setShowCallControlSettings] = useState(false);
+
   // UI state
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [expandedSystemPrompt, setExpandedSystemPrompt] = useState(false);
-  const [showGoalTemplateEditor, setShowGoalTemplateEditor] = useState(false);
 
   // Expanded panel states
   const [expandedPanel, setExpandedPanel] = useState<'settings' | 'call' | 'context' | 'logs' | null>(null);
@@ -322,32 +328,43 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   };
 
   // Build the full system prompt (for display)
+  // Uses variable keys: {ASSISTANT_NAME}, {USER_NAME}
+  // Goal is always injected at bottom in format: CALL GOAL (YOUR ONLY MISSION): "goal"
   const buildFullSystemPrompt = () => {
-    let prompt = useCustomPrompt ? customSystemPrompt : defaultSystemPrompt;
+    // Custom system prompt is REQUIRED
+    if (!customSystemPrompt) {
+      return SYSTEM_PROMPT_REQUIRED_MESSAGE;
+    }
 
-    // Replace names
+    let prompt = customSystemPrompt;
+
+    // Replace variable keys {ASSISTANT_NAME} and {USER_NAME}
     const finalAssistantName = assistantName || 'Ferguson';
     const finalUserName = userName || 'Aaron';
+    prompt = prompt.replace(/\{ASSISTANT_NAME\}/g, finalAssistantName);
+    prompt = prompt.replace(/\{USER_NAME\}/g, finalUserName);
+
+    // Also replace legacy hardcoded names for backwards compatibility
     prompt = prompt.replace(/Ferguson/g, finalAssistantName);
     prompt = prompt.replace(/ferguson/g, finalAssistantName.toLowerCase());
     prompt = prompt.replace(/Aaron/g, finalUserName);
 
-    // Add goal with template
-    if (goal) {
-      const processedGoalTemplate = goalTemplate.replace('{goal}', goal);
-      prompt += '\n\n' + processedGoalTemplate;
-    }
-
-    // Add context
+    // Add context if provided
     if (additionalContext) {
       prompt += `\n\nADDITIONAL CONTEXT:\n${additionalContext}`;
+    }
+
+    // Goal is always injected at bottom in simple format
+    if (goal) {
+      prompt += `\n\nCALL GOAL (YOUR ONLY MISSION): "${goal}"`;
     }
 
     return prompt;
   };
 
   const handleDelegateCall = async () => {
-    if (!goal || !toNumber) return;
+    // Require goal, phone number, AND custom system prompt
+    if (!goal || !toNumber || !customSystemPrompt) return;
 
     setLoading(true);
     setStatus('idle');
@@ -420,15 +437,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
 
   const handleResetSettings = () => {
     setGoal('');
-    setGoalTemplate(DEFAULT_GOAL_TEMPLATE);
     setAdditionalContext('');
     setAssistantName(customAssistantName);
     setUserName(firstName);
-    setUseCustomPrompt(false);
     setCustomSystemPrompt('');
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
+    setCallControlSettings({
+      ttsDebounceMs: 500,
+      bargeInCooldownMs: 300,
+      callerUtteranceFlushMs: 300,
+      hangupDelayMs: 2000,
+    });
     if (models.length > 0) {
       setSelectedModel(models[0].id);
     }
@@ -507,22 +528,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     <div className="space-y-5">
       {/* Goal */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="goal" className="flex items-center gap-2">
-            <Target className="h-4 w-4" />
-            Call Goal <span className="text-destructive">*</span>
-          </Label>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowGoalTemplateEditor(true)}
-            className="h-6 text-xs"
-            title="Edit goal injection template"
-          >
-            <Code className="h-3 w-3 mr-1" />
-            Template
-          </Button>
-        </div>
+        <Label htmlFor="goal" className="flex items-center gap-2">
+          <Target className="h-4 w-4" />
+          Call Goal <span className="text-destructive">*</span>
+        </Label>
         <Textarea
           id="goal"
           value={goal}
@@ -533,7 +542,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         />
         <div className="flex justify-between">
           <p className="text-xs text-muted-foreground">
-            The specific objective for this call
+            Injected at bottom: CALL GOAL (YOUR ONLY MISSION): &quot;goal&quot;
           </p>
           <p className="text-xs text-muted-foreground">
             {goal.length}/250
@@ -671,26 +680,99 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         />
       </div>
 
-      {/* Custom System Prompt Toggle */}
+      {/* System Prompt (REQUIRED) */}
       <div className="border-t border-border/50 pt-4">
-        <div className="flex items-center justify-between mb-2">
-          <Label className="text-sm">Custom System Prompt</Label>
-          <Button
-            variant={useCustomPrompt ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setUseCustomPrompt(!useCustomPrompt)}
-            className="h-7 text-xs"
-          >
-            {useCustomPrompt ? 'On' : 'Off'}
-          </Button>
-        </div>
-        {useCustomPrompt && (
+        <div className="space-y-2">
+          <Label className="text-sm flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            System Prompt <span className="text-destructive">*</span>
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            Variable keys: <code className="bg-muted px-1 rounded">{'{ASSISTANT_NAME}'}</code>, <code className="bg-muted px-1 rounded">{'{USER_NAME}'}</code>
+          </p>
           <Textarea
             value={customSystemPrompt}
             onChange={(e) => setCustomSystemPrompt(e.target.value)}
-            placeholder="Enter your custom system prompt..."
-            className="min-h-[100px] resize-none text-xs font-mono"
+            placeholder="Enter your system prompt... Use {ASSISTANT_NAME} and {USER_NAME} as placeholders."
+            className={`min-h-[150px] resize-none text-xs font-mono ${!customSystemPrompt ? 'border-destructive' : ''}`}
           />
+          {!customSystemPrompt && (
+            <p className="text-xs text-destructive">Required to start calls</p>
+          )}
+        </div>
+      </div>
+
+      {/* Call Control Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Clock className="h-4 w-4" />
+            Call Control Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowCallControlSettings(!showCallControlSettings)}
+            className="h-6 text-xs"
+          >
+            {showCallControlSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        {showCallControlSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">TTS Debounce (ms)</Label>
+              <Input
+                type="number"
+                min="100"
+                max="2000"
+                step="50"
+                value={callControlSettings.ttsDebounceMs}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, ttsDebounceMs: parseInt(e.target.value) || 500 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Silence before AI responds</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Barge-In Cooldown (ms)</Label>
+              <Input
+                type="number"
+                min="100"
+                max="1000"
+                step="50"
+                value={callControlSettings.bargeInCooldownMs}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, bargeInCooldownMs: parseInt(e.target.value) || 300 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Time between stop commands</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Utterance Flush (ms)</Label>
+              <Input
+                type="number"
+                min="100"
+                max="1000"
+                step="50"
+                value={callControlSettings.callerUtteranceFlushMs}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, callerUtteranceFlushMs: parseInt(e.target.value) || 300 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Wait before logging utterance</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Hangup Delay (ms)</Label>
+              <Input
+                type="number"
+                min="500"
+                max="5000"
+                step="100"
+                value={callControlSettings.hangupDelayMs}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, hangupDelayMs: parseInt(e.target.value) || 2000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Wait for TTS before hangup</p>
+            </div>
+          </div>
         )}
       </div>
 
@@ -786,7 +868,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       <Button
         onClick={handleDelegateCall}
         className="w-full h-12 text-lg"
-        disabled={loading || !goal || !toNumber}
+        disabled={loading || !goal || !toNumber || !customSystemPrompt}
       >
         {loading ? (
           <>
@@ -802,9 +884,11 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       </Button>
 
       {/* Requirements Note */}
-      {(!goal || !toNumber) && (
+      {(!goal || !toNumber || !customSystemPrompt) && (
         <p className="text-xs text-muted-foreground text-center">
-          {!goal && !toNumber
+          {!customSystemPrompt
+            ? 'Enter a system prompt to continue'
+            : !goal && !toNumber
             ? 'Set a goal and enter a phone number to make a call'
             : !goal
             ? 'Set a goal to continue'
@@ -851,17 +935,15 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         </div>
       </div>
 
-      {/* Goal Template Preview */}
+      {/* Goal Preview */}
       {goal && (
         <div className="space-y-2">
           <Label className="flex items-center gap-2 text-sm font-medium">
             <Target className="h-4 w-4" />
-            Goal Injection (added to prompt)
+            Goal Injection (appended to prompt)
           </Label>
-          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-md p-3 text-xs font-mono max-h-[150px] overflow-y-auto">
-            <pre className="whitespace-pre-wrap">
-              {goalTemplate.replace('{goal}', goal)}
-            </pre>
+          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-md p-3 text-xs font-mono">
+            <pre className="whitespace-pre-wrap">CALL GOAL (YOUR ONLY MISSION): &quot;{goal}&quot;</pre>
           </div>
         </div>
       )}
@@ -908,12 +990,16 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
             <span className="font-mono">{additionalContext ? 'Yes' : 'No'}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Custom Prompt:</span>
-            <span className="font-mono">{useCustomPrompt ? 'Yes' : 'No'}</span>
+            <span className="text-muted-foreground">System Prompt:</span>
+            <span className={`font-mono ${customSystemPrompt ? '' : 'text-destructive'}`}>{customSystemPrompt ? 'Set' : 'REQUIRED'}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Phone Number:</span>
             <span className="font-mono">{toNumber || '(not set)'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">TTS Debounce:</span>
+            <span className="font-mono">{callControlSettings.ttsDebounceMs}ms</span>
           </div>
         </div>
       </div>
@@ -1274,36 +1360,6 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           )}
         </div>
       )}
-
-      {/* Goal Template Editor Dialog */}
-      <Dialog open={showGoalTemplateEditor} onOpenChange={setShowGoalTemplateEditor}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Edit Goal Injection Template</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              This template is appended to the system prompt when a goal is set. Use <code className="bg-muted px-1 rounded">{'{goal}'}</code> as a placeholder for the actual goal text.
-            </p>
-            <Textarea
-              value={goalTemplate}
-              onChange={(e) => setGoalTemplate(e.target.value)}
-              className="min-h-[300px] font-mono text-sm"
-            />
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setGoalTemplate(DEFAULT_GOAL_TEMPLATE)}
-              >
-                Reset to Default
-              </Button>
-              <Button onClick={() => setShowGoalTemplateEditor(false)}>
-                Done
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* LLM Log Detail Modal */}
       <Dialog open={showLlmLogModal} onOpenChange={setShowLlmLogModal}>
