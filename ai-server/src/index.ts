@@ -11,6 +11,7 @@ import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } f
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording } from "./utils/supabase";
+import * as sharedState from "./sharedState";
 import {
   createMulawStereoWav,
   concatTrack,
@@ -356,6 +357,9 @@ async function sendTtsResponse(
     callContext.currentSpeakText = aiText; // Store text for logging on completion
     console.log(`[TTS] Setting ttsState='speaking' (callControlId: ${callContext.callControlId})`);
 
+    // Sync TTS state to Redis for multi-instance support
+    await sharedState.markTtsSpeaking(callContext.callControlId, aiText);
+
     await synthesizeSpeech(aiText, callContext.callControlId);
 
     // Log what TTS will actually speak (only logged after successful TTS API call)
@@ -561,6 +565,13 @@ function cleanupCallState(callContext: CallContext): void {
     console.log(`📋 Clearing CallContext for call ${callContext.callId}`);
     contextMgr.clearContext(callContext.callId);
   }
+
+  // Clean up Redis state for multi-instance support
+  if (callContext.callControlId) {
+    sharedState.clearTtsState(callContext.callControlId).catch((err) => {
+      console.error("[SharedState] Error clearing Redis state:", err);
+    });
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -760,19 +771,31 @@ app.post("/webhooks/telnyx", async (req, res) => {
     }
   } else if (eventType === "call.speak.started") {
     // TTS playback has started
+    // IMPORTANT: Always update Redis even if local context doesn't exist
+    // This handles multi-instance deployments where webhook hits different instance than WebSocket
     if (callControlId) {
+      const now = Date.now();
+
+      // Update local context if it exists on this instance
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "speaking";
-        ctx.speakStartedAt = Date.now(); // Record when playback actually started
+        ctx.speakStartedAt = now;
         console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
       } else {
-        console.warn(`[TTS] ⚠️ call.speak.started for unknown callControlId: ${callControlId}`);
+        console.log(`[TTS] 🔊 call.speak.started - local context not found, updating Redis only (callControlId: ${callControlId})`);
       }
+
+      // ALWAYS update Redis for multi-instance sync
+      await sharedState.markTtsSpeaking(callControlId);
     }
   } else if (eventType === "call.speak.ended") {
     // TTS playback has ended
+    // IMPORTANT: Always update Redis even if local context doesn't exist
     if (callControlId) {
+      // ALWAYS update Redis first for multi-instance sync
+      await sharedState.markTtsIdle(callControlId);
+
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "idle";
@@ -816,18 +839,21 @@ app.post("/webhooks/telnyx", async (req, res) => {
           ctx.speakWasInterrupted = undefined;
         }
       } else {
-        console.warn(`[TTS] ⚠️ call.speak.ended for unknown callControlId: ${callControlId}`);
+        console.log(`[TTS] ✅ call.speak.ended - local context not found, Redis updated (callControlId: ${callControlId})`);
       }
     }
   } else if (eventType === "call.playback.ended") {
     // Belt-and-suspenders: Also handle generic playback.ended
     if (callControlId) {
+      // ALWAYS update Redis first for multi-instance sync
+      await sharedState.markTtsIdle(callControlId);
+
       const ctx = contextMgr.getContext(callControlId);
       if (ctx) {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.playback.ended - ttsState='idle' (callControlId: ${callControlId})`);
       } else {
-        console.warn(`[TTS] ⚠️ call.playback.ended for unknown callControlId: ${callControlId}`);
+        console.log(`[TTS] ✅ call.playback.ended - local context not found, Redis updated (callControlId: ${callControlId})`);
       }
     }
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
@@ -985,7 +1011,30 @@ wss.on("connection", async (ws) => {
 
       // ============================================================================
       // BARGE-IN: Trigger on any recognized words (interim or final) for responsiveness
+      // Barge-in ONLY stops TTS - it does NOT immediately send partials to LLM.
+      // Utterance finalization (sending to LLM) only happens when:
+      // 1. speech_final=true (Deepgram detected end of utterance), OR
+      // 2. Silence timeout after last final transcript
       // ============================================================================
+      let bargeInJustOccurred = false;
+
+      // MULTI-INSTANCE SYNC: Check Redis for authoritative TTS state
+      // This handles cases where call.speak.ended webhook hit a different instance
+      if (callContext.callControlId && sharedState.isRedisEnabled()) {
+        const redisState = await sharedState.syncFromRedis(callContext.callControlId);
+        if (redisState) {
+          // If Redis says TTS is idle but local says speaking, trust Redis
+          if (redisState.ttsState === "idle" && callContext.ttsState === "speaking") {
+            console.log(`[BARGE-IN] 📡 Redis sync: TTS is actually idle (local was out of sync)`);
+            callContext.ttsState = "idle";
+          }
+          // If Redis has a more recent speakStartedAt, use it
+          if (redisState.speakStartedAt && (!callContext.speakStartedAt || redisState.speakStartedAt > callContext.speakStartedAt)) {
+            callContext.speakStartedAt = redisState.speakStartedAt;
+          }
+        }
+      }
+
       if (callContext.ttsState === "speaking" && callContext.callControlId) {
         // Apply cooldown to prevent spamming the stop endpoint
         const now = Date.now();
@@ -1004,7 +1053,7 @@ wss.on("connection", async (ws) => {
           // Mark as stopping
           callContext.ttsState = "stopping";
 
-          // Mark current speech as interrupted (prevents logging partial speech)
+          // Mark current speech as interrupted (for logging actual spoken portion)
           callContext.speakWasInterrupted = true;
 
           // Issue playback stop
@@ -1014,17 +1063,21 @@ wss.on("connection", async (ws) => {
             console.error("[BARGE-IN] ❌ Error stopping playback:", stopError);
           }
 
-          // Clear any pending TTS debounce timer (we'll queue new response below)
+          // Clear any pending TTS debounce timer (we will NOT queue the partial that triggered barge-in)
           if (callContext.ttsDebounceTimer) {
             clearTimeout(callContext.ttsDebounceTimer);
             callContext.ttsDebounceTimer = undefined;
           }
 
-          // Clear any pending caller utterance flush (we'll start fresh)
+          // Clear any pending caller utterance flush (we'll start fresh with the new utterance)
           if (callContext.callerFinalFlushTimer) {
             clearTimeout(callContext.callerFinalFlushTimer);
             callContext.callerFinalFlushTimer = undefined;
           }
+
+          // Clear any accumulated partial transcript buffer - start fresh
+          callContext.callerFinalBuf = [];
+          callContext.lastUserTranscript = "";
 
           // Increment turn sequence to invalidate any in-flight LLM/TTS work
           callContext.turnSeq = (callContext.turnSeq || 0) + 1;
@@ -1032,19 +1085,31 @@ wss.on("connection", async (ws) => {
 
           // Mark as idle after stop
           callContext.ttsState = "idle";
+
+          // Sync barge-in state to Redis for multi-instance support
+          await sharedState.markTtsInterrupted(callContext.callControlId);
+          await sharedState.markTtsIdle(callContext.callControlId);
+
+          // Flag that barge-in just occurred - DO NOT queue this partial for LLM
+          bargeInJustOccurred = true;
         } else {
           console.log(`[BARGE-IN] Cooldown active, skipping (${callContext.bargeInCooldownUntil - now}ms remaining)`);
         }
       }
 
       // ============================================================================
-      // TRANSCRIPT LOGGING: Only log FINAL recognized speech
+      // TRANSCRIPT HANDLING: Only process FINAL transcripts for LLM response
+      // Interim (partial) transcripts are NOT queued for LLM - they would cause
+      // premature responses like "we close" instead of waiting for "we close at four pm"
       // ============================================================================
-      // Only process final transcript chunks (is_final=true)
       if (!isFinal) {
-        // Don't log interim transcripts to Supabase; only queue for responsiveness
-        // Queue the (interim) transcript with debounce for LLM response
-        queueUserTranscript(callContext, userText, ws);
+        // Log interim transcripts for debugging, but do NOT queue for LLM response
+        // This prevents processing partial utterances before the speaker finishes
+        if (bargeInJustOccurred) {
+          console.log(`[TRANSCRIPT] Barge-in partial ignored (waiting for final): "${userText}"`);
+        } else {
+          console.log(`[TRANSCRIPT] Interim transcript (not queuing for LLM): "${userText}"`);
+        }
         return;
       }
 
@@ -1058,7 +1123,9 @@ wss.on("connection", async (ws) => {
       console.log(`[TRANSCRIPT] Buffered final chunk #${callContext.callerFinalBuf.length}: "${userText}"`);
 
       // ============================================================================
-      // UTTERANCE BOUNDARY: Flush on speech_final or with fallback timer
+      // UTTERANCE BOUNDARY: Flush on speech_final or with fallback silence timer
+      // IMPORTANT: LLM processing is ONLY triggered when utterance is complete
+      // This prevents processing partials like "we close" instead of "we close at four pm"
       // ============================================================================
       const isSpeechFinal = speechFinal === true;
 
@@ -1072,11 +1139,20 @@ wss.on("connection", async (ws) => {
           callContext.callerFinalFlushTimer = undefined;
         }
 
-        // Flush the buffer
+        // Get the full accumulated utterance before flushing
+        const fullUtterance = [...(callContext.callerFinalBuf || [])].join(" ").trim();
+
+        // Flush the buffer to Supabase (for transcript logging)
         flushCallerUtterance(callContext);
+
+        // NOW queue the complete utterance for LLM response
+        if (fullUtterance) {
+          console.log(`[TRANSCRIPT] Queuing complete utterance for LLM: "${fullUtterance}"`);
+          queueUserTranscript(callContext, fullUtterance, ws);
+        }
       } else {
         // No speech_final flag: use fallback timer to detect utterance boundary
-        // If no new final chunks arrive within 300ms, consider the utterance complete
+        // If no new final chunks arrive within configurable timeout, consider utterance complete
 
         // Clear any existing timer
         if (callContext.callerFinalFlushTimer) {
@@ -1084,19 +1160,30 @@ wss.on("connection", async (ws) => {
         }
 
         // Schedule flush timer (configurable silence = utterance boundary)
-        // Capture callContext in local variable to avoid closure issues with TypeScript
+        // Capture callContext and ws in local variables for closure
         const ctx = callContext;
+        const wsRef = ws;
         callContext.callerFinalFlushTimer = setTimeout(() => {
           console.log(`[TRANSCRIPT] Flush timer fired (${config.callControl.callerUtteranceFlushMs}ms with no new final chunks)`);
           if (ctx) {
+            // Get the full accumulated utterance before flushing
+            const fullUtterance = [...(ctx.callerFinalBuf || [])].join(" ").trim();
+
+            // Flush the buffer to Supabase (for transcript logging)
             flushCallerUtterance(ctx);
             ctx.callerFinalFlushTimer = undefined;
+
+            // NOW queue the complete utterance for LLM response
+            if (fullUtterance && wsRef.readyState === WebSocket.OPEN) {
+              console.log(`[TRANSCRIPT] Queuing complete utterance for LLM (silence timeout): "${fullUtterance}"`);
+              queueUserTranscript(ctx, fullUtterance, wsRef);
+            }
           }
         }, config.callControl.callerUtteranceFlushMs);
       }
 
-      // Queue the transcript with debounce for LLM response
-      queueUserTranscript(callContext, userText, ws);
+      // NOTE: We do NOT call queueUserTranscript here!
+      // LLM processing only happens when utterance is complete (speech_final or silence timeout)
     } catch (error) {
       console.error(
         "❌ Unexpected error in transcript handler:",
@@ -1268,6 +1355,10 @@ wss.on("connection", async (ws) => {
 // -----------------------------------------------------------------------------
 // START SERVER
 // -----------------------------------------------------------------------------
+
+// Initialize shared state (Redis for multi-instance support)
+sharedState.initSharedState();
+
 server.listen(config.port, () => {
   console.log(`🚀 AI Server running on port ${config.port}`);
 });

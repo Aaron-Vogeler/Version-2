@@ -35,6 +35,20 @@ function getEnvInt(name: string, defaultValue: number): number {
 // {MAX_TOKENS} - Replaced with max summary tokens hint (in rolling summary prompt)
 // =============================================================================
 
+// =============================================================================
+// MULTI-INSTANCE SUPPORT (Upstash Redis)
+// =============================================================================
+// When running on multiple Fly.io instances, TTS state can become inconsistent
+// because Telnyx webhooks (call.speak.started, call.speak.ended) can hit any instance.
+//
+// To enable multi-instance support, configure Upstash Redis:
+// - UPSTASH_REDIS_REST_URL: Your Upstash Redis REST URL
+// - UPSTASH_REDIS_REST_TOKEN: Your Upstash Redis REST token
+//
+// Without Redis, the app runs in single-instance mode. You may see warnings like:
+// "[TTS] ⚠️ call.speak.ended for unknown callControlId" in multi-instance deployments.
+// =============================================================================
+
 // Main configuration object
 const config = {
   // Server config
