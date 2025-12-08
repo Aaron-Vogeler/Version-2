@@ -14,6 +14,9 @@ interface AIConfig {
   maxTurnsInWindow?: number;
   summaryUpdateInterval?: number;
   silenceTimeoutMs?: number;
+  interruptionMode?: 'normal' | 'sensitive' | 'patient';
+  voiceId?: string;
+  speechRate?: number;
 }
 
 interface OutboundCallRequest {

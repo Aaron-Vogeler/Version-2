@@ -2,21 +2,22 @@
 
 /**
  * Delegate A Call Component
- * 3-panel interface for configuring and testing AI phone calls
- * - Left: Call Settings
- * - Middle: Conversation/Call Actions
+ * 3-panel interface for configuring and monitoring AI phone calls
+ * - Left: Call Settings & AI Controls
+ * - Middle: Live Call Monitoring
  * - Right: Context Visibility & LLM I/O
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { createClient } from '@/lib/supabase/client';
 import {
   Phone,
-  Send,
+  PhoneOff,
   CheckCircle2,
   AlertCircle,
   ChevronDown,
@@ -30,7 +31,12 @@ import {
   Maximize2,
   Edit3,
   Save,
-  X
+  X,
+  Radio,
+  Volume2,
+  Mic,
+  Clock,
+  Zap
 } from 'lucide-react';
 
 /**
@@ -42,6 +48,9 @@ interface AIConfig {
   maxTurnsInWindow?: number;
   summaryUpdateInterval?: number;
   silenceTimeoutMs?: number;
+  interruptionMode?: 'normal' | 'sensitive' | 'patient';
+  voiceId?: string;
+  speechRate?: number;
 }
 
 /**
@@ -59,17 +68,45 @@ interface Turn {
 interface LLMLogEntry {
   id: string;
   timestamp: string;
-  type: 'request' | 'response';
+  type: 'request' | 'response' | 'transcript' | 'system';
   model?: string;
   messages?: Array<{ role: string; content: string }>;
   response?: string;
   tokens?: { input?: number; output?: number };
+  speaker?: string;
+}
+
+/**
+ * Active call state
+ */
+interface ActiveCall {
+  callControlId: string;
+  callSessionId?: string;
+  status: 'initiated' | 'ringing' | 'answered' | 'completed' | 'failed';
+  startedAt: string;
 }
 
 interface DelegateCallProps {
   customAssistantName?: string;
   customUserName?: string;
 }
+
+// Available TTS voices
+const VOICE_OPTIONS = [
+  { id: 'Telnyx.KokoroTTS.bm_george', name: 'George (Male, British)' },
+  { id: 'Telnyx.KokoroTTS.af_sky', name: 'Sky (Female, American)' },
+  { id: 'Telnyx.KokoroTTS.am_adam', name: 'Adam (Male, American)' },
+  { id: 'Telnyx.KokoroTTS.bf_emma', name: 'Emma (Female, British)' },
+  { id: 'Telnyx.KokoroTTS.af_nicole', name: 'Nicole (Female, American)' },
+  { id: 'Telnyx.KokoroTTS.am_michael', name: 'Michael (Male, American)' },
+];
+
+// Interruption mode presets
+const INTERRUPTION_MODES = {
+  sensitive: { silenceMs: 300, label: 'Sensitive (300ms)', description: 'Quick to respond, may cut off speaker' },
+  normal: { silenceMs: 500, label: 'Normal (500ms)', description: 'Balanced response timing' },
+  patient: { silenceMs: 800, label: 'Patient (800ms)', description: 'Waits longer before responding' },
+};
 
 // Default values for AI configuration
 const DEFAULT_AI_CONFIG = {
@@ -80,6 +117,9 @@ const DEFAULT_AI_CONFIG = {
   maxTokens: 1024,
   topP: 1,
   model: 'llama-3.1-8b-instant',
+  interruptionMode: 'normal' as const,
+  voiceId: 'Telnyx.KokoroTTS.bm_george',
+  speechRate: 1.0,
 };
 
 // Default system prompt (matches ai-server config)
@@ -167,12 +207,18 @@ export function DelegateCall({
   const [summaryUpdateInterval, setSummaryUpdateInterval] = useState(DEFAULT_AI_CONFIG.summaryUpdateInterval);
   const [silenceTimeoutMs, setSilenceTimeoutMs] = useState(DEFAULT_AI_CONFIG.silenceTimeoutMs);
 
+  // Telephony & Voice Settings
+  const [interruptionMode, setInterruptionMode] = useState<'normal' | 'sensitive' | 'patient'>(DEFAULT_AI_CONFIG.interruptionMode);
+  const [voiceId, setVoiceId] = useState(DEFAULT_AI_CONFIG.voiceId);
+  const [speechRate, setSpeechRate] = useState(DEFAULT_AI_CONFIG.speechRate);
+  const [responseDelaySec, setResponseDelaySec] = useState(DEFAULT_AI_CONFIG.silenceTimeoutMs / 1000);
+
   // Rolling Summary (editable)
   const [rollingSummary, setRollingSummary] = useState('');
   const [isEditingSummary, setIsEditingSummary] = useState(false);
   const [editSummaryValue, setEditSummaryValue] = useState('');
 
-  // Conversation turns (simulation)
+  // Conversation turns (from live call)
   const [turns, setTurns] = useState<Turn[]>([]);
   const [turnsSinceSummary, setTurnsSinceSummary] = useState(0);
 
@@ -180,10 +226,16 @@ export function DelegateCall({
   const [llmLogs, setLlmLogs] = useState<LLMLogEntry[]>([]);
   const [showSystemPromptPreview, setShowSystemPromptPreview] = useState(false);
 
-  // Conversation input (for simulation mode)
-  const [conversationInput, setConversationInput] = useState('');
+  // Active call state for real-time monitoring
+  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [isCallLive, setIsCallLive] = useState(false);
+
+  // Supabase client for realtime
+  const supabase = useMemo(() => createClient(), []);
 
   const llmLogRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll LLM logs
   useEffect(() => {
@@ -191,6 +243,101 @@ export function DelegateCall({
       llmLogRef.current.scrollTop = llmLogRef.current.scrollHeight;
     }
   }, [llmLogs]);
+
+  // Auto-scroll transcript
+  useEffect(() => {
+    if (transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+    }
+  }, [liveTranscript]);
+
+  // Subscribe to real-time call updates when a call is active
+  useEffect(() => {
+    if (!activeCall?.callControlId) return;
+
+    console.log('Setting up realtime subscription for call:', activeCall.callControlId);
+
+    const channel = supabase
+      .channel(`delegate-call-${activeCall.callControlId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'calls',
+          filter: `call_control_id=eq.${activeCall.callControlId}`,
+        },
+        (payload) => {
+          console.log('Received call update:', payload);
+          const newCall = payload.new as any;
+
+          // Update live transcript
+          if (newCall.live_transcript !== undefined && newCall.live_transcript !== liveTranscript) {
+            setLiveTranscript(newCall.live_transcript || '');
+
+            // Parse transcript into turns for display
+            if (newCall.live_transcript) {
+              const lines = newCall.live_transcript.split('\n').filter((l: string) => l.trim());
+              const newTurns: Turn[] = lines.map((line: string, i: number) => {
+                const match = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+                if (match) {
+                  const speakerRaw = match[1].toLowerCase();
+                  const speaker = speakerRaw.includes('assistant') || speakerRaw.includes('ai')
+                    ? 'assistant'
+                    : speakerRaw.includes('caller') || speakerRaw.includes('user')
+                    ? 'caller'
+                    : 'agent';
+                  return { speaker, text: match[2], timestamp: new Date().toISOString() };
+                }
+                return { speaker: 'caller' as const, text: line, timestamp: new Date().toISOString() };
+              });
+              setTurns(newTurns);
+            }
+
+            // Log transcript update
+            logLLMInteraction({
+              type: 'transcript',
+              response: `Transcript updated (${(newCall.live_transcript || '').length} chars)`,
+            });
+          }
+
+          // Update call status
+          if (newCall.status) {
+            const callIsLive = ['initiated', 'ringing', 'answered'].includes(newCall.status);
+            setIsCallLive(callIsLive);
+
+            setActiveCall(prev => prev ? { ...prev, status: newCall.status } : null);
+
+            // Log status change
+            logLLMInteraction({
+              type: 'system',
+              response: `Call status: ${newCall.status}`,
+            });
+
+            // If call ended, clear active state
+            if (['completed', 'failed', 'busy', 'no-answer'].includes(newCall.status)) {
+              setStatus('success');
+              setMessage(`Call ${newCall.status}`);
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('Realtime subscription status:', status);
+      });
+
+    return () => {
+      console.log('Cleaning up realtime subscription');
+      supabase.removeChannel(channel);
+    };
+  }, [activeCall?.callControlId, supabase]);
+
+  // Sync response delay with interruption mode
+  useEffect(() => {
+    const modeConfig = INTERRUPTION_MODES[interruptionMode];
+    setResponseDelaySec(modeConfig.silenceMs / 1000);
+    setSilenceTimeoutMs(modeConfig.silenceMs);
+  }, [interruptionMode]);
 
   // Build the effective system prompt with name replacements and goal injection
   const buildEffectiveSystemPrompt = () => {
@@ -255,12 +402,49 @@ CALL GOAL (YOUR ONLY MISSION):
     setMaxTurnsInWindow(DEFAULT_AI_CONFIG.maxTurnsInWindow);
     setSummaryUpdateInterval(DEFAULT_AI_CONFIG.summaryUpdateInterval);
     setSilenceTimeoutMs(DEFAULT_AI_CONFIG.silenceTimeoutMs);
+    setInterruptionMode(DEFAULT_AI_CONFIG.interruptionMode);
+    setVoiceId(DEFAULT_AI_CONFIG.voiceId);
+    setSpeechRate(DEFAULT_AI_CONFIG.speechRate);
+    setResponseDelaySec(DEFAULT_AI_CONFIG.silenceTimeoutMs / 1000);
     setGoal('');
     setContext('');
     setRollingSummary('');
     setTurns([]);
     setTurnsSinceSummary(0);
     setLlmLogs([]);
+    setActiveCall(null);
+    setLiveTranscript('');
+    setIsCallLive(false);
+  };
+
+  // Hang up active call
+  const handleHangup = async () => {
+    if (!activeCall?.callControlId) return;
+
+    try {
+      const response = await fetch('/api/calls/hangup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ call_control_id: activeCall.callControlId }),
+      });
+
+      if (response.ok) {
+        setStatus('success');
+        setMessage('Call ended');
+        setIsCallLive(false);
+        logLLMInteraction({
+          type: 'system',
+          response: 'Call ended by user',
+        });
+      } else {
+        const data = await response.json();
+        setStatus('error');
+        setMessage(data.error || 'Failed to end call');
+      }
+    } catch (error: any) {
+      setStatus('error');
+      setMessage(error.message || 'Failed to end call');
+    }
   };
 
   // Submit actual call
@@ -270,21 +454,40 @@ CALL GOAL (YOUR ONLY MISSION):
     setStatus('idle');
     setMessage('');
 
+    // Clear previous call state
+    setActiveCall(null);
+    setLiveTranscript('');
+    setTurns([]);
+    setIsCallLive(false);
+
     try {
-      // Build AI config object
+      // Build AI config object with all telephony/AI settings
       const aiConfig: AIConfig = {};
 
       if (useCustomPrompt && systemPrompt.trim()) {
         aiConfig.systemPrompt = systemPrompt.trim();
       }
-      if (silenceTimeoutMs !== DEFAULT_AI_CONFIG.silenceTimeoutMs) {
-        aiConfig.silenceTimeoutMs = silenceTimeoutMs;
+
+      // Always include silence timeout based on response delay
+      const effectiveSilenceMs = Math.round(responseDelaySec * 1000);
+      if (effectiveSilenceMs !== DEFAULT_AI_CONFIG.silenceTimeoutMs) {
+        aiConfig.silenceTimeoutMs = effectiveSilenceMs;
       }
+
       if (maxTurnsInWindow !== DEFAULT_AI_CONFIG.maxTurnsInWindow) {
         aiConfig.maxTurnsInWindow = maxTurnsInWindow;
       }
       if (summaryUpdateInterval !== DEFAULT_AI_CONFIG.summaryUpdateInterval) {
         aiConfig.summaryUpdateInterval = summaryUpdateInterval;
+      }
+      if (interruptionMode !== DEFAULT_AI_CONFIG.interruptionMode) {
+        aiConfig.interruptionMode = interruptionMode;
+      }
+      if (voiceId !== DEFAULT_AI_CONFIG.voiceId) {
+        aiConfig.voiceId = voiceId;
+      }
+      if (speechRate !== DEFAULT_AI_CONFIG.speechRate) {
+        aiConfig.speechRate = speechRate;
       }
 
       // Log the request to LLM log
@@ -294,12 +497,13 @@ CALL GOAL (YOUR ONLY MISSION):
         model,
         messages: [
           { role: 'system', content: effectivePrompt },
-          ...(rollingSummary ? [{ role: 'user', content: `CALL CONTEXT SUMMARY:\n${rollingSummary}` }] : []),
-          ...turns.map(t => ({
-            role: t.speaker === 'assistant' ? 'assistant' : 'user',
-            content: t.speaker === 'assistant' ? t.text : `[${t.speaker.toUpperCase()}] ${t.text}`
-          })),
         ],
+      });
+
+      // Log AI config being used
+      logLLMInteraction({
+        type: 'system',
+        response: `Config: Voice=${VOICE_OPTIONS.find(v => v.id === voiceId)?.name || voiceId}, Response Delay=${responseDelaySec}s, Mode=${interruptionMode}`,
       });
 
       // Call secure API proxy (authenticated)
@@ -325,13 +529,25 @@ CALL GOAL (YOUR ONLY MISSION):
         throw new Error(data.error || `Request failed: ${response.status}`);
       }
 
+      // Set up active call for real-time monitoring
+      const callControlId = data.flyResponse?.call_control_id;
+      if (callControlId) {
+        setActiveCall({
+          callControlId,
+          callSessionId: data.flyResponse?.call_session_id,
+          status: 'initiated',
+          startedAt: new Date().toISOString(),
+        });
+        setIsCallLive(true);
+      }
+
       setStatus('success');
-      setMessage('Call delegated successfully!');
+      setMessage('Call initiated - monitoring live...');
 
       // Log successful call initiation
       logLLMInteraction({
-        type: 'response',
-        response: `Call initiated successfully. Call ID: ${data.flyResponse?.call_control_id || 'unknown'}`,
+        type: 'system',
+        response: `Call initiated. ID: ${callControlId || 'unknown'}. Monitoring live transcript...`,
       });
 
     } catch (error: any) {
@@ -340,62 +556,12 @@ CALL GOAL (YOUR ONLY MISSION):
       setMessage(error.message || 'Failed to delegate call. Please try again.');
 
       logLLMInteraction({
-        type: 'response',
+        type: 'system',
         response: `Error: ${error.message}`,
       });
     } finally {
       setLoading(false);
     }
-  };
-
-  // Simulate sending a message (for testing without making real calls)
-  const handleSimulateSend = async () => {
-    if (!conversationInput.trim()) return;
-
-    // Add user turn
-    const newTurn: Turn = {
-      speaker: 'caller',
-      text: conversationInput.trim(),
-      timestamp: new Date().toISOString(),
-    };
-
-    setTurns(prev => [...prev, newTurn]);
-    setTurnsSinceSummary(prev => prev + 1);
-    setConversationInput('');
-
-    // Log the LLM request
-    const effectivePrompt = buildEffectiveSystemPrompt();
-    logLLMInteraction({
-      type: 'request',
-      model,
-      messages: [
-        { role: 'system', content: effectivePrompt },
-        ...(rollingSummary ? [{ role: 'user', content: `CALL CONTEXT SUMMARY:\n${rollingSummary}` }] : []),
-        ...turns.map(t => ({
-          role: t.speaker === 'assistant' ? 'assistant' : 'user',
-          content: t.speaker === 'assistant' ? t.text : `[${t.speaker.toUpperCase()}] ${t.text}`
-        })),
-        { role: 'user', content: conversationInput.trim() },
-      ],
-    });
-
-    // Simulate AI response (placeholder)
-    setTimeout(() => {
-      const simulatedResponse = `[Simulated response to: "${conversationInput.trim().slice(0, 30)}..."]`;
-      const assistantTurn: Turn = {
-        speaker: 'assistant',
-        text: simulatedResponse,
-        timestamp: new Date().toISOString(),
-      };
-      setTurns(prev => [...prev, assistantTurn]);
-      setTurnsSinceSummary(prev => prev + 1);
-
-      logLLMInteraction({
-        type: 'response',
-        response: simulatedResponse,
-        tokens: { input: 150, output: 25 },
-      });
-    }, 500);
   };
 
   return (
@@ -492,6 +658,99 @@ CALL GOAL (YOUR ONLY MISSION):
                     <Input
                       value={userName}
                       onChange={(e) => setUserName(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Telephony & Voice Settings */}
+                <div className="space-y-3 pt-2 border-t">
+                  <div className="flex items-center gap-2">
+                    <Volume2 className="h-4 w-4" />
+                    <Label className="text-sm font-medium">Voice & Timing</Label>
+                  </div>
+
+                  {/* Response Delay (seconds) */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-3 w-3 text-muted-foreground" />
+                        <Label className="text-xs text-muted-foreground">Response Delay</Label>
+                      </div>
+                      <span className="text-xs font-mono">{responseDelaySec.toFixed(2)}s</span>
+                    </div>
+                    <Input
+                      type="number"
+                      min={0.1}
+                      max={3}
+                      step={0.1}
+                      value={responseDelaySec}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0.5;
+                        setResponseDelaySec(val);
+                        setSilenceTimeoutMs(Math.round(val * 1000));
+                      }}
+                      className="h-8 text-sm"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      How long AI waits after you stop speaking before responding
+                    </p>
+                  </div>
+
+                  {/* Interruption Mode */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1">
+                      <Zap className="h-3 w-3 text-muted-foreground" />
+                      <Label className="text-xs text-muted-foreground">Interruption Mode</Label>
+                    </div>
+                    <select
+                      value={interruptionMode}
+                      onChange={(e) => setInterruptionMode(e.target.value as 'normal' | 'sensitive' | 'patient')}
+                      className="w-full h-8 text-sm rounded-md border border-input bg-background px-3"
+                    >
+                      {Object.entries(INTERRUPTION_MODES).map(([key, config]) => (
+                        <option key={key} value={key}>
+                          {config.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-muted-foreground">
+                      {INTERRUPTION_MODES[interruptionMode].description}
+                    </p>
+                  </div>
+
+                  {/* Voice Selection */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1">
+                      <Mic className="h-3 w-3 text-muted-foreground" />
+                      <Label className="text-xs text-muted-foreground">Voice</Label>
+                    </div>
+                    <select
+                      value={voiceId}
+                      onChange={(e) => setVoiceId(e.target.value)}
+                      className="w-full h-8 text-sm rounded-md border border-input bg-background px-3"
+                    >
+                      {VOICE_OPTIONS.map((voice) => (
+                        <option key={voice.id} value={voice.id}>
+                          {voice.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Speech Rate */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between">
+                      <Label className="text-xs text-muted-foreground">Speech Rate</Label>
+                      <span className="text-xs font-mono">{speechRate}x</span>
+                    </div>
+                    <Input
+                      type="number"
+                      min={0.5}
+                      max={2}
+                      step={0.1}
+                      value={speechRate}
+                      onChange={(e) => setSpeechRate(parseFloat(e.target.value) || 1)}
                       className="h-8 text-sm"
                     />
                   </div>
@@ -607,16 +866,26 @@ CALL GOAL (YOUR ONLY MISSION):
           </div>
         )}
 
-        {/* Middle Panel - Call Actions & Conversation */}
+        {/* Middle Panel - Live Call Monitoring */}
         <div className={`${showSettings && showContext ? 'col-span-6' : showSettings || showContext ? 'col-span-9' : 'col-span-12'}`}>
           <Card className="h-full">
             <CardContent className="p-4 flex flex-col h-full">
               <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="font-semibold">Make Call</h3>
-                  <p className="text-xs text-muted-foreground">
-                    {turns.length} turns
-                  </p>
+                <div className="flex items-center gap-3">
+                  <div>
+                    <h3 className="font-semibold">
+                      {isCallLive ? 'Live Call' : 'Make Call'}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      {activeCall ? `Status: ${activeCall.status}` : 'Enter details below'}
+                    </p>
+                  </div>
+                  {isCallLive && (
+                    <div className="flex items-center gap-1 px-2 py-1 bg-red-100 dark:bg-red-900/30 rounded-full">
+                      <Radio className="h-3 w-3 text-red-500 animate-pulse" />
+                      <span className="text-xs text-red-600 dark:text-red-400 font-medium">LIVE</span>
+                    </div>
+                  )}
                 </div>
                 <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
                   <Maximize2 className="h-3 w-3" />
@@ -637,6 +906,7 @@ CALL GOAL (YOUR ONLY MISSION):
                     onChange={(e) => setToNumber(e.target.value)}
                     required
                     pattern="^\+?[1-9]\d{1,14}$"
+                    disabled={isCallLive}
                   />
                   <p className="text-xs text-muted-foreground">
                     E.164 format (e.g., +14155551234)
@@ -661,74 +931,102 @@ CALL GOAL (YOUR ONLY MISSION):
                   </div>
                 )}
 
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={loading || !goal || !toNumber}
-                >
-                  {loading ? (
-                    <>
-                      <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                      Delegating...
-                    </>
-                  ) : (
-                    <>
-                      <Phone className="mr-2 h-4 w-4" />
-                      Delegate Call
-                    </>
+                <div className="flex gap-2">
+                  <Button
+                    type="submit"
+                    className="flex-1"
+                    disabled={loading || !goal || !toNumber || isCallLive}
+                  >
+                    {loading ? (
+                      <>
+                        <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                        Connecting...
+                      </>
+                    ) : (
+                      <>
+                        <Phone className="mr-2 h-4 w-4" />
+                        Start Call
+                      </>
+                    )}
+                  </Button>
+
+                  {isCallLive && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={handleHangup}
+                    >
+                      <PhoneOff className="mr-2 h-4 w-4" />
+                      End Call
+                    </Button>
                   )}
-                </Button>
+                </div>
               </form>
 
-              {/* Conversation Display */}
-              <div className="flex-1 border rounded-lg p-4 bg-muted/20 overflow-y-auto min-h-[200px] mb-4">
-                {turns.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                    <MessageSquare className="h-8 w-8 mb-2 opacity-50" />
-                    <p className="text-sm">No messages yet</p>
-                    <p className="text-xs">Set a goal and start the conversation</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {turns.map((turn, index) => (
-                      <div
-                        key={index}
-                        className={`flex ${turn.speaker === 'assistant' ? 'justify-start' : 'justify-end'}`}
-                      >
-                        <div
-                          className={`max-w-[80%] p-2 rounded-lg text-sm ${
-                            turn.speaker === 'assistant'
-                              ? 'bg-muted'
-                              : 'bg-primary text-primary-foreground'
-                          }`}
-                        >
-                          <p className="text-xs opacity-70 mb-1">
-                            {turn.speaker.toUpperCase()}
-                          </p>
-                          <p>{turn.text}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* Live Transcript Display */}
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    Live Transcript
+                  </Label>
+                  {liveTranscript && (
+                    <span className="text-xs text-muted-foreground">
+                      {liveTranscript.split('\n').filter(l => l.trim()).length} messages
+                    </span>
+                  )}
+                </div>
 
-              {/* Simulation Input */}
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Type your message..."
-                  value={conversationInput}
-                  onChange={(e) => setConversationInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSimulateSend();
-                    }
-                  }}
-                />
-                <Button onClick={handleSimulateSend} disabled={!conversationInput.trim()}>
-                  <Send className="h-4 w-4" />
-                </Button>
+                <div
+                  ref={transcriptRef}
+                  className="flex-1 border rounded-lg p-4 bg-muted/20 overflow-y-auto min-h-[200px]"
+                >
+                  {!liveTranscript && !isCallLive ? (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                      <Phone className="h-8 w-8 mb-2 opacity-50" />
+                      <p className="text-sm">No active call</p>
+                      <p className="text-xs">Start a call to see the live transcript</p>
+                    </div>
+                  ) : !liveTranscript && isCallLive ? (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                        <span className="text-sm">Waiting for transcript...</span>
+                      </div>
+                      <p className="text-xs">The conversation will appear here as you speak</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Show parsed turns as chat bubbles */}
+                      {turns.map((turn, index) => (
+                        <div
+                          key={index}
+                          className={`flex ${turn.speaker === 'assistant' ? 'justify-start' : 'justify-end'}`}
+                        >
+                          <div
+                            className={`max-w-[85%] p-3 rounded-lg text-sm ${
+                              turn.speaker === 'assistant'
+                                ? 'bg-muted'
+                                : 'bg-primary text-primary-foreground'
+                            }`}
+                          >
+                            <p className="text-xs opacity-70 mb-1 font-medium">
+                              {turn.speaker === 'assistant' ? assistantName : 'Caller'}
+                            </p>
+                            <p className="leading-relaxed">{turn.text}</p>
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Raw transcript fallback if no parsed turns */}
+                      {turns.length === 0 && liveTranscript && (
+                        <pre className="whitespace-pre-wrap font-mono text-xs bg-muted/30 p-3 rounded">
+                          {liveTranscript}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -841,47 +1139,67 @@ CALL GOAL (YOUR ONLY MISSION):
 
                 {/* Request Summary */}
                 <div className="space-y-2 pt-2 border-t">
-                  <Label className="text-sm font-medium">Request Summary</Label>
+                  <Label className="text-sm font-medium">Active Config</Label>
                   <div className="grid grid-cols-2 gap-1 text-xs">
                     <span className="text-muted-foreground">Model:</span>
                     <span className="text-right font-mono">{model}</span>
 
+                    <span className="text-muted-foreground">Voice:</span>
+                    <span className="text-right font-mono text-[10px]">
+                      {VOICE_OPTIONS.find(v => v.id === voiceId)?.name.split(' ')[0] || 'Default'}
+                    </span>
+
+                    <span className="text-muted-foreground">Response Delay:</span>
+                    <span className="text-right font-mono">{responseDelaySec}s</span>
+
+                    <span className="text-muted-foreground">Mode:</span>
+                    <span className="text-right font-mono">{interruptionMode}</span>
+
                     <span className="text-muted-foreground">Temperature:</span>
                     <span className="text-right font-mono">{temperature}</span>
 
-                    <span className="text-muted-foreground">Max Tokens:</span>
-                    <span className="text-right font-mono">{maxTokens}</span>
-
-                    <span className="text-muted-foreground">Goal Set:</span>
-                    <span className="text-right font-mono">{goal ? 'Yes' : 'No'}</span>
-
-                    <span className="text-muted-foreground">Summary Active:</span>
-                    <span className="text-right font-mono">{rollingSummary ? 'Yes' : 'No'}</span>
-
-                    <span className="text-muted-foreground">Turns in Context:</span>
-                    <span className="text-right font-mono">{Math.min(turns.length, maxTurnsInWindow)}</span>
+                    <span className="text-muted-foreground">Call Active:</span>
+                    <span className="text-right font-mono">{isCallLive ? 'Yes' : 'No'}</span>
                   </div>
                 </div>
 
                 {/* LLM I/O Log */}
                 <div className="space-y-2 pt-2 border-t">
-                  <Label className="text-sm font-medium">LLM I/O Log</Label>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Activity Log</Label>
+                    {llmLogs.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 text-[10px]"
+                        onClick={() => setLlmLogs([])}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
                   <div
                     ref={llmLogRef}
-                    className="p-2 bg-muted/30 rounded text-xs font-mono max-h-[200px] overflow-y-auto"
+                    className="p-2 bg-muted/30 rounded text-xs font-mono max-h-[300px] overflow-y-auto"
                   >
                     {llmLogs.length === 0 ? (
-                      <span className="text-muted-foreground italic">No LLM calls yet</span>
+                      <span className="text-muted-foreground italic">
+                        Activity will appear here during calls
+                      </span>
                     ) : (
                       llmLogs.map((log) => (
                         <div key={log.id} className="mb-2 pb-2 border-b border-muted last:border-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                               log.type === 'request'
                                 ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
-                                : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                                : log.type === 'response'
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                                : log.type === 'transcript'
+                                ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
+                                : 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400'
                             }`}>
-                              {log.type.toUpperCase()}
+                              {log.type === 'system' ? 'SYS' : log.type.toUpperCase().slice(0, 4)}
                             </span>
                             <span className="text-muted-foreground text-[10px]">
                               {new Date(log.timestamp).toLocaleTimeString()}
@@ -892,9 +1210,9 @@ CALL GOAL (YOUR ONLY MISSION):
                               {log.messages.length} messages ({log.model})
                             </div>
                           )}
-                          {log.type === 'response' && (
-                            <div className="text-[10px]">
-                              {log.response?.slice(0, 100)}...
+                          {(log.type === 'response' || log.type === 'system' || log.type === 'transcript') && log.response && (
+                            <div className="text-[10px] break-words">
+                              {log.response.slice(0, 150)}{log.response.length > 150 ? '...' : ''}
                               {log.tokens && (
                                 <span className="text-muted-foreground ml-1">
                                   (in:{log.tokens.input} out:{log.tokens.output})
