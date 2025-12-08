@@ -104,8 +104,18 @@ export async function generateRollingSummary(
     .replace(/\{\{turnsText\}\}/g, turnsText)
     .replace(/\{\{maxTokens\}\}/g, String(config_params.maxSummaryTokensHint));
 
+  const startTime = Date.now();
+
   try {
-    console.log(`[${callId}] Generating rolling summary...`);
+    console.log(`
+📝 ========================================
+📝 ROLLING SUMMARY REQUEST
+📝 ========================================
+[${callId}] Generating rolling summary from ${newTurns.length} turns
+  - Existing summary: ${existingSummary.length} chars
+  - New turns: ${turnsText.length} chars
+  - Prompt template: ${promptTemplate.length} chars`);
+
     const response = await groq.chat.completions.create({
       model: config.groq.model,
       messages: [
@@ -121,18 +131,31 @@ export async function generateRollingSummary(
     });
 
     const newSummary = response.choices[0]?.message?.content || "";
+    const latency = Date.now() - startTime;
+
     if (!newSummary) {
       console.warn(`[${callId}] LLM returned empty summary`);
       return context.rollingSummary;
     }
 
-    console.log(`[${callId}] Summary updated (${newSummary.length} chars)`);
+    console.log(`
+📝 ========================================
+📝 ROLLING SUMMARY RESPONSE
+📝 ========================================
+[${callId}] Summary updated in ${latency}ms
+  - New summary: ${newSummary.length} chars
+  - Tokens: input=${response.usage?.prompt_tokens || 0}, output=${response.usage?.completion_tokens || 0}
+  - Content preview: "${newSummary.slice(0, 100)}${newSummary.length > 100 ? "..." : ""}"`);
+
     return newSummary;
   } catch (error) {
-    console.error(
-      `[${callId}] Failed to generate rolling summary:`,
-      error instanceof Error ? error.message : error
-    );
+    const latency = Date.now() - startTime;
+    console.error(`
+❌ ========================================
+❌ ROLLING SUMMARY ERROR
+❌ ========================================
+[${callId}] Failed to generate rolling summary after ${latency}ms
+  - Error: ${error instanceof Error ? error.message : String(error)}`);
     // Return existing summary on error (resilient fallback)
     return context.rollingSummary;
   }
