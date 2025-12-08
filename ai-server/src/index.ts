@@ -32,6 +32,46 @@ const deepgram = createDeepgramClient();
 // -----------------------------------------------------------------------------
 
 /**
+ * Extract the speech text from an LLM response.
+ * Handles two response formats:
+ * 1. JSON object with "speak" field: {"speak": "text to speak", "behavior": "...", "internal": "..."}
+ * 2. Plain text string (returned as-is)
+ *
+ * @param llmResponse - The raw response from the LLM
+ * @returns The text that should be sent to TTS
+ */
+function extractSpeechText(llmResponse: string): string {
+  const trimmed = llmResponse.trim();
+
+  // Check if response looks like JSON (starts with {)
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      // If it has a "speak" field, use that
+      if (typeof parsed.speak === "string") {
+        console.log("[LLM] Parsed JSON response, extracting 'speak' field");
+        return parsed.speak;
+      }
+      // If no speak field but has text field, try that
+      if (typeof parsed.text === "string") {
+        console.log("[LLM] Parsed JSON response, extracting 'text' field");
+        return parsed.text;
+      }
+      // If no recognized field, log warning and return original
+      console.warn("[LLM] JSON response has no 'speak' or 'text' field, using raw response");
+      return llmResponse;
+    } catch (parseError) {
+      // Not valid JSON despite starting with {, use as-is
+      console.log("[LLM] Response starts with { but is not valid JSON, using raw response");
+      return llmResponse;
+    }
+  }
+
+  // Plain text response, return as-is
+  return llmResponse;
+}
+
+/**
  * Estimate what portion of text was actually spoken based on playback duration.
  * Uses average speaking rate of ~150 words per minute (2.5 words/second).
  * @param fullText - The complete text that was sent to TTS
@@ -191,11 +231,34 @@ async function scheduleTtsResponse(
       return;
     }
 
+    // Extract speech text from LLM response (handles JSON format with "speak" field)
+    const speechText = extractSpeechText(aiText);
+
+    if (!speechText) {
+      console.warn("⚠️ No speech text extracted from LLM response");
+      if (canSpeak(callContext, ws)) {
+        ws.send(
+          JSON.stringify({
+            event: "error",
+            payload: { message: "No speech text in AI response" },
+          })
+        );
+      }
+      return;
+    }
+
+    // Log both raw and extracted for debugging
+    if (speechText !== aiText) {
+      console.log("🤖 AI raw response:", aiText.substring(0, 200) + (aiText.length > 200 ? "..." : ""));
+      console.log("🤖 AI speech text:", speechText);
+    }
+
     // Append assistant turn to the call context if callId is available
+    // Store only the speech text (what will actually be spoken)
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
         speaker: "assistant",
-        text: aiText,
+        text: speechText,
         timestamp: new Date().toISOString(),
       });
 
@@ -217,7 +280,8 @@ async function scheduleTtsResponse(
     }
 
     // Send to TTS only if we can still speak and seq is still valid
-    await sendTtsResponse(callContext, ws, aiText, expectedSeq);
+    // Use extracted speechText (not raw aiText) to send only speakable text to TTS
+    await sendTtsResponse(callContext, ws, speechText, expectedSeq);
 
     // Clear transcript after processing
     callContext.lastUserTranscript = "";
