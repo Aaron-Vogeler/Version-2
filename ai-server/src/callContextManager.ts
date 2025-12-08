@@ -5,6 +5,7 @@
  * Each call is scoped to a single Telnyx call ID and cleared on call end.
  * No cross-call memory is persisted.
  */
+import config from "./config";
 
 /**
  * Represents a single turn in the conversation.
@@ -27,6 +28,7 @@ export interface CallContext {
   goal?: string;
   assistantName?: string;
   userName?: string;
+  systemPrompt?: string; // Custom system prompt passed from frontend
   initiatedAt?: string;
 
   // Rolling summary and turn tracking
@@ -79,11 +81,11 @@ export interface ContextConfig {
   maxSummaryTokensHint: number; // Approximate max tokens for summary (e.g., 300)
 }
 
-// Default configuration
+// Default configuration - uses values from main config
 const defaultConfig: ContextConfig = {
-  maxTurnsInWindow: 12,
-  summaryUpdateIntervalTurns: 6,
-  maxSummaryTokensHint: 300,
+  maxTurnsInWindow: config.context.maxTurnsInWindow,
+  summaryUpdateIntervalTurns: config.context.summaryUpdateIntervalTurns,
+  maxSummaryTokensHint: config.context.maxSummaryTokensHint,
 };
 
 // In-memory store: Map of callId -> CallContext
@@ -246,6 +248,7 @@ export function getActiveCallIds(): string[] {
 /**
  * Format turns as a text block for LLM summary generation.
  * Used in the summarization prompt to show the LLM what needs to be summarized.
+ * Uses "RECEIVER" for caller since the AI assistant is making an outbound call.
  */
 export function formatTurnsForSummary(turns: Turn[]): string {
   if (turns.length === 0) {
@@ -253,7 +256,8 @@ export function formatTurnsForSummary(turns: Turn[]): string {
   }
   return turns
     .map((turn) => {
-      const speaker = turn.speaker.toUpperCase();
+      // Map "caller" to "RECEIVER" since AI is making outbound call to them
+      const speaker = turn.speaker === "caller" ? "RECEIVER" : turn.speaker.toUpperCase();
       return `[${turn.timestamp}] ${speaker}: ${turn.text}`;
     })
     .join("\n");
@@ -262,6 +266,7 @@ export function formatTurnsForSummary(turns: Turn[]): string {
 /**
  * Format recent turns as a message history for the LLM prompt.
  * Maps speakers to chat roles (caller/ivr -> user, assistant -> assistant).
+ * Uses [RECEIVER] label since the AI assistant is making an outbound call to them.
  */
 export function formatTurnsAsMessages(
   turns: Turn[]
@@ -270,10 +275,11 @@ export function formatTurnsAsMessages(
     const role =
       turn.speaker === "assistant" ? "assistant" : ("user" as const);
     // Include speaker label for clarity when multiple parties are involved
+    // Use "RECEIVER" since the AI assistant (Ferguson) is making an outbound call to them
     const speakerLabel =
       turn.speaker === "assistant"
         ? ""
-        : `[${turn.speaker.toUpperCase()}] `;
+        : "[RECEIVER] ";
     return {
       role,
       content: `${speakerLabel}${turn.text}`,

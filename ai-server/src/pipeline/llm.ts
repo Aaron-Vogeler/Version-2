@@ -16,45 +16,43 @@ export type CallContext = contextMgr.CallContext;
 
 /**
  * Build the system prompt dynamically, optionally injecting call goal context.
- * Replaces the hardcoded assistant name and user name with custom names from the call context.
- * @param context - Optional call context with goal, assistantName, and userName
+ * Uses variable keys: {ASSISTANT_NAME}, {USER_NAME} for placeholder replacement.
+ * Goal is always injected at the bottom in format: CALL GOAL (YOUR ONLY MISSION): "{goal}"
+ * @param context - Optional call context with goal, assistantName, userName, and systemPrompt
  * @returns The complete system prompt
  */
 function buildSystemPrompt(context?: CallContext): string {
-  let prompt = config.llm.systemPrompt;
+  // Use systemPrompt from context (passed from frontend), fall back to config (for backwards compat)
+  let prompt = context?.systemPrompt || config.llm.systemPrompt;
 
-  // Replace the hardcoded assistant name "Ferguson" with the custom name if provided
+  // If no prompt available, return empty (should not happen in normal flow)
+  if (!prompt) {
+    console.warn("[LLM] No system prompt available - neither from context nor config");
+    prompt = "";
+  }
+
+  // Get names from context or use defaults
   const assistantName = context?.assistantName || "Ferguson";
-
-  // Replace all occurrences of "Ferguson" with the custom assistant name
-  prompt = prompt.replace(/Ferguson/g, assistantName);
-
-  // Also handle lowercase "ferguson" if it appears
-  prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
-
-  // Replace the hardcoded user name "Aaron" with the custom name if provided
   const userName = context?.userName || "Aaron";
 
-  // Replace all occurrences of "Aaron" with the custom user name
+  // Replace variable keys {ASSISTANT_NAME} and {USER_NAME}
+  prompt = prompt.replace(/\{ASSISTANT_NAME\}/g, assistantName);
+  prompt = prompt.replace(/\{USER_NAME\}/g, userName);
+
+  // Also replace ASSISTANT_NAME and USER_NAME without curly braces (common mistake)
+  prompt = prompt.replace(/ASSISTANT_NAME/g, assistantName);
+  prompt = prompt.replace(/USER_NAME/g, userName);
+
+  // Also replace legacy hardcoded names for backwards compatibility
+  prompt = prompt.replace(/Ferguson/g, assistantName);
+  prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
   prompt = prompt.replace(/Aaron/g, userName);
 
+  // Inject goal at the bottom in simple format
   if (context?.goal) {
     prompt += `
 
-CALL GOAL (YOUR ONLY MISSION):
-"${context.goal}"
-
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Chow."
-- Do NOT deviate from this goal
-
-Remember: You are an AI phone agent. Strict scope control is mandatory.`;
+CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`;
   }
 
   return prompt;
@@ -87,27 +85,17 @@ export async function generateRollingSummary(
   const turnsText = contextMgr.formatTurnsForSummary(newTurns);
   const existingSummary = context.rollingSummary || "(empty)";
 
-  const summaryPrompt = `You are updating a rolling summary of a phone call between an AI assistant and a caller, and possibly multiple human agents.
-
-EXISTING SUMMARY (may be empty or partial):
-${existingSummary}
-
-NEW TRANSCRIPT TURNS (since that summary was created):
-${turnsText}
-
-Please return an UPDATED, CONCISE summary (max ~${config_params.maxSummaryTokensHint} tokens) that preserves:
-- The caller's main goal(s)
-- Key facts (names, dates, constraints, identifiers)
-- Important decisions / outcomes so far
-- Current status (who we're talking to, which department, on hold or not, etc.)
-- Any critical context for continuing the conversation
-
-Be concise and focus on what's most important to continue this call effectively.`;
+  // Use configurable rolling summary prompt from config
+  // Replace placeholders: {EXISTING_SUMMARY}, {TURNS_TEXT}, {MAX_TOKENS}
+  const summaryPrompt = config.llm.rollingSummaryPrompt
+    .replace(/\{EXISTING_SUMMARY\}/g, existingSummary)
+    .replace(/\{TURNS_TEXT\}/g, turnsText)
+    .replace(/\{MAX_TOKENS\}/g, String(config_params.maxSummaryTokensHint));
 
   try {
     console.log(`[${callId}] Generating rolling summary...`);
-    const summarySystemContent =
-      "You are a concise call summary generator. Create summaries that preserve the most important context for continuing phone conversations.";
+    // Use configurable system message from config
+    const summarySystemContent = config.llm.rollingSummarySystemMessage;
     const summaryMessages: Array<{ role: "system" | "user"; content: string }> = [
       { role: "system", content: summarySystemContent },
       { role: "user", content: summaryPrompt },
@@ -216,14 +204,16 @@ export async function generateAssistantReply(
     }
 
     // Add recent turns from the sliding window
+    // NOTE: The current user turn is already appended to context BEFORE calling this function,
+    // so it will be included in recentTurns. We don't add userText separately to avoid duplicates.
     const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
     recentTurnsCount = recentTurns.length;
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
+  } else {
+    // No context available - add raw userText as fallback
+    messages.push({ role: "user", content: userText });
   }
-
-  // Add the current user input as the final message
-  messages.push({ role: "user", content: userText });
 
   const startTime = Date.now();
   const response = await groq.chat.completions.create({

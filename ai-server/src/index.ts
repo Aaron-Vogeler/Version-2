@@ -19,8 +19,8 @@ import {
   getCustomRecordingMaxBytes,
 } from "./pipeline/recording";
 
-// Constants
-const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
+// Call control settings are now in config.callControl
+// TTS_DEBOUNCE_MS, BARGE_IN_COOLDOWN_MS, CALLER_UTTERANCE_FLUSH_MS, HANGUP_DELAY_MS
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -30,6 +30,46 @@ const deepgram = createDeepgramClient();
 // -----------------------------------------------------------------------------
 // HELPER FUNCTIONS
 // -----------------------------------------------------------------------------
+
+/**
+ * Extract the speech text from an LLM response.
+ * Handles two response formats:
+ * 1. JSON object with "speak" field: {"speak": "text to speak", "behavior": "...", "internal": "..."}
+ * 2. Plain text string (returned as-is)
+ *
+ * @param llmResponse - The raw response from the LLM
+ * @returns The text that should be sent to TTS
+ */
+function extractSpeechText(llmResponse: string): string {
+  const trimmed = llmResponse.trim();
+
+  // Check if response looks like JSON (starts with {)
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      // If it has a "speak" field, use that
+      if (typeof parsed.speak === "string") {
+        console.log("[LLM] Parsed JSON response, extracting 'speak' field");
+        return parsed.speak;
+      }
+      // If no speak field but has text field, try that
+      if (typeof parsed.text === "string") {
+        console.log("[LLM] Parsed JSON response, extracting 'text' field");
+        return parsed.text;
+      }
+      // If no recognized field, log warning and return original
+      console.warn("[LLM] JSON response has no 'speak' or 'text' field, using raw response");
+      return llmResponse;
+    } catch (parseError) {
+      // Not valid JSON despite starting with {, use as-is
+      console.log("[LLM] Response starts with { but is not valid JSON, using raw response");
+      return llmResponse;
+    }
+  }
+
+  // Plain text response, return as-is
+  return llmResponse;
+}
 
 /**
  * Estimate what portion of text was actually spoken based on playback duration.
@@ -90,10 +130,10 @@ function queueUserTranscript(
     clearTimeout(callContext.ttsDebounceTimer);
   }
 
-  // Schedule a new TTS response timer
+  // Schedule a new TTS response timer (uses configurable debounce)
   callContext.ttsDebounceTimer = setTimeout(() => {
     scheduleTtsResponse(callContext, ws, currentSeq);
-  }, TTS_DEBOUNCE_MS);
+  }, config.callControl.ttsDebounceMs);
 }
 
 /**
@@ -191,11 +231,34 @@ async function scheduleTtsResponse(
       return;
     }
 
+    // Extract speech text from LLM response (handles JSON format with "speak" field)
+    const speechText = extractSpeechText(aiText);
+
+    if (!speechText) {
+      console.warn("⚠️ No speech text extracted from LLM response");
+      if (canSpeak(callContext, ws)) {
+        ws.send(
+          JSON.stringify({
+            event: "error",
+            payload: { message: "No speech text in AI response" },
+          })
+        );
+      }
+      return;
+    }
+
+    // Log both raw and extracted for debugging
+    if (speechText !== aiText) {
+      console.log("🤖 AI raw response:", aiText.substring(0, 200) + (aiText.length > 200 ? "..." : ""));
+      console.log("🤖 AI speech text:", speechText);
+    }
+
     // Append assistant turn to the call context if callId is available
+    // Store only the speech text (what will actually be spoken)
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
         speaker: "assistant",
-        text: aiText,
+        text: speechText,
         timestamp: new Date().toISOString(),
       });
 
@@ -217,7 +280,8 @@ async function scheduleTtsResponse(
     }
 
     // Send to TTS only if we can still speak and seq is still valid
-    await sendTtsResponse(callContext, ws, aiText, expectedSeq);
+    // Use extracted speechText (not raw aiText) to send only speakable text to TTS
+    await sendTtsResponse(callContext, ws, speechText, expectedSeq);
 
     // Clear transcript after processing
     callContext.lastUserTranscript = "";
@@ -301,10 +365,10 @@ async function sendTtsResponse(
     // The HTTP response returns BEFORE audio finishes playing.
     // Telnyx webhooks (call.speak.ended) will set ttsState='idle' when playback truly ends.
 
-    // If AI said "Chow", wait a moment then hangup
+    // If AI said "Chow", wait a moment then hangup (uses configurable delay)
     if (shouldHangup && callContext.callControlId) {
-      console.log("⏳ Waiting 2 seconds for TTS to complete before hangup...");
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log(`⏳ Waiting ${config.callControl.hangupDelayMs}ms for TTS to complete before hangup...`);
+      await new Promise(resolve => setTimeout(resolve, config.callControl.hangupDelayMs));
 
       try {
         await hangupCall(callContext.callControlId);
@@ -925,11 +989,17 @@ wss.on("connection", async (ws) => {
       if (callContext.ttsState === "speaking" && callContext.callControlId) {
         // Apply cooldown to prevent spamming the stop endpoint
         const now = Date.now();
-        if (!callContext.bargeInCooldownUntil || now >= callContext.bargeInCooldownUntil) {
+
+        // Check grace period - don't trigger barge-in too soon after TTS starts (prevents echo issues)
+        const gracePeriodMs = config.callControl.bargeInGracePeriodMs;
+        const timeSinceTtsStart = callContext.speakStartedAt ? now - callContext.speakStartedAt : Infinity;
+        if (timeSinceTtsStart < gracePeriodMs) {
+          console.log(`[BARGE-IN] ⏳ Ignoring during grace period (${timeSinceTtsStart}ms < ${gracePeriodMs}ms): "${userText}"`);
+        } else if (!callContext.bargeInCooldownUntil || now >= callContext.bargeInCooldownUntil) {
           console.log(`[BARGE-IN] 🛑 Words detected while AI speaking: "${userText}" (callControlId: ${callContext.callControlId})`);
 
-          // Set cooldown (300ms) to prevent multiple rapid stops
-          callContext.bargeInCooldownUntil = now + 300;
+          // Set cooldown to prevent multiple rapid stops (uses configurable cooldown)
+          callContext.bargeInCooldownUntil = now + config.callControl.bargeInCooldownMs;
 
           // Mark as stopping
           callContext.ttsState = "stopping";
@@ -1013,16 +1083,16 @@ wss.on("connection", async (ws) => {
           clearTimeout(callContext.callerFinalFlushTimer);
         }
 
-        // Schedule flush timer (300ms of silence = utterance boundary)
+        // Schedule flush timer (configurable silence = utterance boundary)
         // Capture callContext in local variable to avoid closure issues with TypeScript
         const ctx = callContext;
         callContext.callerFinalFlushTimer = setTimeout(() => {
-          console.log("[TRANSCRIPT] Flush timer fired (300ms with no new final chunks)");
+          console.log(`[TRANSCRIPT] Flush timer fired (${config.callControl.callerUtteranceFlushMs}ms with no new final chunks)`);
           if (ctx) {
             flushCallerUtterance(ctx);
             ctx.callerFinalFlushTimer = undefined;
           }
-        }, 300);
+        }, config.callControl.callerUtteranceFlushMs);
       }
 
       // Queue the transcript with debounce for LLM response
@@ -1082,6 +1152,7 @@ wss.on("connection", async (ws) => {
           managedContext.userId = decoded.userId;
           managedContext.assistantName = decoded.assistantName || null;
           managedContext.userName = decoded.userName || null;
+          managedContext.systemPrompt = decoded.systemPrompt || null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";

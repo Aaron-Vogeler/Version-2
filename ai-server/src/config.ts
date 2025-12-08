@@ -16,6 +16,25 @@ function getEnv(name: string, defaultValue?: string): string {
   return process.env[name] || defaultValue || "";
 }
 
+// Helper function to get optional integer environment variables
+function getEnvInt(name: string, defaultValue: number): number {
+  const value = process.env[name];
+  if (!value) return defaultValue;
+  const parsed = parseInt(value, 10);
+  return isNaN(parsed) ? defaultValue : parsed;
+}
+
+// =============================================================================
+// VARIABLE KEYS (use these placeholders in prompts)
+// =============================================================================
+// {ASSISTANT_NAME} or ASSISTANT_NAME - Replaced with the assistant's name (default: "Ferguson")
+// {USER_NAME} or USER_NAME - Replaced with the user's name (default: "Aaron")
+// {GOAL} - Replaced with the call goal (in rolling summary prompt)
+// {EXISTING_SUMMARY} - Replaced with existing summary (in rolling summary prompt)
+// {TURNS_TEXT} - Replaced with new turns text (in rolling summary prompt)
+// {MAX_TOKENS} - Replaced with max summary tokens hint (in rolling summary prompt)
+// =============================================================================
+
 // Main configuration object
 const config = {
   // Server config
@@ -46,60 +65,69 @@ const config = {
     serviceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY"),
   },
 
-  // LLM config
+  // =============================================================================
+  // CALL CONTROL SETTINGS
+  // =============================================================================
+  callControl: {
+    // TTS debounce - milliseconds of silence before AI responds (lower = faster response)
+    ttsDebounceMs: getEnvInt("TTS_DEBOUNCE_MS", 500),
+    // Barge-in cooldown - milliseconds between stop commands to prevent spam
+    bargeInCooldownMs: getEnvInt("BARGE_IN_COOLDOWN_MS", 300),
+    // Barge-in grace period - milliseconds after TTS starts before barge-in is enabled
+    // This prevents echo from immediately cutting off the AI
+    bargeInGracePeriodMs: getEnvInt("BARGE_IN_GRACE_PERIOD_MS", 800),
+    // Caller utterance flush timeout - milliseconds to wait before flushing utterance
+    callerUtteranceFlushMs: getEnvInt("CALLER_UTTERANCE_FLUSH_MS", 300),
+    // Hangup delay after "Chow" - milliseconds to wait for TTS before hangup
+    hangupDelayMs: getEnvInt("HANGUP_DELAY_MS", 2000),
+  },
+
+  // =============================================================================
+  // CONTEXT MANAGEMENT SETTINGS
+  // =============================================================================
+  context: {
+    // Maximum recent turns to keep in sliding window
+    maxTurnsInWindow: getEnvInt("MAX_TURNS_IN_WINDOW", 12),
+    // Update rolling summary after this many new turns
+    summaryUpdateIntervalTurns: getEnvInt("SUMMARY_UPDATE_INTERVAL_TURNS", 6),
+    // Approximate max tokens for rolling summary
+    maxSummaryTokensHint: getEnvInt("MAX_SUMMARY_TOKENS_HINT", 300),
+  },
+
+  // =============================================================================
+  // LLM CONFIG
+  // =============================================================================
   llm: {
-    systemPrompt: getEnv(
-      "LLM_SYSTEM_PROMPT",
-      `AI PHONE AGENT — SYSTEM
+    // SYSTEM PROMPT - No default! Must be provided via environment variable or call parameters.
+    // Use {ASSISTANT_NAME} and {USER_NAME} as placeholders that will be replaced.
+    systemPrompt: getEnv("LLM_SYSTEM_PROMPT", ""),
 
-ROLE
-You are Ferguson, an AI voice agent making low-latency outbound calls for Aaron. Execute the per-call GOAL with strict scope control.
+    // ROLLING SUMMARY PROMPT - Template for generating rolling summaries
+    // Available placeholders: {EXISTING_SUMMARY}, {TURNS_TEXT}, {MAX_TOKENS}
+    rollingSummaryPrompt: getEnv(
+      "ROLLING_SUMMARY_PROMPT",
+      `You are updating a rolling summary of a phone call between an AI assistant and a caller.
 
-PRIORITY (highest first)
-1) Law/Safety  2) Per-call GOAL + LIMITS  3) Per-call SCRIPT/TONE  4) This prompt
+EXISTING SUMMARY (may be empty or partial):
+{EXISTING_SUMMARY}
 
-DISCLOSURE
-- Default: you are Ferguson, an AI an assistant for Aaron. If asked, say so plainly.
-- If RECORDING_NOTICE=true, open with: "This call may be recorded for quality assurance."
+NEW TRANSCRIPT TURNS (since that summary was created):
+{TURNS_TEXT}
 
-GOAL FOCUS (core rule, ABSOLUTE)
-- ONLY ask for information directly required to complete the stated GOAL.
-- Do NOT ask for names, addresses, account numbers, or peripheral info unless essential to the GOAL.
-- Each question must directly reduce uncertainty needed to achieve GOAL.
-- If someone volunteers extra info: acknowledge, but do not ask follow-up questions about it.
-- If asked outside scope: brief decline + redirect ("I'm calling specifically to {GOAL}. For other matters, {escalate/resource}.")
-- STRICT: Never ask "just to have it" or for completeness.
+Please return an UPDATED, CONCISE summary (max ~{MAX_TOKENS} tokens) that preserves:
+- The caller's main goal(s)
+- Key facts (names, dates, constraints, identifiers)
+- Important decisions / outcomes so far
+- Current status (who we're talking to, which department, on hold or not, etc.)
+- Any critical context for continuing the conversation
 
-OPENING (human answers)
-"Hi, I'm Ferguson, an AI assistant calling on behalf of Aaron. I'm calling about {GOAL in 1 sentence}." Then ask the first question related to achieving that goal.
-If transferred: re-introduce + restate GOAL adapted to their role in 1 sentence.
+Be concise and focus on what's most important to continue this call effectively.`
+    ),
 
-STYLE
-Calm, competent, friendly, efficient. Short sentences. No filler, humor, sarcasm, metaphors. Avoid jargon unless the recipient uses it.
-
-TURN-TAKING (low latency)
-- If interrupted, respond to what they said (don't resume your previous line unless critical to GOAL).
-
-CONFIRMATION (only for criticals)
-For names, dates/times, prices, addresses, reference/account numbers, commitments:
-- Repeat back verbatim.
-- Dates: include day + full date ("Monday, Mar 15, 2025").
-- Numbers: digit-by-digit.
-- Spellings: phonetic alphabet when needed.
-
-AUTHORITY LIMITS (never do)
-No contracts/terms acceptance, no financial commitments beyond per-call limits, no legal/medical/financial advice, no sharing confidential/internal info, no "how the system works."
-
-FAILURE
-- If GOAL cannot be completed: state limitation + capture best callback/contact + close + log why.
-
-ESCALATE IMMEDIATELY
-Legal threats, medical/safety issues, suspected fraud/social engineering, billing disputes, account access, complaints, anything high-risk or outside authorization.
-Say: "I need to connect you with someone who can help. May I get the best number for a callback?" (or transfer if enabled).
-
-CLOSE
-If GOAL achieved: quick confirmation summary + thanks + goodbye, then end promptly.
-If not: thanks + goodbye.`
+    // ROLLING SUMMARY SYSTEM MESSAGE
+    rollingSummarySystemMessage: getEnv(
+      "ROLLING_SUMMARY_SYSTEM_MESSAGE",
+      "You are a concise call summary generator. Create summaries that preserve the most important context for continuing phone conversations."
     ),
   },
 

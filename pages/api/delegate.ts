@@ -29,10 +29,15 @@ export default async function handler(
 
   try {
     // Validate request body
-    const { goal, to_number } = req.body;
+    const { goal, to_number, custom_system_prompt } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
+    }
+
+    // System prompt is required for calls
+    if (!custom_system_prompt) {
+      return res.status(400).json({ error: 'Missing required field: custom_system_prompt' });
     }
 
     // Extract user ID from NextAuth session
@@ -79,6 +84,7 @@ export default async function handler(
         userId,
         assistantName: customAssistantName,
         userName: firstName,
+        systemPrompt: custom_system_prompt,
       }),
     });
 
