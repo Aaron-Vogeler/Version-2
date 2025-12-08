@@ -17,12 +17,13 @@ export type CallContext = contextMgr.CallContext;
 /**
  * Build the system prompt dynamically, optionally injecting call goal context.
  * Replaces variable keys with custom names from the call context.
- * @param context - Optional call context with goal, assistantName, userName, and customSystemPrompt
+ * @param context - Optional call context with goal, assistantName, userName
+ * @param customSystemPrompt - Optional custom system prompt to override default
  * @returns The complete system prompt
  */
-function buildSystemPrompt(context?: CallContext & { customSystemPrompt?: string }): string {
+function buildSystemPrompt(context?: CallContext, customSystemPrompt?: string): string {
   // Use custom system prompt if provided, otherwise use config default
-  let prompt = context?.customSystemPrompt || config.llm.systemPrompt;
+  let prompt = customSystemPrompt || context?.customSystemPrompt || config.llm.systemPrompt;
 
   // Validate that a system prompt is provided
   if (!prompt) {
@@ -173,7 +174,7 @@ export async function generateAssistantReply(
   context?: CallContext,
   customSystemPrompt?: string
 ): Promise<string> {
-  const systemPrompt = buildSystemPrompt({ ...context, customSystemPrompt });
+  const systemPrompt = buildSystemPrompt(context, customSystemPrompt);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemPrompt },
   ];

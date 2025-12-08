@@ -944,7 +944,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Custom Prompt:</span>
-            <span className="font-mono">{useCustomPrompt ? 'Yes' : 'No'}</span>
+            <span className="font-mono">{customSystemPrompt ? 'Yes' : 'No'}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Phone Number:</span>
