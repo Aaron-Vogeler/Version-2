@@ -28,7 +28,11 @@ export function setLLMEventLogger(callback: ((event: any) => void) | null) {
 /**
  * Emit an LLM event to the frontend if a logger is registered
  */
-function emitLLMEvent(type: string, callId: string, data: any) {
+function emitLLMEvent(
+  type: 'request' | 'response' | 'error' | 'summary_request' | 'summary_response' | 'summary_error',
+  callId: string,
+  data: any
+) {
   if (llmEventLogger) {
     llmEventLogger({
       type,
