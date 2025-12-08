@@ -32,20 +32,35 @@ export async function stopSpeaking(callControlId: string): Promise<void> {
 }
 
 /**
+ * Options for TTS synthesis
+ */
+interface TTSOptions {
+  voiceId?: string;     // Custom voice ID (overrides default)
+  speechRate?: number;  // Speech rate multiplier (0.5-2.0)
+}
+
+/**
  * Speaks text on an active Telnyx call using the speak endpoint.
  * Telnyx handles TTS synthesis and streaming directly.
  *
  * @param aiText - The text to synthesize and speak
  * @param callControlId - The Telnyx call control ID
+ * @param options - Optional TTS configuration (voice, speech rate)
  */
 export async function synthesizeSpeech(
   aiText: string,
-  callControlId: string
+  callControlId: string,
+  options?: TTSOptions
 ): Promise<void> {
   const startTime = Date.now();
+  const voiceId = options?.voiceId || config.telnyx.ttsVoiceId;
+
   console.log("[TTS] 🎤 ========== TTS SYNTHESIS START ==========");
   console.log(`[TTS] 📝 Text to synthesize (callControlId: ${callControlId}):`, aiText);
-  console.log("[TTS] 🗣️ TTS Voice:", config.telnyx.ttsVoiceId);
+  console.log("[TTS] 🗣️ TTS Voice:", voiceId);
+  if (options?.speechRate) {
+    console.log("[TTS] ⚡ Speech Rate:", options.speechRate);
+  }
   console.log("[TTS] 📤 Calling Telnyx Speak API...");
 
   try {
@@ -56,7 +71,7 @@ export async function synthesizeSpeech(
       `https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`,
       {
         payload: aiText,
-        voice: config.telnyx.ttsVoiceId,
+        voice: voiceId,
       },
       {
         headers: {

@@ -30,6 +30,11 @@ export interface AIConfig {
 
   // Call Control / Latency
   silenceTimeoutMs?: number;      // Default: 500 (Waits for silence before responding)
+  interruptionMode?: 'normal' | 'sensitive' | 'patient'; // Response timing preset
+
+  // Voice / TTS Settings
+  voiceId?: string;               // Telnyx TTS voice ID
+  speechRate?: number;            // TTS speech rate multiplier (0.5-2.0)
 }
 
 /**
