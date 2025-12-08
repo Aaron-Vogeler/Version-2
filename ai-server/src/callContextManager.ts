@@ -28,6 +28,7 @@ export interface CallContext {
   goal?: string;
   assistantName?: string;
   userName?: string;
+  systemPrompt?: string; // Custom system prompt passed from frontend
   initiatedAt?: string;
 
   // Rolling summary and turn tracking

@@ -18,11 +18,18 @@ export type CallContext = contextMgr.CallContext;
  * Build the system prompt dynamically, optionally injecting call goal context.
  * Uses variable keys: {ASSISTANT_NAME}, {USER_NAME} for placeholder replacement.
  * Goal is always injected at the bottom in format: CALL GOAL (YOUR ONLY MISSION): "{goal}"
- * @param context - Optional call context with goal, assistantName, and userName
+ * @param context - Optional call context with goal, assistantName, userName, and systemPrompt
  * @returns The complete system prompt
  */
 function buildSystemPrompt(context?: CallContext): string {
-  let prompt = config.llm.systemPrompt;
+  // Use systemPrompt from context (passed from frontend), fall back to config (for backwards compat)
+  let prompt = context?.systemPrompt || config.llm.systemPrompt;
+
+  // If no prompt available, return empty (should not happen in normal flow)
+  if (!prompt) {
+    console.warn("[LLM] No system prompt available - neither from context nor config");
+    prompt = "";
+  }
 
   // Get names from context or use defaults
   const assistantName = context?.assistantName || "Ferguson";

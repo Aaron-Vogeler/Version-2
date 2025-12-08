@@ -11,6 +11,7 @@ interface OutboundCallRequest {
   userId: string;
   assistantName?: string;
   userName?: string;
+  systemPrompt?: string;
 }
 
 interface TelnyxCallResponse {
@@ -28,7 +29,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName } = req.body as OutboundCallRequest;
+    const { goal, toNumber, userId, assistantName, userName, systemPrompt } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -38,12 +39,21 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName) in base64
+    // System prompt is required
+    if (!systemPrompt) {
+      return res.status(400).json({
+        status: "error",
+        message: "Missing required field: systemPrompt",
+      });
+    }
+
+    // Encode client state (goal + userId + assistantName + userName + systemPrompt) in base64
     const clientStatePayload = JSON.stringify({
       goal,
       userId,
       assistantName: assistantName || null,
       userName: userName || null,
+      systemPrompt: systemPrompt,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

@@ -382,6 +382,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           goal,
           context: additionalContext,
           to_number: toNumber,
+          custom_system_prompt: customSystemPrompt,
         }),
       });
 
