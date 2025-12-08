@@ -16,6 +16,23 @@ export interface Turn {
 }
 
 /**
+ * Per-call AI configuration that can override global defaults.
+ * Passed from the frontend through the API chain to the AI execution logic.
+ */
+export interface AIConfig {
+  // LLM Customization
+  systemPrompt?: string;          // Overrides config.llm.systemPrompt
+  summaryPrompt?: string;         // Overrides the hardcoded rolling summary prompt
+
+  // Context Window Logic
+  maxTurnsInWindow?: number;      // Default: 12
+  summaryUpdateInterval?: number; // Default: 6 (Refresh cadence in turns)
+
+  // Call Control / Latency
+  silenceTimeoutMs?: number;      // Default: 500 (Waits for silence before responding)
+}
+
+/**
  * Within-call context manager that maintains a rolling summary and sliding window.
  */
 export interface CallContext {
@@ -28,6 +45,9 @@ export interface CallContext {
   assistantName?: string;
   userName?: string;
   initiatedAt?: string;
+
+  // Per-call AI configuration (overrides global defaults)
+  aiConfig?: AIConfig;
 
   // Rolling summary and turn tracking
   rollingSummary: string; // Natural language summary of entire call so far
@@ -119,6 +139,7 @@ export function getOrCreateContext(
 /**
  * Append a new turn to the CallContext.
  * Automatically trims old turns if the window exceeds maxTurnsInWindow.
+ * Uses per-call aiConfig values if available, falling back to global defaults.
  */
 export function appendTurn(
   callId: string,
@@ -130,11 +151,14 @@ export function appendTurn(
   // Add the new turn
   context.turns.push(turn);
 
+  // Use per-call aiConfig if available, otherwise fall back to config/defaults
+  const maxTurnsInWindow = context.aiConfig?.maxTurnsInWindow ?? config.maxTurnsInWindow;
+
   // Trim turns that are older than the window and have been included in the summary
   // Keep all turns that haven't been summarized yet
   const turnsToKeepFromSummary =
     context.turns.length - (context.lastSummaryUpdateTurnIndex + 1);
-  const maxTurnsToKeepForRecency = config.maxTurnsInWindow;
+  const maxTurnsToKeepForRecency = maxTurnsInWindow;
   const minTurnsToKeep = Math.max(turnsToKeepFromSummary, maxTurnsToKeepForRecency);
 
   if (context.turns.length > minTurnsToKeep) {
@@ -174,13 +198,19 @@ export function getNewTurnsForSummary(callId: string): Turn[] {
 /**
  * Check if we should update the summary.
  * Returns true if enough new turns have accumulated.
+ * Uses per-call aiConfig.summaryUpdateInterval if available, falling back to global defaults.
  */
 export function shouldUpdateSummary(
   callId: string,
   config: ContextConfig = defaultConfig
 ): boolean {
+  const context = getContext(callId);
   const newTurns = getNewTurnsForSummary(callId);
-  return newTurns.length >= config.summaryUpdateIntervalTurns;
+
+  // Use per-call aiConfig if available, otherwise fall back to config/defaults
+  const summaryUpdateInterval = context?.aiConfig?.summaryUpdateInterval ?? config.summaryUpdateIntervalTurns;
+
+  return newTurns.length >= summaryUpdateInterval;
 }
 
 /**

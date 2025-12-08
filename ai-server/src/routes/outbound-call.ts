@@ -5,12 +5,24 @@ import { upsertCall, isSupabaseConfigured } from "../utils/supabase";
 
 const router = Router();
 
+/**
+ * Per-call AI configuration (mirrors frontend AIConfig)
+ */
+interface AIConfig {
+  systemPrompt?: string;
+  summaryPrompt?: string;
+  maxTurnsInWindow?: number;
+  summaryUpdateInterval?: number;
+  silenceTimeoutMs?: number;
+}
+
 interface OutboundCallRequest {
   goal: string;
   toNumber: string;
   userId: string;
   assistantName?: string;
   userName?: string;
+  aiConfig?: AIConfig;
 }
 
 interface TelnyxCallResponse {
@@ -28,7 +40,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName } = req.body as OutboundCallRequest;
+    const { goal, toNumber, userId, assistantName, userName, aiConfig } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -38,14 +50,27 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName) in base64
-    const clientStatePayload = JSON.stringify({
+    // Build client state payload with minimal JSON (only include non-null values)
+    // This keeps the base64 encoded state within Telnyx size limits
+    const clientStateObj: Record<string, any> = {
       goal,
       userId,
-      assistantName: assistantName || null,
-      userName: userName || null,
-    });
+    };
+
+    // Only include optional fields if they have values
+    if (assistantName) clientStateObj.assistantName = assistantName;
+    if (userName) clientStateObj.userName = userName;
+
+    // Include aiConfig if provided (minified to save space)
+    if (aiConfig && Object.keys(aiConfig).length > 0) {
+      clientStateObj.aiConfig = aiConfig;
+    }
+
+    const clientStatePayload = JSON.stringify(clientStateObj);
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
+
+    // Log client_state size for monitoring (Telnyx has a ~1000 char limit for client_state)
+    console.log(`📊 client_state size: ${clientStateBase64.length} chars`);
 
     // Call Telnyx Call Control API
     const telnyxResponse = await axios.post<TelnyxCallResponse>(

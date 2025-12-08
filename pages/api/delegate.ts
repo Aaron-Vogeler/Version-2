@@ -29,7 +29,7 @@ export default async function handler(
 
   try {
     // Validate request body
-    const { goal, to_number } = req.body;
+    const { goal, to_number, aiConfig } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
@@ -79,6 +79,8 @@ export default async function handler(
         userId,
         assistantName: customAssistantName,
         userName: firstName,
+        // Forward AI config if provided (for per-call customization)
+        ...(aiConfig && { aiConfig }),
       }),
     });
 

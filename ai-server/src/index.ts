@@ -19,8 +19,8 @@ import {
   getCustomRecordingMaxBytes,
 } from "./pipeline/recording";
 
-// Constants
-const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
+// Default silence timeout (can be overridden per-call via aiConfig.silenceTimeoutMs)
+const DEFAULT_SILENCE_TIMEOUT_MS = 500; // 500 milliseconds of silence before responding
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -90,10 +90,13 @@ function queueUserTranscript(
     clearTimeout(callContext.ttsDebounceTimer);
   }
 
+  // Use per-call silenceTimeoutMs from aiConfig, falling back to default
+  const silenceTimeoutMs = callContext.aiConfig?.silenceTimeoutMs ?? DEFAULT_SILENCE_TIMEOUT_MS;
+
   // Schedule a new TTS response timer
   callContext.ttsDebounceTimer = setTimeout(() => {
     scheduleTtsResponse(callContext, ws, currentSeq);
-  }, TTS_DEBOUNCE_MS);
+  }, silenceTimeoutMs);
 }
 
 /**
@@ -1088,6 +1091,18 @@ wss.on("connection", async (ws) => {
           managedContext.lastTranscriptAt = 0;
           managedContext.deepgramSocket = dgLive;
 
+          // Store per-call AI configuration if provided
+          if (decoded.aiConfig) {
+            managedContext.aiConfig = decoded.aiConfig;
+            console.log("🤖 Per-call AI config loaded:", {
+              silenceTimeoutMs: decoded.aiConfig.silenceTimeoutMs,
+              maxTurnsInWindow: decoded.aiConfig.maxTurnsInWindow,
+              summaryUpdateInterval: decoded.aiConfig.summaryUpdateInterval,
+              hasSystemPrompt: !!decoded.aiConfig.systemPrompt,
+              hasSummaryPrompt: !!decoded.aiConfig.summaryPrompt,
+            });
+          }
+
           // Create the local callContext reference for backward compatibility
           callContext = managedContext;
 
@@ -1108,6 +1123,7 @@ wss.on("connection", async (ws) => {
             goal: callContext.goal,
             userId: callContext.userId,
             customRecordingEnabled: isCustomRecordingEnabled(),
+            hasAiConfig: !!callContext.aiConfig,
           });
         } catch (err) {
           console.error("❌ Failed to decode Telnyx client_state:", err instanceof Error ? err.message : err);

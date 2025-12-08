@@ -15,12 +15,14 @@ export type CallContext = contextMgr.CallContext;
 
 /**
  * Build the system prompt dynamically, optionally injecting call goal context.
+ * Checks for custom system prompt in aiConfig first, falling back to default.
  * Replaces the hardcoded assistant name and user name with custom names from the call context.
- * @param context - Optional call context with goal, assistantName, and userName
+ * @param context - Optional call context with goal, assistantName, userName, and aiConfig
  * @returns The complete system prompt
  */
 function buildSystemPrompt(context?: CallContext): string {
-  let prompt = config.llm.systemPrompt;
+  // Use custom system prompt from aiConfig if provided, otherwise use default
+  let prompt = context?.aiConfig?.systemPrompt || config.llm.systemPrompt;
 
   // Replace the hardcoded assistant name "Ferguson" with the custom name if provided
   const assistantName = context?.assistantName || "Ferguson";
@@ -59,9 +61,28 @@ Remember: You are an AI phone agent. Strict scope control is mandatory.`;
   return prompt;
 }
 
+// Default summary prompt template (can be overridden via aiConfig.summaryPrompt)
+const DEFAULT_SUMMARY_PROMPT_TEMPLATE = `You are updating a rolling summary of a phone call between an AI assistant and a caller, and possibly multiple human agents.
+
+EXISTING SUMMARY (may be empty or partial):
+{{existingSummary}}
+
+NEW TRANSCRIPT TURNS (since that summary was created):
+{{turnsText}}
+
+Please return an UPDATED, CONCISE summary (max ~{{maxTokens}} tokens) that preserves:
+- The caller's main goal(s)
+- Key facts (names, dates, constraints, identifiers)
+- Important decisions / outcomes so far
+- Current status (who we're talking to, which department, on hold or not, etc.)
+- Any critical context for continuing the conversation
+
+Be concise and focus on what's most important to continue this call effectively.`;
+
 /**
  * Generate a rolling summary of the call by calling the LLM.
  * This is called periodically as new turns accumulate.
+ * Uses aiConfig.summaryPrompt if provided, otherwise uses default template.
  * @param callId - The call ID
  * @param config_override - Optional context configuration
  * @returns The updated summary, or existing summary if generation fails
@@ -86,22 +107,14 @@ export async function generateRollingSummary(
   const turnsText = contextMgr.formatTurnsForSummary(newTurns);
   const existingSummary = context.rollingSummary || "(empty)";
 
-  const summaryPrompt = `You are updating a rolling summary of a phone call between an AI assistant and a caller, and possibly multiple human agents.
+  // Use custom summary prompt from aiConfig if provided, otherwise use default template
+  const promptTemplate = context.aiConfig?.summaryPrompt || DEFAULT_SUMMARY_PROMPT_TEMPLATE;
 
-EXISTING SUMMARY (may be empty or partial):
-${existingSummary}
-
-NEW TRANSCRIPT TURNS (since that summary was created):
-${turnsText}
-
-Please return an UPDATED, CONCISE summary (max ~${config_params.maxSummaryTokensHint} tokens) that preserves:
-- The caller's main goal(s)
-- Key facts (names, dates, constraints, identifiers)
-- Important decisions / outcomes so far
-- Current status (who we're talking to, which department, on hold or not, etc.)
-- Any critical context for continuing the conversation
-
-Be concise and focus on what's most important to continue this call effectively.`;
+  // Replace placeholders in the prompt template
+  const summaryPrompt = promptTemplate
+    .replace(/\{\{existingSummary\}\}/g, existingSummary)
+    .replace(/\{\{turnsText\}\}/g, turnsText)
+    .replace(/\{\{maxTokens\}\}/g, String(config_params.maxSummaryTokensHint));
 
   try {
     console.log(`[${callId}] Generating rolling summary...`);
@@ -186,8 +199,11 @@ export async function generateAssistantReply(
       });
     }
 
+    // Use per-call maxTurnsInWindow from aiConfig if available, otherwise use default (12)
+    const maxTurns = context.aiConfig?.maxTurnsInWindow ?? 12;
+
     // Add recent turns from the sliding window
-    const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
+    const recentTurns = contextMgr.getRecentTurns(context.callId, maxTurns);
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
   }
