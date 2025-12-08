@@ -7,7 +7,7 @@ import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
-import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall, setLLMEventLogger } from "./pipeline/llm";
+import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
 import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording } from "./utils/supabase";
@@ -871,18 +871,6 @@ wss.on("connection", async (ws) => {
 
   // Initialize call context (populated when "start" message arrives)
   let callContext: CallContext | undefined;
-
-  // Set up LLM event logging for this WebSocket connection
-  setLLMEventLogger((event) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          event: "llm_log",
-          payload: event,
-        })
-      );
-    }
-  });
 
   // Create a Deepgram live stream with VAD events enabled for instant barge-in
   const dgLive = await deepgram.listen.live({

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
+import { logLLMEvent } from "../utils/supabase";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -9,38 +10,21 @@ const groq = new OpenAI({
 });
 
 /**
- * Optional callback for logging LLM events to frontend via WebSocket
+ * Log an LLM event to Supabase
  */
-let llmEventLogger: ((event: {
-  type: 'request' | 'response' | 'error' | 'summary_request' | 'summary_response' | 'summary_error';
-  callId: string;
-  timestamp: string;
-  data: any;
-}) => void) | null = null;
-
-/**
- * Set the LLM event logger callback
- */
-export function setLLMEventLogger(callback: ((event: any) => void) | null) {
-  llmEventLogger = callback;
-}
-
-/**
- * Emit an LLM event to the frontend if a logger is registered
- */
-function emitLLMEvent(
+async function emitLLMEvent(
   type: 'request' | 'response' | 'error' | 'summary_request' | 'summary_response' | 'summary_error',
   callId: string,
   data: any
 ) {
-  if (llmEventLogger) {
-    llmEventLogger({
-      type,
-      callId,
-      timestamp: new Date().toISOString(),
-      data,
-    });
-  }
+  // Fire and forget - don't block LLM operations on logging
+  logLLMEvent(callId, {
+    type,
+    timestamp: new Date().toISOString(),
+    data,
+  }).catch((err) => {
+    console.error(`[LLM] Failed to log ${type} event:`, err);
+  });
 }
 
 /**
