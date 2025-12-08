@@ -115,6 +115,27 @@ EXECUTION RULES FOR THIS CALL:
 
 Remember: You are an AI assistant. Strict scope control is mandatory.`;
 
+// Default summary template
+const DEFAULT_SUMMARY_TEMPLATE = `You are updating a rolling summary of a conversation between an AI assistant and a caller.
+
+EXISTING SUMMARY (may be empty or partial):
+{existingSummary}
+
+NEW TRANSCRIPT TURNS (since that summary was created):
+{turnsText}
+
+Please return an UPDATED, CONCISE summary (max ~300 tokens) that preserves:
+- The caller's main goal(s)
+- Key facts (names, dates, constraints, identifiers)
+- Important decisions / outcomes so far
+- Current status (who we're talking to, which department, on hold or not, etc.)
+- Any critical context for continuing the conversation
+
+Be concise and focus on what's most important to continue this conversation effectively.`;
+
+// Default summary system message
+const DEFAULT_SUMMARY_SYSTEM_MESSAGE = `You are a concise conversation summary generator. Create summaries that preserve the most important context for continuing conversations.`;
+
 // Default system prompt placeholder
 const DEFAULT_SYSTEM_PROMPT_PLACEHOLDER = 'Loading default system prompt...';
 
@@ -135,6 +156,10 @@ export function GroqTextChat() {
   const [rollingSummary, setRollingSummary] = useState('');
   const [lastSummaryTurnIndex, setLastSummaryTurnIndex] = useState(-1);
   const [generatingSummary, setGeneratingSummary] = useState(false);
+
+  // Summary generation templates
+  const [summaryTemplate, setSummaryTemplate] = useState(DEFAULT_SUMMARY_TEMPLATE);
+  const [summarySystemMessage, setSummarySystemMessage] = useState(DEFAULT_SUMMARY_SYSTEM_MESSAGE);
 
   // Settings state
   const [showSettings, setShowSettings] = useState(true);
@@ -165,6 +190,9 @@ export function GroqTextChat() {
   // Request info modal state
   const [selectedRequestInfo, setSelectedRequestInfo] = useState<RequestInfo | null>(null);
   const [showRequestInfoModal, setShowRequestInfoModal] = useState(false);
+
+  // Summary template editor state
+  const [showSummaryTemplateEditor, setShowSummaryTemplateEditor] = useState(false);
 
   // Load available models and defaults on mount
   useEffect(() => {
@@ -225,6 +253,8 @@ export function GroqTextChat() {
           turns: turnsForSummary,
           rollingSummary: rollingSummary || undefined,
           model: selectedModel,
+          summaryTemplate: summaryTemplate !== DEFAULT_SUMMARY_TEMPLATE ? summaryTemplate : undefined,
+          summarySystemMessage: summarySystemMessage !== DEFAULT_SUMMARY_SYSTEM_MESSAGE ? summarySystemMessage : undefined,
         }),
       });
 
@@ -429,6 +459,8 @@ export function GroqTextChat() {
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
+    setSummaryTemplate(DEFAULT_SUMMARY_TEMPLATE);
+    setSummarySystemMessage(DEFAULT_SUMMARY_SYSTEM_MESSAGE);
     if (models.length > 0) {
       setSelectedModel(models[0].id);
     }
@@ -831,6 +863,16 @@ export function GroqTextChat() {
             {generatingSummary && (
               <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground" />
             )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowSummaryTemplateEditor(true)}
+              className="h-6 text-xs"
+              title="Edit summary generation template"
+            >
+              <Code className="h-3 w-3 mr-1" />
+              Template
+            </Button>
             <Badge variant="outline" className="text-xs">
               {turns.length - (lastSummaryTurnIndex + 1)}/{contextConfig.summaryUpdateIntervalTurns} turns until update
             </Badge>
@@ -1040,6 +1082,69 @@ export function GroqTextChat() {
                 Reset to Default
               </Button>
               <Button onClick={() => setShowGoalTemplateEditor(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Summary Template Editor Dialog */}
+      <Dialog open={showSummaryTemplateEditor} onOpenChange={setShowSummaryTemplateEditor}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Summary Generation Template</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <p className="text-sm text-muted-foreground">
+              Control how the rolling summary is generated. The template uses placeholders that get replaced with actual values.
+            </p>
+
+            {/* System Message */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Summary System Message</Label>
+              <p className="text-xs text-muted-foreground">
+                This is the system prompt used when generating summaries.
+              </p>
+              <Textarea
+                value={summarySystemMessage}
+                onChange={(e) => setSummarySystemMessage(e.target.value)}
+                className="min-h-[80px] font-mono text-sm"
+              />
+            </div>
+
+            {/* User Prompt Template */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Summary User Prompt Template</Label>
+              <p className="text-xs text-muted-foreground">
+                This template generates the user message for summary requests. Use these placeholders:
+              </p>
+              <div className="flex gap-2 text-xs">
+                <code className="bg-muted px-2 py-1 rounded">{'{existingSummary}'}</code>
+                <span className="text-muted-foreground">- Current summary (or "(empty)")</span>
+              </div>
+              <div className="flex gap-2 text-xs">
+                <code className="bg-muted px-2 py-1 rounded">{'{turnsText}'}</code>
+                <span className="text-muted-foreground">- New turns since last summary</span>
+              </div>
+              <Textarea
+                value={summaryTemplate}
+                onChange={(e) => setSummaryTemplate(e.target.value)}
+                className="min-h-[300px] font-mono text-sm"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSummaryTemplate(DEFAULT_SUMMARY_TEMPLATE);
+                  setSummarySystemMessage(DEFAULT_SUMMARY_SYSTEM_MESSAGE);
+                }}
+              >
+                Reset to Defaults
+              </Button>
+              <Button onClick={() => setShowSummaryTemplateEditor(false)}>
                 Done
               </Button>
             </div>

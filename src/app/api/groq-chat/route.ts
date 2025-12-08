@@ -106,6 +106,28 @@ EXECUTION RULES FOR THIS CALL:
 
 Remember: You are an AI assistant. Strict scope control is mandatory.`;
 
+// Default rolling summary template
+// Use placeholders: {existingSummary}, {turnsText}
+const DEFAULT_SUMMARY_TEMPLATE = `You are updating a rolling summary of a conversation between an AI assistant and a caller.
+
+EXISTING SUMMARY (may be empty or partial):
+{existingSummary}
+
+NEW TRANSCRIPT TURNS (since that summary was created):
+{turnsText}
+
+Please return an UPDATED, CONCISE summary (max ~300 tokens) that preserves:
+- The caller's main goal(s)
+- Key facts (names, dates, constraints, identifiers)
+- Important decisions / outcomes so far
+- Current status (who we're talking to, which department, on hold or not, etc.)
+- Any critical context for continuing the conversation
+
+Be concise and focus on what's most important to continue this conversation effectively.`;
+
+// Default summary system message
+const DEFAULT_SUMMARY_SYSTEM_MESSAGE = `You are a concise conversation summary generator. Create summaries that preserve the most important context for continuing conversations.`;
+
 // Request body interface
 interface GroqChatRequest {
   // New message
@@ -121,6 +143,10 @@ interface GroqChatRequest {
   // Conversation state
   turns?: Turn[];
   rollingSummary?: string;
+
+  // Summary generation options
+  summaryTemplate?: string;
+  summarySystemMessage?: string;
 
   // LLM settings
   model?: string;
@@ -299,27 +325,19 @@ export async function POST(req: NextRequest) {
       const existingSummary = rollingSummary || '(empty)';
       const turnsText = formatTurnsForSummary(turns);
 
-      const summaryPrompt = `You are updating a rolling summary of a conversation between an AI assistant and a caller.
+      // Use custom template or default, replacing placeholders
+      const template = body.summaryTemplate || DEFAULT_SUMMARY_TEMPLATE;
+      const summaryPrompt = template
+        .replace('{existingSummary}', existingSummary)
+        .replace('{turnsText}', turnsText);
 
-EXISTING SUMMARY (may be empty or partial):
-${existingSummary}
-
-NEW TRANSCRIPT TURNS (since that summary was created):
-${turnsText}
-
-Please return an UPDATED, CONCISE summary (max ~300 tokens) that preserves:
-- The caller's main goal(s)
-- Key facts (names, dates, constraints, identifiers)
-- Important decisions / outcomes so far
-- Current status (who we're talking to, which department, on hold or not, etc.)
-- Any critical context for continuing the conversation
-
-Be concise and focus on what's most important to continue this conversation effectively.`;
+      // Use custom system message or default
+      const systemMessage = body.summarySystemMessage || DEFAULT_SUMMARY_SYSTEM_MESSAGE;
 
       const summaryMessages: ChatMessage[] = [
         {
           role: 'system',
-          content: 'You are a concise conversation summary generator. Create summaries that preserve the most important context for continuing conversations.',
+          content: systemMessage,
         },
         { role: 'user', content: summaryPrompt },
       ];
@@ -447,6 +465,8 @@ export async function GET() {
     },
     defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
     defaultGoalTemplate: DEFAULT_GOAL_TEMPLATE,
+    defaultSummaryTemplate: DEFAULT_SUMMARY_TEMPLATE,
+    defaultSummarySystemMessage: DEFAULT_SUMMARY_SYSTEM_MESSAGE,
     contextConfig: {
       maxTurnsInWindow: 12,
       summaryUpdateIntervalTurns: 6,
