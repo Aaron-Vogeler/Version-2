@@ -231,7 +231,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     const fetchLogs = async () => {
       try {
         console.log('[GroqCall] Fetching existing LLM logs from API...');
-        const res = await fetch(`/api/calls/${encodeURIComponent(callId)}/llm-logs`);
+        const res = await fetch(`/api/calls/${encodeURIComponent(callId)}/llm-logs`, {
+          credentials: 'include', // Ensure cookies are sent for auth
+        });
         if (res.ok) {
           const data = await res.json();
           console.log('[GroqCall] Fetched logs:', data.logs?.length || 0, 'records');
