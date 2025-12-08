@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
+import { insertLlmLog } from "../utils/supabase";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -105,21 +106,45 @@ Be concise and focus on what's most important to continue this call effectively.
 
   try {
     console.log(`[${callId}] Generating rolling summary...`);
+    const summarySystemContent =
+      "You are a concise call summary generator. Create summaries that preserve the most important context for continuing phone conversations.";
+    const summaryMessages: Array<{ role: "system" | "user"; content: string }> = [
+      { role: "system", content: summarySystemContent },
+      { role: "user", content: summaryPrompt },
+    ];
+
+    const startTime = Date.now();
     const response = await groq.chat.completions.create({
       model: config.groq.model,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a concise call summary generator. Create summaries that preserve the most important context for continuing phone conversations.",
-        },
-        { role: "user", content: summaryPrompt },
-      ],
+      messages: summaryMessages,
       temperature: 0.2, // Lower temperature for consistency
       max_tokens: config_params.maxSummaryTokensHint,
     });
+    const latencyMs = Date.now() - startTime;
 
     const newSummary = response.choices[0]?.message?.content || "";
+
+    // Log the LLM interaction to database for live visibility
+    insertLlmLog({
+      call_id: callId,
+      request_type: "summary",
+      model: config.groq.model,
+      temperature: 0.2,
+      max_tokens: config_params.maxSummaryTokensHint,
+      system_prompt: summarySystemContent,
+      messages: summaryMessages,
+      user_input: summaryPrompt,
+      assistant_response: newSummary,
+      rolling_summary: existingSummary,
+      recent_turns_count: newTurns.length,
+      prompt_tokens: response.usage?.prompt_tokens,
+      completion_tokens: response.usage?.completion_tokens,
+      total_tokens: response.usage?.total_tokens,
+      latency_ms: latencyMs,
+    }).catch((err) => {
+      console.error(`[${callId}] Failed to log LLM summary:`, err);
+    });
+
     if (!newSummary) {
       console.warn(`[${callId}] LLM returned empty summary`);
       return context.rollingSummary;
@@ -176,10 +201,14 @@ export async function generateAssistantReply(
     { role: "system", content: systemPrompt },
   ];
 
+  let rollingSummary: string | undefined;
+  let recentTurnsCount = 0;
+
   // Add rolling summary if available and non-empty
   if (context?.callId) {
     const callContext = contextMgr.getContext(context.callId);
     if (callContext?.rollingSummary) {
+      rollingSummary = callContext.rollingSummary;
       messages.push({
         role: "user",
         content: `CALL CONTEXT SUMMARY:\n${callContext.rollingSummary}`,
@@ -188,6 +217,7 @@ export async function generateAssistantReply(
 
     // Add recent turns from the sliding window
     const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
+    recentTurnsCount = recentTurns.length;
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
   }
@@ -195,10 +225,35 @@ export async function generateAssistantReply(
   // Add the current user input as the final message
   messages.push({ role: "user", content: userText });
 
+  const startTime = Date.now();
   const response = await groq.chat.completions.create({
     model: config.groq.model,
     messages,
   });
+  const latencyMs = Date.now() - startTime;
 
-  return response.choices[0]?.message?.content || "";
+  const assistantResponse = response.choices[0]?.message?.content || "";
+
+  // Log the LLM interaction to database for live visibility
+  if (context?.callId) {
+    insertLlmLog({
+      call_id: context.callId,
+      request_type: "chat",
+      model: config.groq.model,
+      system_prompt: systemPrompt,
+      messages: messages,
+      user_input: userText,
+      assistant_response: assistantResponse,
+      rolling_summary: rollingSummary,
+      recent_turns_count: recentTurnsCount,
+      prompt_tokens: response.usage?.prompt_tokens,
+      completion_tokens: response.usage?.completion_tokens,
+      total_tokens: response.usage?.total_tokens,
+      latency_ms: latencyMs,
+    }).catch((err) => {
+      console.error(`[${context.callId}] Failed to log LLM chat:`, err);
+    });
+  }
+
+  return assistantResponse;
 }

@@ -407,6 +407,101 @@ export async function uploadCustomCallRecording(
 }
 
 /**
+ * LLM log record interface for call_llm_exchanges table
+ * Uses the existing table structure with enhanced columns for live visibility
+ */
+export interface LlmLogRecord {
+  call_id: string;
+  request_type: "chat" | "summary";
+  model: string;
+  temperature?: number;
+  max_tokens?: number;
+  system_prompt?: string;
+  messages: Array<{ role: string; content: string }>;
+  user_input?: string;
+  assistant_response?: string;
+  rolling_summary?: string;
+  recent_turns_count?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  latency_ms?: number;
+}
+
+/**
+ * Insert an LLM log entry for a call (insert-only)
+ * Logs the full LLM request/response for live visibility during calls
+ * Uses the existing call_llm_exchanges table with realtime enabled
+ * @param log - The LLM log record to insert
+ * @returns Success/error result
+ */
+export async function insertLlmLog(
+  log: LlmLogRecord
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    console.log("[Supabase] Not configured, skipping LLM log insert");
+    return { success: true };
+  }
+
+  // Validate required fields
+  if (!log.call_id || !log.messages || log.messages.length === 0) {
+    return {
+      success: false,
+      error: "Missing required fields: call_id, messages",
+    };
+  }
+
+  try {
+    // Map to call_llm_exchanges table columns
+    // Note: response_text = assistant_response, duration_ms = latency_ms
+    const insertRecord = {
+      call_id: log.call_id,
+      request_type: log.request_type || "chat",
+      model: log.model,
+      temperature: log.temperature,
+      max_tokens: log.max_tokens,
+      system_prompt: log.system_prompt,
+      messages: log.messages,
+      user_input: log.user_input,
+      response_text: log.assistant_response, // Maps to existing column
+      rolling_summary: log.rolling_summary,
+      recent_turns_count: log.recent_turns_count,
+      prompt_tokens: log.prompt_tokens,
+      completion_tokens: log.completion_tokens,
+      total_tokens: log.total_tokens,
+      duration_ms: log.latency_ms, // Maps to existing column
+      created_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from("call_llm_exchanges").insert(insertRecord);
+
+    if (error) {
+      console.error("[Supabase] Error inserting LLM exchange:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    // Debug logging
+    const callIdSuffix = log.call_id.substring(
+      Math.max(0, log.call_id.length - 8)
+    );
+    console.log(
+      `[Supabase] LLM exchange inserted (${log.request_type}, ${log.total_tokens || 0} tokens, call: ...${callIdSuffix})`
+    );
+    return { success: true };
+  } catch (error) {
+    console.error(
+      "[Supabase] Exception inserting LLM exchange:",
+      error instanceof Error ? error.message : error
+    );
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
  * Terminal status check - prevents status regressions
  */
 export function isTerminalStatus(status: string | undefined): boolean {
