@@ -225,22 +225,32 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     const supabase = createClient();
     const callId = activeCall.id;
 
-    console.log('[GroqCall] Setting up LLM logs subscription for call:', callId);
+    console.log('[GroqCall] Setting up LLM logs for call:', callId);
 
-    // Initial fetch of existing logs
+    // Initial fetch of existing logs directly from Supabase (not API)
     const fetchLogs = async () => {
       try {
-        console.log('[GroqCall] Fetching existing LLM logs from API...');
-        const res = await fetch(`/api/calls/${encodeURIComponent(callId)}/llm-logs`, {
-          credentials: 'include', // Ensure cookies are sent for auth
-        });
-        if (res.ok) {
-          const data = await res.json();
-          console.log('[GroqCall] Fetched logs:', data.logs?.length || 0, 'records');
-          setLlmLogs(data.logs || []);
-        } else {
-          console.error('[GroqCall] API returned error:', res.status, await res.text());
+        console.log('[GroqCall] Fetching existing LLM logs from Supabase...');
+        const { data: logs, error } = await supabase
+          .from('call_llm_exchanges')
+          .select('*')
+          .eq('call_id', callId)
+          .order('created_at', { ascending: true });
+
+        if (error) {
+          console.error('[GroqCall] Supabase query error:', error);
+          return;
         }
+
+        console.log('[GroqCall] Fetched logs:', logs?.length || 0, 'records');
+
+        // Map call_llm_exchanges columns to expected format
+        const mappedLogs = (logs || []).map((log: any) => ({
+          ...log,
+          assistant_response: log.response_text,
+          latency_ms: log.duration_ms,
+        }));
+        setLlmLogs(mappedLogs);
       } catch (err) {
         console.error('[GroqCall] Failed to fetch LLM logs:', err);
       }
@@ -276,11 +286,11 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         }
       )
       .subscribe((status) => {
-        console.log('[GroqCall] Realtime subscription status:', status);
+        console.log('[GroqCall] LLM logs realtime status:', status);
       });
 
     return () => {
-      console.log('[GroqCall] Cleaning up realtime subscription');
+      console.log('[GroqCall] Cleaning up LLM logs subscription');
       supabase.removeChannel(channel);
     };
   }, [activeCall?.id]);
