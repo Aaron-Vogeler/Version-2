@@ -248,6 +248,7 @@ export function getActiveCallIds(): string[] {
 /**
  * Format turns as a text block for LLM summary generation.
  * Used in the summarization prompt to show the LLM what needs to be summarized.
+ * Uses "RECEIVER" for caller since the AI assistant is making an outbound call.
  */
 export function formatTurnsForSummary(turns: Turn[]): string {
   if (turns.length === 0) {
@@ -255,7 +256,8 @@ export function formatTurnsForSummary(turns: Turn[]): string {
   }
   return turns
     .map((turn) => {
-      const speaker = turn.speaker.toUpperCase();
+      // Map "caller" to "RECEIVER" since AI is making outbound call to them
+      const speaker = turn.speaker === "caller" ? "RECEIVER" : turn.speaker.toUpperCase();
       return `[${turn.timestamp}] ${speaker}: ${turn.text}`;
     })
     .join("\n");
@@ -264,6 +266,7 @@ export function formatTurnsForSummary(turns: Turn[]): string {
 /**
  * Format recent turns as a message history for the LLM prompt.
  * Maps speakers to chat roles (caller/ivr -> user, assistant -> assistant).
+ * Uses [RECEIVER] label since the AI assistant is making an outbound call to them.
  */
 export function formatTurnsAsMessages(
   turns: Turn[]
@@ -272,10 +275,11 @@ export function formatTurnsAsMessages(
     const role =
       turn.speaker === "assistant" ? "assistant" : ("user" as const);
     // Include speaker label for clarity when multiple parties are involved
+    // Use "RECEIVER" since the AI assistant (Ferguson) is making an outbound call to them
     const speakerLabel =
       turn.speaker === "assistant"
         ? ""
-        : `[${turn.speaker.toUpperCase()}] `;
+        : "[RECEIVER] ";
     return {
       role,
       content: `${speakerLabel}${turn.text}`,

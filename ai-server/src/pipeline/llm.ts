@@ -204,14 +204,16 @@ export async function generateAssistantReply(
     }
 
     // Add recent turns from the sliding window
+    // NOTE: The current user turn is already appended to context BEFORE calling this function,
+    // so it will be included in recentTurns. We don't add userText separately to avoid duplicates.
     const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
     recentTurnsCount = recentTurns.length;
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
+  } else {
+    // No context available - add raw userText as fallback
+    messages.push({ role: "user", content: userText });
   }
-
-  // Add the current user input as the final message
-  messages.push({ role: "user", content: userText });
 
   const startTime = Date.now();
   const response = await groq.chat.completions.create({
