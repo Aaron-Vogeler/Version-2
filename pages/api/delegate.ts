@@ -29,7 +29,7 @@ export default async function handler(
 
   try {
     // Validate request body
-    const { goal, to_number, custom_system_prompt } = req.body;
+    const { goal, to_number, custom_system_prompt, rolling_summary_prompt } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
@@ -85,6 +85,7 @@ export default async function handler(
         assistantName: customAssistantName,
         userName: firstName,
         systemPrompt: custom_system_prompt,
+        rollingSummaryPrompt: rolling_summary_prompt,
       }),
     });
 

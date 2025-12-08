@@ -151,6 +151,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [selectedModel, setSelectedModel] = useState('llama-3.1-8b-instant');
   // Custom system prompt is REQUIRED - no default
   const [customSystemPrompt, setCustomSystemPrompt] = useState('');
+  // Rolling summary prompt for context management
+  const [rollingSummaryPrompt, setRollingSummaryPrompt] = useState('');
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [topP, setTopP] = useState(1);
@@ -322,6 +324,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         if (data.callControlDefaults) {
           setCallControlSettings(data.callControlDefaults);
         }
+        // Load default rolling summary prompt if available
+        if (data.rollingSummaryPrompt) {
+          setRollingSummaryPrompt(data.rollingSummaryPrompt);
+        }
       }
     } catch (err) {
       console.error('Failed to load models:', err);
@@ -383,6 +389,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           context: additionalContext,
           to_number: toNumber,
           custom_system_prompt: customSystemPrompt,
+          rolling_summary_prompt: rollingSummaryPrompt,
         }),
       });
 
@@ -443,6 +450,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     setAssistantName(customAssistantName);
     setUserName(firstName);
     setCustomSystemPrompt('');
+    setRollingSummaryPrompt('');
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
@@ -455,6 +463,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     if (models.length > 0) {
       setSelectedModel(models[0].id);
     }
+    // Reload defaults
+    loadModels();
   };
 
   // Helper functions for LLM logs
@@ -701,6 +711,28 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           {!customSystemPrompt && (
             <p className="text-xs text-destructive">Required to start calls</p>
           )}
+        </div>
+      </div>
+
+      {/* Rolling Summary Prompt */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="space-y-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            Rolling Summary Prompt
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            Template for generating call summaries. Available keys: <code className="bg-muted px-1 rounded">{'{EXISTING_SUMMARY}'}</code>, <code className="bg-muted px-1 rounded">{'{TURNS_TEXT}'}</code>, <code className="bg-muted px-1 rounded">{'{MAX_TOKENS}'}</code>
+          </p>
+          <Textarea
+            value={rollingSummaryPrompt}
+            onChange={(e) => setRollingSummaryPrompt(e.target.value)}
+            placeholder="Enter your rolling summary prompt template... Use {EXISTING_SUMMARY}, {TURNS_TEXT}, and {MAX_TOKENS} as placeholders."
+            className="min-h-[120px] resize-none text-xs font-mono"
+          />
+          <p className="text-xs text-muted-foreground">
+            Optional: Used to condense conversation history. Leave empty to use default.
+          </p>
         </div>
       </div>
 
