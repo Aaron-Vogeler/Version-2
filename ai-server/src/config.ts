@@ -27,8 +27,8 @@ function getEnvInt(name: string, defaultValue: number): number {
 // =============================================================================
 // VARIABLE KEYS (use these placeholders in prompts)
 // =============================================================================
-// {ASSISTANT_NAME} - Replaced with the assistant's name (default: "Ferguson")
-// {USER_NAME} - Replaced with the user's name (default: "Aaron")
+// {ASSISTANT_NAME} or ASSISTANT_NAME - Replaced with the assistant's name (default: "Ferguson")
+// {USER_NAME} or USER_NAME - Replaced with the user's name (default: "Aaron")
 // {GOAL} - Replaced with the call goal (in rolling summary prompt)
 // {EXISTING_SUMMARY} - Replaced with existing summary (in rolling summary prompt)
 // {TURNS_TEXT} - Replaced with new turns text (in rolling summary prompt)

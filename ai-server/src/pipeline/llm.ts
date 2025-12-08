@@ -39,6 +39,10 @@ function buildSystemPrompt(context?: CallContext): string {
   prompt = prompt.replace(/\{ASSISTANT_NAME\}/g, assistantName);
   prompt = prompt.replace(/\{USER_NAME\}/g, userName);
 
+  // Also replace ASSISTANT_NAME and USER_NAME without curly braces (common mistake)
+  prompt = prompt.replace(/ASSISTANT_NAME/g, assistantName);
+  prompt = prompt.replace(/USER_NAME/g, userName);
+
   // Also replace legacy hardcoded names for backwards compatibility
   prompt = prompt.replace(/Ferguson/g, assistantName);
   prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
