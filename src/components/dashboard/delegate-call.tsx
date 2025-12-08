@@ -248,6 +248,7 @@ export function DelegateCall({
 
   const llmLogRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const seenLogIdsRef = useRef<Set<number>>(new Set());
 
   // Auto-scroll LLM logs
   useEffect(() => {
@@ -313,27 +314,6 @@ export function DelegateCall({
             });
           }
 
-          // Handle LLM logs from Supabase - directly set from database
-          if (newCall.llm_logs && Array.isArray(newCall.llm_logs)) {
-            const displayLogs = newCall.llm_logs.map((log: any, index: number) => ({
-              id: `${activeCall?.callControlId}-${index}`,
-              timestamp: log.timestamp,
-              type: log.type === 'request' ? 'request' :
-                     log.type === 'response' ? 'response' :
-                     log.type === 'summary_request' ? 'system' :
-                     log.type === 'summary_response' ? 'system' :
-                     'system' as const,
-              model: log.type === 'summary_request' || log.type === 'summary_response' ? 'rolling-summary' : undefined,
-              response: log.type === 'response' ? log.data?.response :
-                       log.type === 'summary_response' ? log.data?.summary :
-                       log.type === 'error' ? `Error: ${log.data?.error}` :
-                       log.type === 'summary_error' ? `Summary Error: ${log.data?.error}` :
-                       JSON.stringify(log.data),
-              tokens: log.data?.tokens,
-            }));
-            setLlmLogs(displayLogs);
-          }
-
           // Update call status
           if (newCall.status) {
             const callIsLive = ['initiated', 'ringing', 'answered'].includes(newCall.status);
@@ -361,6 +341,58 @@ export function DelegateCall({
 
     return () => {
       console.log('Cleaning up realtime subscription');
+      supabase.removeChannel(channel);
+    };
+  }, [activeCall?.callControlId, supabase]);
+
+  // Subscribe to real-time LLM logs via call_llm_logs table
+  useEffect(() => {
+    if (!activeCall?.callControlId) return;
+
+    console.log('Setting up LLM logs realtime subscription for:', activeCall.callControlId);
+    seenLogIdsRef.current.clear(); // Reset on new call
+
+    const channel = supabase
+      .channel(`call-llm-logs-${activeCall.callControlId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'call_llm_logs',
+          filter: `call_id=eq.${activeCall.callControlId}`,
+        },
+        (payload) => {
+          const log = payload.new as any;
+          console.log('Received LLM log:', log.type, log.id);
+
+          // Only process if we haven't seen this log ID before
+          if (!seenLogIdsRef.current.has(log.id)) {
+            seenLogIdsRef.current.add(log.id);
+
+            logLLMInteraction({
+              type: log.type === 'request' ? 'request' :
+                     log.type === 'response' ? 'response' :
+                     log.type === 'summary_request' ? 'system' :
+                     log.type === 'summary_response' ? 'system' :
+                     'system',
+              model: log.type === 'summary_request' || log.type === 'summary_response' ? 'rolling-summary' : undefined,
+              response: log.type === 'response' ? log.data?.response :
+                       log.type === 'summary_response' ? log.data?.summary :
+                       log.type === 'error' ? `Error: ${log.data?.error}` :
+                       log.type === 'summary_error' ? `Summary Error: ${log.data?.error}` :
+                       JSON.stringify(log.data),
+              tokens: log.data?.tokens,
+            });
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('LLM logs subscription status:', status);
+      });
+
+    return () => {
+      console.log('Cleaning up LLM logs subscription');
       supabase.removeChannel(channel);
     };
   }, [activeCall?.callControlId, supabase]);

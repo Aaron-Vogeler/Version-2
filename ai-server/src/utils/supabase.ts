@@ -408,7 +408,7 @@ export async function uploadCustomCallRecording(
 
 /**
  * Insert an LLM log entry for a call
- * Stores logs as JSON in the calls table's llm_logs JSONB array
+ * Uses insert-only pattern for real-time streaming to frontend
  */
 export async function logLLMEvent(
   callId: string,
@@ -425,37 +425,19 @@ export async function logLLMEvent(
   }
 
   try {
-    // Fetch existing logs
-    const { data: existing, error: selectError } = await supabase
-      .from("calls")
-      .select("llm_logs")
-      .eq("id", callId)
-      .single();
+    // Insert log directly into call_llm_logs table for real-time streaming
+    const { error } = await supabase
+      .from("call_llm_logs")
+      .insert({
+        call_id: callId,
+        type: event.type,
+        timestamp: event.timestamp,
+        data: event.data,
+      });
 
-    if (selectError && selectError.code !== "PGRST116") {
-      // PGRST116 is "not found" which is fine for new calls
-      console.error("[Supabase] Error fetching call for LLM log:", selectError);
-      return { success: false, error: selectError.message };
-    }
-
-    // Get existing logs or start empty array
-    const existingLogs = existing?.llm_logs || [];
-
-    // Add the new event
-    const updatedLogs = [...existingLogs, event];
-
-    // Update the call record with new logs
-    const { error: updateError } = await supabase
-      .from("calls")
-      .update({
-        llm_logs: updatedLogs,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", callId);
-
-    if (updateError) {
-      console.error("[Supabase] Error updating LLM logs:", updateError);
-      return { success: false, error: updateError.message };
+    if (error) {
+      console.error("[Supabase] Error inserting LLM log:", error);
+      return { success: false, error: error.message };
     }
 
     return { success: true };
