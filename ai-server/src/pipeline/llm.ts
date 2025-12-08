@@ -16,45 +16,32 @@ export type CallContext = contextMgr.CallContext;
 
 /**
  * Build the system prompt dynamically, optionally injecting call goal context.
- * Replaces the hardcoded assistant name and user name with custom names from the call context.
- * @param context - Optional call context with goal, assistantName, and userName
+ * Replaces variable keys with custom names from the call context.
+ * @param context - Optional call context with goal, assistantName, userName, and customSystemPrompt
  * @returns The complete system prompt
  */
-function buildSystemPrompt(context?: CallContext): string {
-  let prompt = config.llm.systemPrompt;
+function buildSystemPrompt(context?: CallContext & { customSystemPrompt?: string }): string {
+  // Use custom system prompt if provided, otherwise use config default
+  let prompt = context?.customSystemPrompt || config.llm.systemPrompt;
 
-  // Replace the hardcoded assistant name "Ferguson" with the custom name if provided
-  const assistantName = context?.assistantName || "Ferguson";
+  // Validate that a system prompt is provided
+  if (!prompt) {
+    throw new Error("System prompt is required. Please provide a custom system prompt via LLM_SYSTEM_PROMPT env var or in the call context.");
+  }
 
-  // Replace all occurrences of "Ferguson" with the custom assistant name
-  prompt = prompt.replace(/Ferguson/g, assistantName);
+  // Replace variable keys with actual names
+  const assistantName = context?.assistantName || "Assistant";
+  const userName = context?.userName || "User";
 
-  // Also handle lowercase "ferguson" if it appears
-  prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
+  prompt = prompt.replace(new RegExp(config.llm.assistantVariableKey, "g"), assistantName);
+  prompt = prompt.replace(new RegExp(config.llm.userVariableKey, "g"), userName);
 
-  // Replace the hardcoded user name "Aaron" with the custom name if provided
-  const userName = context?.userName || "Aaron";
-
-  // Replace all occurrences of "Aaron" with the custom user name
-  prompt = prompt.replace(/Aaron/g, userName);
-
+  // Simplified goal injection at the bottom
   if (context?.goal) {
     prompt += `
 
 CALL GOAL (YOUR ONLY MISSION):
-"${context.goal}"
-
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Chow."
-- Do NOT deviate from this goal
-
-Remember: You are an AI phone agent. Strict scope control is mandatory.`;
+"${context.goal}"`;
   }
 
   return prompt;
@@ -87,27 +74,15 @@ export async function generateRollingSummary(
   const turnsText = contextMgr.formatTurnsForSummary(newTurns);
   const existingSummary = context.rollingSummary || "(empty)";
 
-  const summaryPrompt = `You are updating a rolling summary of a phone call between an AI assistant and a caller, and possibly multiple human agents.
-
-EXISTING SUMMARY (may be empty or partial):
-${existingSummary}
-
-NEW TRANSCRIPT TURNS (since that summary was created):
-${turnsText}
-
-Please return an UPDATED, CONCISE summary (max ~${config_params.maxSummaryTokensHint} tokens) that preserves:
-- The caller's main goal(s)
-- Key facts (names, dates, constraints, identifiers)
-- Important decisions / outcomes so far
-- Current status (who we're talking to, which department, on hold or not, etc.)
-- Any critical context for continuing the conversation
-
-Be concise and focus on what's most important to continue this call effectively.`;
+  // Use configurable summary prompt with placeholder replacement
+  const summaryPrompt = config.llm.summaryPrompt
+    .replace("{existingSummary}", existingSummary)
+    .replace("{turnsText}", turnsText)
+    .replace("{maxTokens}", config_params.maxSummaryTokensHint.toString());
 
   try {
     console.log(`[${callId}] Generating rolling summary...`);
-    const summarySystemContent =
-      "You are a concise call summary generator. Create summaries that preserve the most important context for continuing phone conversations.";
+    const summarySystemContent = config.llm.summarySystemMessage;
     const summaryMessages: Array<{ role: "system" | "user"; content: string }> = [
       { role: "system", content: summarySystemContent },
       { role: "user", content: summaryPrompt },
@@ -190,13 +165,15 @@ export async function maybeUpdateSummaryForCall(
  * Includes rolling summary and recent turns for rich per-call context.
  * @param userText - The user's input text
  * @param context - Call context with goal, call ID, and other metadata
+ * @param customSystemPrompt - Optional custom system prompt to override default
  * @returns The AI-generated response, or an empty string if no response
  */
 export async function generateAssistantReply(
   userText: string,
-  context?: CallContext
+  context?: CallContext,
+  customSystemPrompt?: string
 ): Promise<string> {
-  const systemPrompt = buildSystemPrompt(context);
+  const systemPrompt = buildSystemPrompt({ ...context, customSystemPrompt });
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemPrompt },
   ];

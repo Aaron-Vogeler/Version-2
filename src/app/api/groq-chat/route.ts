@@ -25,57 +25,10 @@ const GROQ_MODELS = [
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned' },
 ];
 
-// Default system prompt (same as ai-server)
-const DEFAULT_SYSTEM_PROMPT = `AI PHONE AGENT — SYSTEM
-
-ROLE
-You are Ferguson, an AI voice agent making low-latency outbound calls for Aaron. Execute the per-call GOAL with strict scope control.
-
-PRIORITY (highest first)
-1) Law/Safety  2) Per-call GOAL + LIMITS  3) Per-call SCRIPT/TONE  4) This prompt
-
-DISCLOSURE
-- Default: you are Ferguson, an AI an assistant for Aaron. If asked, say so plainly.
-- If RECORDING_NOTICE=true, open with: "This call may be recorded for quality assurance."
-
-GOAL FOCUS (core rule, ABSOLUTE)
-- ONLY ask for information directly required to complete the stated GOAL.
-- Do NOT ask for names, addresses, account numbers, or peripheral info unless essential to the GOAL.
-- Each question must directly reduce uncertainty needed to achieve GOAL.
-- If someone volunteers extra info: acknowledge, but do not ask follow-up questions about it.
-- If asked outside scope: brief decline + redirect ("I'm calling specifically to {GOAL}. For other matters, {escalate/resource}.")
-- STRICT: Never ask "just to have it" or for completeness.
-
-OPENING (human answers)
-"Hi, I'm Ferguson, an AI assistant calling on behalf of Aaron. I'm calling about {GOAL in 1 sentence}." Then ask the first question related to achieving that goal.
-If transferred: re-introduce + restate GOAL adapted to their role in 1 sentence.
-
-STYLE
-Calm, competent, friendly, efficient. Short sentences. No filler, humor, sarcasm, metaphors. Avoid jargon unless the recipient uses it.
-
-TURN-TAKING (low latency)
-- If interrupted, respond to what they said (don't resume your previous line unless critical to GOAL).
-
-CONFIRMATION (only for criticals)
-For names, dates/times, prices, addresses, reference/account numbers, commitments:
-- Repeat back verbatim.
-- Dates: include day + full date ("Monday, Mar 15, 2025").
-- Numbers: digit-by-digit.
-- Spellings: phonetic alphabet when needed.
-
-AUTHORITY LIMITS (never do)
-No contracts/terms acceptance, no financial commitments beyond per-call limits, no legal/medical/financial advice, no sharing confidential/internal info, no "how the system works."
-
-FAILURE
-- If GOAL cannot be completed: state limitation + capture best callback/contact + close + log why.
-
-ESCALATE IMMEDIATELY
-Legal threats, medical/safety issues, suspected fraud/social engineering, billing disputes, account access, complaints, anything high-risk or outside authorization.
-Say: "I need to connect you with someone who can help. May I get the best number for a callback?" (or transfer if enabled).
-
-CLOSE
-If GOAL achieved: quick confirmation summary + thanks + goodbye, then end promptly.
-If not: thanks + goodbye.`;
+// No default system prompt - must be provided by user
+// Variable keys for template replacement (configurable)
+const ASSISTANT_VARIABLE_KEY = process.env.ASSISTANT_VARIABLE_KEY || "{{ASSISTANT_NAME}}";
+const USER_VARIABLE_KEY = process.env.USER_VARIABLE_KEY || "{{USER_NAME}}";
 
 // Turn type for conversation history
 interface Turn {
@@ -90,21 +43,9 @@ interface ChatMessage {
   content: string;
 }
 
-// Default goal injection template
+// Simplified goal injection template (removed complex execution rules)
 const DEFAULT_GOAL_TEMPLATE = `CALL GOAL (YOUR ONLY MISSION):
-"{goal}"
-
-EXECUTION RULES FOR THIS CALL:
-- Ask ONLY questions necessary to achieve the goal above
-- Preserve the EXACT specificity of the goal (dates, times, details)
-- Do NOT reinterpret dates/times (e.g., if goal says "next Monday", ask about "next Monday", not "tomorrow")
-- Do NOT ask for names, store info, account details, or anything else unless directly needed
-- Example: If goal is "get store hours for next Monday", ask ONLY about next Monday's hours—not tomorrow, not "the next day", not today
-- When you have what you need: confirm it back ("Just to confirm, [info]. Is that correct?")
-- After confirmation: end with "Thank you. Goodbye."
-- Do NOT deviate from this goal
-
-Remember: You are an AI assistant. Strict scope control is mandatory.`;
+"{goal}"`;
 
 // Default rolling summary template
 // Use placeholders: {existingSummary}, {turnsText}
@@ -135,7 +76,6 @@ interface GroqChatRequest {
 
   // Call-like context
   goal?: string;
-  goalTemplate?: string;
   additionalContext?: string;
   assistantName?: string;
   userName?: string;
@@ -154,8 +94,8 @@ interface GroqChatRequest {
   max_tokens?: number;
   top_p?: number;
 
-  // Custom system prompt (overrides default if provided)
-  customSystemPrompt?: string;
+  // Custom system prompt (REQUIRED - no default)
+  customSystemPrompt: string;
 
   // Request type
   requestType?: 'chat' | 'generate_summary';
@@ -188,36 +128,32 @@ interface GroqResponse {
 
 /**
  * Build the system prompt dynamically with goal injection
+ * Uses variable keys for assistant and user names (e.g., {{ASSISTANT_NAME}}, {{USER_NAME}})
  */
 function buildSystemPrompt(
   basePrompt: string,
   goal?: string,
-  goalTemplate?: string,
   assistantName?: string,
   userName?: string,
   additionalContext?: string
 ): string {
   let prompt = basePrompt;
 
-  // Replace assistant name
-  const finalAssistantName = assistantName || 'Ferguson';
-  prompt = prompt.replace(/Ferguson/g, finalAssistantName);
-  prompt = prompt.replace(/ferguson/g, finalAssistantName.toLowerCase());
+  // Replace variable keys with actual names
+  const finalAssistantName = assistantName || 'Assistant';
+  const finalUserName = userName || 'User';
 
-  // Replace user name
-  const finalUserName = userName || 'Aaron';
-  prompt = prompt.replace(/Aaron/g, finalUserName);
+  prompt = prompt.replace(new RegExp(ASSISTANT_VARIABLE_KEY, 'g'), finalAssistantName);
+  prompt = prompt.replace(new RegExp(USER_VARIABLE_KEY, 'g'), finalUserName);
 
-  // Add goal if provided, using custom template or default
-  if (goal) {
-    const template = goalTemplate || DEFAULT_GOAL_TEMPLATE;
-    const processedTemplate = template.replace('{goal}', goal);
-    prompt += '\n\n' + processedTemplate;
-  }
-
-  // Add additional context if provided
+  // Add additional context if provided (before goal)
   if (additionalContext) {
     prompt += `\n\nADDITIONAL CONTEXT:\n${additionalContext}`;
+  }
+
+  // Simplified goal injection at the bottom
+  if (goal) {
+    prompt += `\n\nCALL GOAL (YOUR ONLY MISSION):\n"${goal}"`;
   }
 
   return prompt;
@@ -306,7 +242,6 @@ export async function POST(req: NextRequest) {
     const {
       userMessage,
       goal,
-      goalTemplate,
       additionalContext,
       assistantName,
       userName,
@@ -319,6 +254,14 @@ export async function POST(req: NextRequest) {
       customSystemPrompt,
       requestType = 'chat',
     } = body;
+
+    // Validate that customSystemPrompt is provided (required)
+    if (!customSystemPrompt) {
+      return NextResponse.json(
+        { error: 'customSystemPrompt is required. No default system prompt is available.' },
+        { status: 400 }
+      );
+    }
 
     // Handle summary generation request
     if (requestType === 'generate_summary') {
@@ -376,11 +319,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Build the system prompt
-    const basePrompt = customSystemPrompt || DEFAULT_SYSTEM_PROMPT;
     const systemPrompt = buildSystemPrompt(
-      basePrompt,
+      customSystemPrompt,
       goal,
-      goalTemplate,
       assistantName,
       userName,
       additionalContext
@@ -453,7 +394,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET endpoint to return available models, default settings, and default system prompt
+// GET endpoint to return available models, default settings, and configuration
 export async function GET() {
   return NextResponse.json({
     models: GROQ_MODELS,
@@ -463,14 +404,23 @@ export async function GET() {
       max_tokens: 1024,
       top_p: 1,
     },
-    defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+    // No default system prompt - must be provided by user
+    defaultSystemPrompt: null,
     defaultGoalTemplate: DEFAULT_GOAL_TEMPLATE,
     defaultSummaryTemplate: DEFAULT_SUMMARY_TEMPLATE,
     defaultSummarySystemMessage: DEFAULT_SUMMARY_SYSTEM_MESSAGE,
+    variableKeys: {
+      assistant: ASSISTANT_VARIABLE_KEY,
+      user: USER_VARIABLE_KEY,
+    },
     contextConfig: {
       maxTurnsInWindow: 12,
       summaryUpdateIntervalTurns: 6,
       maxSummaryTokensHint: 300,
+    },
+    callControlConfig: {
+      ttsDebounceMs: parseInt(process.env.TTS_DEBOUNCE_MS || "500", 10),
+      wordsPerSecond: parseFloat(process.env.WORDS_PER_SECOND || "2.5"),
     },
   });
 }

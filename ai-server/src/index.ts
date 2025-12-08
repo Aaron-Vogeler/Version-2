@@ -19,8 +19,8 @@ import {
   getCustomRecordingMaxBytes,
 } from "./pipeline/recording";
 
-// Constants
-const TTS_DEBOUNCE_MS = 500; // 500 milliseconds of silence before responding (reduced from 800ms for faster response)
+// Constants (now configurable via config.callControl)
+const TTS_DEBOUNCE_MS = config.callControl.ttsDebounceMs;
 
 // -----------------------------------------------------------------------------
 // CLIENTS
@@ -39,8 +39,8 @@ const deepgram = createDeepgramClient();
  * @returns Estimated text that was actually spoken
  */
 function estimateSpokenText(fullText: string, durationMs: number): string {
-  // Average speaking rate: ~150 words per minute = 2.5 words per second
-  const WORDS_PER_SECOND = 2.5;
+  // Average speaking rate: configurable via config.callControl.wordsPerSecond
+  const WORDS_PER_SECOND = config.callControl.wordsPerSecond;
 
   const words = fullText.split(/\s+/);
   const totalWords = words.length;
@@ -153,7 +153,7 @@ async function scheduleTtsResponse(
     // Send to LLM
     let aiText: string;
     try {
-      aiText = await generateAssistantReply(userText, callContext);
+      aiText = await generateAssistantReply(userText, callContext, callContext?.customSystemPrompt);
     } catch (groqError) {
       console.error(
         "❌ Groq API error:",
@@ -1080,6 +1080,7 @@ wss.on("connection", async (ws) => {
           managedContext.streamId = streamId;
           managedContext.goal = decoded.goal;
           managedContext.userId = decoded.userId;
+          managedContext.customSystemPrompt = decoded.customSystemPrompt;
           managedContext.assistantName = decoded.assistantName || null;
           managedContext.userName = decoded.userName || null;
           managedContext.initiatedAt = decoded.initiatedAt;
