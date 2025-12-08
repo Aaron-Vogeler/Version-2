@@ -248,6 +248,7 @@ export function DelegateCall({
 
   const llmLogRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const llmActivityRef = useRef<any[]>([]);
 
   // Auto-scroll LLM logs
   useEffect(() => {
@@ -320,11 +321,10 @@ export function DelegateCall({
             // Process each log entry and display it
             newLogs.forEach((log: any) => {
               // Only log entries we haven't seen before
-              if (!llmActivityRef.current.some((existing: any) =>
-                existing.timestamp === log.timestamp &&
-                existing.type === log.type &&
-                JSON.stringify(existing.data) === JSON.stringify(log.data)
-              )) {
+              const logKey = `${log.timestamp}-${log.type}`;
+              if (!llmActivityRef.current.includes(logKey)) {
+                llmActivityRef.current.push(logKey);
+
                 logLLMInteraction({
                   type: log.type === 'request' ? 'request' :
                          log.type === 'response' ? 'response' :
