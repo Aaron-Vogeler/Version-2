@@ -223,34 +223,47 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     if (!activeCall?.id) return;
 
     const supabase = createClient();
+    const callId = activeCall.id;
+
+    console.log('[GroqCall] Setting up LLM logs subscription for call:', callId);
 
     // Initial fetch of existing logs
     const fetchLogs = async () => {
       try {
-        const res = await fetch(`/api/calls/${activeCall.id}/llm-logs`);
+        console.log('[GroqCall] Fetching existing LLM logs from API...');
+        const res = await fetch(`/api/calls/${encodeURIComponent(callId)}/llm-logs`);
         if (res.ok) {
           const data = await res.json();
+          console.log('[GroqCall] Fetched logs:', data.logs?.length || 0, 'records');
           setLlmLogs(data.logs || []);
+        } else {
+          console.error('[GroqCall] API returned error:', res.status, await res.text());
         }
       } catch (err) {
-        console.error('Failed to fetch LLM logs:', err);
+        console.error('[GroqCall] Failed to fetch LLM logs:', err);
       }
     };
     fetchLogs();
 
     // Subscribe to new logs from call_llm_exchanges table (existing table with realtime)
+    // Note: We subscribe to ALL inserts and filter client-side because call_id contains
+    // special characters (like ':') that can break Supabase realtime filters
     const channel = supabase
-      .channel(`llm-exchanges-${activeCall.id}`)
+      .channel(`llm-exchanges-${callId.slice(-8)}`)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'call_llm_exchanges',
-          filter: `call_id=eq.${activeCall.id}`,
         },
         (payload) => {
           const rawLog = payload.new as any;
+          // Filter client-side for our specific call
+          if (rawLog.call_id !== callId) {
+            return;
+          }
+          console.log('[GroqCall] Received new LLM log via realtime:', rawLog.id);
           // Map call_llm_exchanges columns to expected format
           const newLog: LlmLog = {
             ...rawLog,
@@ -260,9 +273,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           setLlmLogs((prev) => [...prev, newLog]);
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('[GroqCall] Realtime subscription status:', status);
+      });
 
     return () => {
+      console.log('[GroqCall] Cleaning up realtime subscription');
       supabase.removeChannel(channel);
     };
   }, [activeCall?.id]);
@@ -353,13 +369,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
 
       // Extract call ID from response to track LLM logs
       const callControlId = data.flyResponse?.call_control_id;
+      console.log('[GroqCall] Delegate response:', data);
+      console.log('[GroqCall] Extracted call_control_id:', callControlId);
+
       if (callControlId) {
+        console.log('[GroqCall] Setting active call with ID:', callControlId);
         setActiveCall({
           id: callControlId,
           status: 'initiated',
           goal: goal,
           started_at: new Date().toISOString(),
         });
+      } else {
+        console.warn('[GroqCall] No call_control_id found in response - LLM logs will not be tracked');
       }
 
       // Clear phone number only, keep settings for potential re-use
