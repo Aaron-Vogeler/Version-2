@@ -240,6 +240,9 @@ export function DelegateCall({
   const [liveTranscript, setLiveTranscript] = useState('');
   const [isCallLive, setIsCallLive] = useState(false);
 
+  // WebSocket connection for LLM logs
+  const wsRef = useRef<WebSocket | null>(null);
+
   // Supabase client for realtime
   const supabase = useMemo(() => createClient(), []);
 
@@ -347,6 +350,79 @@ export function DelegateCall({
     setResponseDelaySec(modeConfig.silenceMs / 1000);
     setSilenceTimeoutMs(modeConfig.silenceMs);
   }, [interruptionMode]);
+
+  // Connect to WebSocket for LLM logs when call starts
+  useEffect(() => {
+    if (!isCallLive || !activeCall?.callControlId) {
+      // Close WebSocket if call ends
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      return;
+    }
+
+    try {
+      // Connect to the AI server's WebSocket for LLM logs
+      // Use the same host as the current page
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}`;
+
+      console.log('Connecting to WebSocket for LLM logs:', wsUrl);
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('WebSocket connected for LLM logs');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          // Handle LLM log messages
+          if (message.event === 'llm_log' && message.payload) {
+            const log = message.payload;
+            logLLMInteraction({
+              type: log.type === 'request' ? 'request' :
+                     log.type === 'response' ? 'response' :
+                     log.type === 'summary_request' ? 'system' :
+                     log.type === 'summary_response' ? 'system' :
+                     'system',
+              model: log.data?.model || log.data?.turnsCount ? 'rolling-summary' : undefined,
+              response: log.type === 'response' ? log.data?.response :
+                       log.type === 'summary_response' ? log.data?.summary :
+                       log.type === 'error' ? `Error: ${log.data?.error}` :
+                       log.type === 'summary_error' ? `Summary Error: ${log.data?.error}` :
+                       JSON.stringify(log.data),
+              tokens: log.data?.tokens,
+            });
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket closed');
+        wsRef.current = null;
+      };
+
+      wsRef.current = ws;
+    } catch (error) {
+      console.error('Failed to connect to WebSocket:', error);
+    }
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [isCallLive, activeCall?.callControlId]);
 
   // Build the effective system prompt with name replacements and goal injection
   const buildEffectiveSystemPrompt = () => {

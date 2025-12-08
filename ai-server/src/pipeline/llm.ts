@@ -9,6 +9,37 @@ const groq = new OpenAI({
 });
 
 /**
+ * Optional callback for logging LLM events to frontend via WebSocket
+ */
+let llmEventLogger: ((event: {
+  type: 'request' | 'response' | 'error' | 'summary_request' | 'summary_response' | 'summary_error';
+  callId: string;
+  timestamp: string;
+  data: any;
+}) => void) | null = null;
+
+/**
+ * Set the LLM event logger callback
+ */
+export function setLLMEventLogger(callback: ((event: any) => void) | null) {
+  llmEventLogger = callback;
+}
+
+/**
+ * Emit an LLM event to the frontend if a logger is registered
+ */
+function emitLLMEvent(type: string, callId: string, data: any) {
+  if (llmEventLogger) {
+    llmEventLogger({
+      type,
+      callId,
+      timestamp: new Date().toISOString(),
+      data,
+    });
+  }
+}
+
+/**
  * Re-export CallContext from the context manager for backward compatibility.
  */
 export type CallContext = contextMgr.CallContext;
@@ -107,6 +138,12 @@ export async function generateRollingSummary(
   const startTime = Date.now();
 
   try {
+    const summaryRequestLog = {
+      turnsCount: newTurns.length,
+      existingSummaryLength: existingSummary.length,
+      newTurnsLength: turnsText.length,
+      promptTemplateLength: promptTemplate.length,
+    };
     console.log(`
 📝 ========================================
 📝 ROLLING SUMMARY REQUEST
@@ -115,6 +152,8 @@ export async function generateRollingSummary(
   - Existing summary: ${existingSummary.length} chars
   - New turns: ${turnsText.length} chars
   - Prompt template: ${promptTemplate.length} chars`);
+
+    emitLLMEvent('summary_request', callId, summaryRequestLog);
 
     const response = await groq.chat.completions.create({
       model: config.groq.model,
@@ -138,6 +177,15 @@ export async function generateRollingSummary(
       return context.rollingSummary;
     }
 
+    const summaryResponseLog = {
+      summary: newSummary.slice(0, 200),
+      length: newSummary.length,
+      latency,
+      tokens: {
+        input: response.usage?.prompt_tokens || 0,
+        output: response.usage?.completion_tokens || 0,
+      },
+    };
     console.log(`
 📝 ========================================
 📝 ROLLING SUMMARY RESPONSE
@@ -147,15 +195,24 @@ export async function generateRollingSummary(
   - Tokens: input=${response.usage?.prompt_tokens || 0}, output=${response.usage?.completion_tokens || 0}
   - Content preview: "${newSummary.slice(0, 100)}${newSummary.length > 100 ? "..." : ""}"`);
 
+    emitLLMEvent('summary_response', callId, summaryResponseLog);
+
     return newSummary;
   } catch (error) {
     const latency = Date.now() - startTime;
+    const summaryErrorLog = {
+      error: error instanceof Error ? error.message : String(error),
+      latency,
+    };
     console.error(`
 ❌ ========================================
 ❌ ROLLING SUMMARY ERROR
 ❌ ========================================
 [${callId}] Failed to generate rolling summary after ${latency}ms
   - Error: ${error instanceof Error ? error.message : String(error)}`);
+
+    emitLLMEvent('summary_error', callId, summaryErrorLog);
+
     // Return existing summary on error (resilient fallback)
     return context.rollingSummary;
   }
@@ -227,6 +284,12 @@ export async function generateAssistantReply(
 
   try {
     // Log the LLM request details
+    const requestLog = {
+      messages: messages.length,
+      systemPromptLength: systemPrompt.length,
+      userInput: userText.slice(0, 100),
+      model: config.groq.model,
+    };
     console.log(`
 🤖 ========================================
 🤖 LLM REQUEST (${config.groq.model})
@@ -235,6 +298,8 @@ export async function generateAssistantReply(
   - System: ${systemPrompt.length} chars
   - Messages: ${messages.map((m, i) => `${m.role}(${m.content.length} chars)`).join(", ")}
   - User input: "${userText.slice(0, 100)}${userText.length > 100 ? "..." : ""}"`);
+
+    emitLLMEvent('request', callId, requestLog);
 
     const response = await groq.chat.completions.create({
       model: config.groq.model,
@@ -245,6 +310,18 @@ export async function generateAssistantReply(
     const latency = Date.now() - startTime;
 
     // Log the LLM response details
+    const responseLog = {
+      response: aiText.slice(0, 200),
+      length: aiText.length,
+      latency,
+      tokens: {
+        input: response.usage?.prompt_tokens || 0,
+        output: response.usage?.completion_tokens || 0,
+        total: response.usage?.total_tokens || 0,
+      },
+      model: response.model,
+      finishReason: response.choices[0]?.finish_reason || "unknown",
+    };
     console.log(`
 🤖 ========================================
 🤖 LLM RESPONSE
@@ -256,9 +333,16 @@ export async function generateAssistantReply(
   - Model: ${response.model}
   - Finish reason: ${response.choices[0]?.finish_reason || "unknown"}`);
 
+    emitLLMEvent('response', callId, responseLog);
+
     return aiText;
   } catch (error) {
     const latency = Date.now() - startTime;
+    const errorLog = {
+      error: error instanceof Error ? error.message : String(error),
+      latency,
+      userInput: userText.slice(0, 100),
+    };
     console.error(`
 ❌ ========================================
 ❌ LLM ERROR
@@ -267,6 +351,8 @@ export async function generateAssistantReply(
   - Error: ${error instanceof Error ? error.message : String(error)}
   - User input: "${userText.slice(0, 100)}${userText.length > 100 ? "..." : ""}"
   ${error instanceof Error && error.stack ? `\n  Stack: ${error.stack}` : ""}`);
+
+    emitLLMEvent('error', callId, errorLog);
 
     // Rethrow to allow caller to handle
     throw error;
