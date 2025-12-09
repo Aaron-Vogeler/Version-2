@@ -214,110 +214,142 @@ async function verifyObserverAuth(
   return { authorized: true };
 }
 
+// Observer WebSocket server instance (created lazily)
+let observerWss: WebSocketServer | null = null;
+
 /**
- * Setup the observer WebSocket server on an existing HTTP server
- * Uses a separate path (/observe/:callControlId) from the main media WebSocket
+ * Get or create the observer WebSocket server
  */
-export function setupObserverWebSocket(server: Server): WebSocketServer {
-  // Create a new WebSocket server for observers
-  const observerWss = new WebSocketServer({
-    noServer: true,
-  });
+export function getObserverWss(): WebSocketServer {
+  if (!observerWss) {
+    observerWss = new WebSocketServer({ noServer: true });
+    console.log('[Observer] Observer WebSocket server created');
+  }
+  return observerWss;
+}
 
-  // Handle upgrade requests
-  server.on('upgrade', (request: IncomingMessage, socket, head) => {
-    const url = request.url || '';
+/**
+ * Check if a URL path is an observer path
+ */
+export function isObserverPath(url: string): boolean {
+  return url.startsWith('/observe/');
+}
 
-    // Only handle /observe/* paths
-    if (!url.startsWith('/observe/')) {
-      return; // Let other handlers deal with it
-    }
+/**
+ * Handle an observer WebSocket upgrade request
+ * Call this from the main server's upgrade handler for /observe/* paths
+ */
+export async function handleObserverUpgrade(
+  request: IncomingMessage,
+  socket: any,
+  head: Buffer
+): Promise<void> {
+  const url = request.url || '';
+  const wss = getObserverWss();
 
-    const callControlId = parseObservePath(url);
-    if (!callControlId) {
-      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+  const callControlId = parseObservePath(url);
+  if (!callControlId) {
+    socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  // Extract userId from query params if present (for auth)
+  const urlObj = new URL(url, 'http://localhost');
+  const userId = urlObj.searchParams.get('userId') || undefined;
+
+  // Verify authorization
+  try {
+    const { authorized, reason } = await verifyObserverAuth(callControlId, userId);
+    if (!authorized) {
+      console.log(`[Observer] Unauthorized connection attempt for ${callControlId}: ${reason}`);
+      socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n${reason}`);
       socket.destroy();
       return;
     }
 
-    // Extract userId from query params if present (for auth)
-    const urlObj = new URL(url, 'http://localhost');
-    const userId = urlObj.searchParams.get('userId') || undefined;
-
-    // Verify authorization
-    verifyObserverAuth(callControlId, userId).then(({ authorized, reason }) => {
-      if (!authorized) {
-        console.log(`[Observer] Unauthorized connection attempt for ${callControlId}: ${reason}`);
-        socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n${reason}`);
-        socket.destroy();
-        return;
-      }
-
-      // Handle the upgrade
-      observerWss.handleUpgrade(request, socket, head, (ws) => {
-        observerWss.emit('connection', ws, request, callControlId, userId);
-      });
-    }).catch((error) => {
-      console.error('[Observer] Auth error:', error);
-      socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
-      socket.destroy();
+    // Handle the upgrade
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      handleObserverConnection(ws, callControlId, userId);
     });
-  });
+  } catch (error) {
+    console.error('[Observer] Auth error:', error);
+    socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+    socket.destroy();
+  }
+}
 
-  // Handle new observer connections
-  observerWss.on('connection', (ws: WebSocket, request: IncomingMessage, callControlId: string, userId?: string) => {
-    console.log(`[Observer] New observer connected for call ${callControlId}`);
+/**
+ * Handle a new observer WebSocket connection
+ */
+function handleObserverConnection(ws: WebSocket, callControlId: string, userId?: string): void {
+  console.log(`[Observer] New observer connected for call ${callControlId}`);
 
-    // Create observer record
-    const observer: ObserverConnection = {
-      ws,
+  // Create observer record
+  const observerConn: ObserverConnection = {
+    ws,
+    callControlId,
+    userId,
+    connectedAt: Date.now(),
+  };
+
+  // Register the observer
+  addObserver(callControlId, observerConn);
+
+  // Send initial state
+  const context = contextMgr.getContext(callControlId);
+  if (context) {
+    ws.send(JSON.stringify({
+      event: 'connected',
       callControlId,
-      userId,
-      connectedAt: Date.now(),
-    };
+      goal: context.goal,
+      assistantName: context.assistantName,
+      isActive: context.isCallActive,
+      timestamp: Date.now(),
+    }));
+  } else {
+    // Context not found - call may have ended or not started yet
+    ws.send(JSON.stringify({
+      event: 'connected',
+      callControlId,
+      isActive: false,
+      message: 'Call context not found - call may have ended',
+      timestamp: Date.now(),
+    }));
+  }
 
-    // Register the observer
-    addObserver(callControlId, observer);
-
-    // Send initial state
-    const context = contextMgr.getContext(callControlId);
-    if (context) {
-      ws.send(JSON.stringify({
-        event: 'connected',
-        callControlId,
-        goal: context.goal,
-        assistantName: context.assistantName,
-        isActive: context.isCallActive,
-        timestamp: Date.now(),
-      }));
-    }
-
-    // Handle messages from observer (currently just keepalive pings)
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.event === 'ping') {
-          ws.send(JSON.stringify({ event: 'pong', timestamp: Date.now() }));
-        }
-      } catch (error) {
-        // Ignore parse errors
+  // Handle messages from observer (currently just keepalive pings)
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.event === 'ping') {
+        ws.send(JSON.stringify({ event: 'pong', timestamp: Date.now() }));
       }
-    });
-
-    // Handle observer disconnect
-    ws.on('close', () => {
-      console.log(`[Observer] Observer disconnected from call ${callControlId}`);
-      removeObserver(ws);
-    });
-
-    ws.on('error', (error) => {
-      console.error(`[Observer] WebSocket error for call ${callControlId}:`, error);
-      removeObserver(ws);
-    });
+    } catch (error) {
+      // Ignore parse errors
+    }
   });
 
-  console.log('[Observer] Observer WebSocket server initialized');
-  return observerWss;
+  // Handle observer disconnect
+  ws.on('close', () => {
+    console.log(`[Observer] Observer disconnected from call ${callControlId}`);
+    removeObserver(ws);
+  });
+
+  ws.on('error', (error) => {
+    console.error(`[Observer] WebSocket error for call ${callControlId}:`, error);
+    removeObserver(ws);
+  });
+}
+
+/**
+ * Setup the observer WebSocket server (legacy compatibility - now a no-op)
+ * The actual setup is done via getObserverWss() and handleObserverUpgrade()
+ * @deprecated Use getObserverWss() and handleObserverUpgrade() instead
+ */
+export function setupObserverWebSocket(server: Server): WebSocketServer {
+  console.log('[Observer] Observer WebSocket server initialized (upgrade handling done in main server)');
+  return getObserverWss();
 }
 
 /**

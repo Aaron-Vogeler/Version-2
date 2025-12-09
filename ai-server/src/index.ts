@@ -1005,7 +1005,10 @@ function cleanupCallState(callContext: CallContext): void {
 // -----------------------------------------------------------------------------
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+
+// Use noServer mode to manually handle WebSocket upgrades
+// This allows us to route to different WebSocket servers based on path
+const wss = new WebSocketServer({ noServer: true });
 
 app.use(express.json());
 
@@ -1842,6 +1845,24 @@ sharedState.initSharedState();
 
 // Initialize observer WebSocket server for live call listening
 observer.setupObserverWebSocket(server);
+
+// Set up WebSocket upgrade routing
+// Routes /observe/* to observer WebSocket, all other paths to main media WebSocket
+server.on('upgrade', (request, socket, head) => {
+  const url = request.url || '/';
+
+  if (observer.isObserverPath(url)) {
+    // Route to observer WebSocket for /observe/:callControlId paths
+    console.log(`[WebSocket] Routing upgrade to observer: ${url}`);
+    observer.handleObserverUpgrade(request, socket, head);
+  } else {
+    // Route to main media WebSocket (Telnyx audio stream)
+    console.log(`[WebSocket] Routing upgrade to main media WS: ${url}`);
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  }
+});
 
 server.listen(config.port, () => {
   console.log(`🚀 AI Server running on port ${config.port}`);
