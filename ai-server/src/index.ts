@@ -1770,7 +1770,7 @@ wss.on("connection", async (ws) => {
         let audio = rawAudio;
         if (callContext?.callControlId && (track === "inbound" || track === "outbound")) {
           try {
-            audio = smoothAudio(callContext.callControlId, track, rawAudio);
+            audio = Buffer.from(smoothAudio(callContext.callControlId, track, rawAudio));
           } catch (smoothError) {
             // If smoothing fails, use raw audio
             console.error("[AudioSmoother] Error:", smoothError instanceof Error ? smoothError.message : smoothError);
