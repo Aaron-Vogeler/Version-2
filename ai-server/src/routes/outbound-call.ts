@@ -15,6 +15,13 @@ interface OutboundCallRequest {
   rollingSummaryPrompt?: string;
   holdCheckInIntervalMs?: number;
   holdMaxCheckIns?: number;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  reasoning?: 'low' | 'medium' | 'high';
+  stream?: boolean;
+  jsonMode?: boolean;
 }
 
 interface TelnyxCallResponse {
@@ -32,7 +39,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, holdCheckInIntervalMs, holdMaxCheckIns } = req.body as OutboundCallRequest;
+    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, holdCheckInIntervalMs, holdMaxCheckIns, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -50,7 +57,7 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName + systemPrompt + rollingSummaryPrompt + hold settings) in base64
+    // Encode client state (goal + userId + assistantName + userName + systemPrompt + rollingSummaryPrompt + hold settings + model + LLM params) in base64
     const clientStatePayload = JSON.stringify({
       goal,
       userId,
@@ -60,6 +67,13 @@ router.post("/", async (req: Request, res: Response) => {
       rollingSummaryPrompt: rollingSummaryPrompt || null,
       holdCheckInIntervalMs: holdCheckInIntervalMs || null,
       holdMaxCheckIns: holdMaxCheckIns || null,
+      model: model || null,
+      temperature: temperature || null,
+      maxTokens: maxTokens || null,
+      topP: topP || null,
+      reasoning: reasoning || null,
+      stream: stream || null,
+      jsonMode: jsonMode || null,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

@@ -103,8 +103,10 @@ export async function generateRollingSummary(
     ];
 
     const startTime = Date.now();
+    // Use model from context if available, otherwise fall back to config
+    const modelToUse = context.model || config.groq.model;
     const response = await groq.chat.completions.create({
-      model: config.groq.model,
+      model: modelToUse,
       messages: summaryMessages,
       temperature: 0.2, // Lower temperature for consistency
       max_tokens: config_params.maxSummaryTokensHint,
@@ -117,7 +119,7 @@ export async function generateRollingSummary(
     insertLlmLog({
       call_id: callId,
       request_type: "summary",
-      model: config.groq.model,
+      model: modelToUse,
       temperature: 0.2,
       max_tokens: config_params.maxSummaryTokensHint,
       system_prompt: summarySystemContent,
@@ -217,10 +219,35 @@ export async function generateAssistantReply(
   }
 
   const startTime = Date.now();
-  const response = await groq.chat.completions.create({
-    model: config.groq.model,
+  // Use parameters from context if available, otherwise fall back to defaults
+  const callContext = context?.callId ? contextMgr.getContext(context.callId) : null;
+  const modelToUse = callContext?.model || config.groq.model;
+  const temperatureToUse = callContext?.temperature ?? 0.7;
+  const maxTokensToUse = callContext?.maxTokens ?? 1024;
+  const topPToUse = callContext?.topP ?? 1.0;
+  const reasoningToUse = callContext?.reasoning || 'medium';
+  const jsonModeToUse = callContext?.jsonMode || false;
+
+  // Build API request parameters
+  const apiParams: any = {
+    model: modelToUse,
     messages,
-  });
+    temperature: temperatureToUse,
+    max_tokens: maxTokensToUse,
+    top_p: topPToUse,
+  };
+
+  // Add reasoning_effort if model supports it (openai/gpt-oss-20b)
+  if (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) {
+    apiParams.reasoning_effort = reasoningToUse;
+  }
+
+  // Add response_format for JSON mode
+  if (jsonModeToUse) {
+    apiParams.response_format = { type: 'json_object' };
+  }
+
+  const response = await groq.chat.completions.create(apiParams);
   const latencyMs = Date.now() - startTime;
 
   const assistantResponse = response.choices[0]?.message?.content || "";
@@ -230,7 +257,9 @@ export async function generateAssistantReply(
     insertLlmLog({
       call_id: context.callId,
       request_type: "chat",
-      model: config.groq.model,
+      model: modelToUse,
+      temperature: temperatureToUse,
+      max_tokens: maxTokensToUse,
       system_prompt: systemPrompt,
       messages: messages,
       user_input: userText,
