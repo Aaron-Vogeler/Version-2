@@ -55,6 +55,7 @@ import {
   MessageSquare,
   RefreshCw,
   Volume2,
+  Database,
 } from 'lucide-react';
 
 // Model type from API
@@ -89,6 +90,9 @@ interface LlmLog {
   completion_tokens?: number;
   total_tokens?: number;
   latency_ms?: number;
+  // Prompt caching data
+  cache_hit_tokens?: number;
+  cache_miss_tokens?: number;
   created_at: string;
 }
 
@@ -601,6 +605,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const totalLlmTokens = llmLogs.reduce((sum, log) => sum + (log.total_tokens || 0), 0);
   const avgLlmLatency = llmLogs.length > 0
     ? Math.round(llmLogs.reduce((sum, log) => sum + (log.latency_ms || 0), 0) / llmLogs.length)
+    : 0;
+  // Calculate cache statistics
+  const totalCacheHits = llmLogs.reduce((sum, log) => sum + (log.cache_hit_tokens || 0), 0);
+  const totalCacheMisses = llmLogs.reduce((sum, log) => sum + (log.cache_miss_tokens || 0), 0);
+  const cacheHitRate = (totalCacheHits + totalCacheMisses) > 0
+    ? Math.round((totalCacheHits / (totalCacheHits + totalCacheMisses)) * 100)
     : 0;
 
   const isCallActive = activeCall && ['initiated', 'ringing', 'answered'].includes(activeCall.status);
@@ -1404,6 +1414,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                   <Clock className="h-3 w-3" />
                   ~{avgLlmLatency}ms
                 </Badge>
+                {(totalCacheHits > 0 || totalCacheMisses > 0) && (
+                  <Badge variant="outline" className="gap-1" title={`Cache: ${totalCacheHits.toLocaleString()} hits / ${totalCacheMisses.toLocaleString()} misses`}>
+                    <Database className="h-3 w-3" />
+                    {cacheHitRate}% hit
+                  </Badge>
+                )}
               </>
             )}
             {!isCallActive && (
@@ -1492,6 +1508,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                         {log.latency_ms}ms
                       </span>
                     )}
+                    {(log.cache_hit_tokens !== undefined && log.cache_hit_tokens > 0) && (
+                      <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1" title={`${log.cache_hit_tokens} cached / ${log.cache_miss_tokens || 0} uncached`}>
+                        <Database className="h-3 w-3" />
+                        {log.cache_hit_tokens}
+                      </span>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1540,6 +1562,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                       )}
                       {log.recent_turns_count !== undefined && (
                         <Badge variant="outline" className="text-xs">{log.recent_turns_count} turns</Badge>
+                      )}
+                      {(log.cache_hit_tokens !== undefined || log.cache_miss_tokens !== undefined) && (
+                        <Badge variant="outline" className="text-xs gap-1">
+                          <Database className="h-3 w-3" />
+                          Cache: {log.cache_hit_tokens || 0} hit / {log.cache_miss_tokens || 0} miss
+                        </Badge>
                       )}
                     </div>
 
@@ -1752,6 +1780,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 {selectedLlmLog.total_tokens && (
                   <Badge variant="outline">
                     Tokens: {selectedLlmLog.prompt_tokens} + {selectedLlmLog.completion_tokens} = {selectedLlmLog.total_tokens}
+                  </Badge>
+                )}
+                {(selectedLlmLog.cache_hit_tokens !== undefined || selectedLlmLog.cache_miss_tokens !== undefined) && (
+                  <Badge variant="outline" className="gap-1">
+                    <Database className="h-3 w-3" />
+                    Cache: {selectedLlmLog.cache_hit_tokens || 0} hit / {selectedLlmLog.cache_miss_tokens || 0} miss
                   </Badge>
                 )}
               </div>

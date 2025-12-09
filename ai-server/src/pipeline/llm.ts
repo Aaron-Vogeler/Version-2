@@ -115,6 +115,12 @@ export async function generateRollingSummary(
 
     const newSummary = response.choices[0]?.message?.content || "";
 
+    // Extract prompt caching data from usage object (Groq API format)
+    const usage = response.usage as any;
+    const cacheHitTokens = usage?.prompt_cache_hit_tokens ?? usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    const cacheMissTokens = usage?.prompt_cache_miss_tokens ??
+      (usage?.prompt_tokens && cacheHitTokens ? usage.prompt_tokens - cacheHitTokens : 0);
+
     // Log the LLM interaction to database for live visibility
     insertLlmLog({
       call_id: callId,
@@ -132,6 +138,8 @@ export async function generateRollingSummary(
       completion_tokens: response.usage?.completion_tokens,
       total_tokens: response.usage?.total_tokens,
       latency_ms: latencyMs,
+      cache_hit_tokens: cacheHitTokens,
+      cache_miss_tokens: cacheMissTokens,
     }).catch((err) => {
       console.error(`[${callId}] Failed to log LLM summary:`, err);
     });
@@ -252,6 +260,12 @@ export async function generateAssistantReply(
 
   const assistantResponse = response.choices[0]?.message?.content || "";
 
+  // Extract prompt caching data from usage object (Groq API format)
+  const chatUsage = response.usage as any;
+  const chatCacheHitTokens = chatUsage?.prompt_cache_hit_tokens ?? chatUsage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const chatCacheMissTokens = chatUsage?.prompt_cache_miss_tokens ??
+    (chatUsage?.prompt_tokens && chatCacheHitTokens ? chatUsage.prompt_tokens - chatCacheHitTokens : 0);
+
   // Log the LLM interaction to database for live visibility
   if (context?.callId) {
     insertLlmLog({
@@ -270,6 +284,8 @@ export async function generateAssistantReply(
       completion_tokens: response.usage?.completion_tokens,
       total_tokens: response.usage?.total_tokens,
       latency_ms: latencyMs,
+      cache_hit_tokens: chatCacheHitTokens,
+      cache_miss_tokens: chatCacheMissTokens,
     }).catch((err) => {
       console.error(`[${context.callId}] Failed to log LLM chat:`, err);
     });

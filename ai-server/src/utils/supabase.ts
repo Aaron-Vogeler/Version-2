@@ -426,6 +426,9 @@ export interface LlmLogRecord {
   completion_tokens?: number;
   total_tokens?: number;
   latency_ms?: number;
+  // Prompt caching data from Groq API
+  cache_hit_tokens?: number;
+  cache_miss_tokens?: number;
 }
 
 /**
@@ -471,6 +474,8 @@ export async function insertLlmLog(
       completion_tokens: log.completion_tokens,
       total_tokens: log.total_tokens,
       duration_ms: log.latency_ms, // Maps to existing column
+      cache_hit_tokens: log.cache_hit_tokens,
+      cache_miss_tokens: log.cache_miss_tokens,
       created_at: new Date().toISOString(),
     };
 
