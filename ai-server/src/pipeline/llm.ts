@@ -116,18 +116,21 @@ export async function generateRollingSummary(
     const newSummary = response.choices[0]?.message?.content || "";
 
     // Extract prompt caching data from Groq usage object
-    // Groq returns: usage.prompt_tokens_details.cached_tokens
+    // Only use REAL data from Groq - don't calculate/guess
     const usage = response.usage as any;
-    const promptTokens = usage?.prompt_tokens ?? 0;
-    const cachedTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
-    const uncachedTokens = promptTokens > 0 ? promptTokens - cachedTokens : 0;
+    const promptTokensDetails = usage?.prompt_tokens_details;
+    const cachedTokens = promptTokensDetails?.cached_tokens ?? null;
+    // Only calculate uncached if Groq returned cache data
+    const uncachedTokens = cachedTokens !== null && usage?.prompt_tokens
+      ? usage.prompt_tokens - cachedTokens
+      : null;
 
     // Debug log to see what Groq actually returns
     console.log(`[${callId}] Groq cache stats:`, {
-      prompt_tokens: promptTokens,
+      prompt_tokens: usage?.prompt_tokens,
       cached_tokens: cachedTokens,
-      cache_hit_rate: promptTokens > 0 ? ((cachedTokens / promptTokens) * 100).toFixed(1) + '%' : '0%',
-      prompt_tokens_details: usage?.prompt_tokens_details,
+      uncached_tokens: uncachedTokens,
+      has_cache_data: promptTokensDetails !== undefined,
       full_usage_object: JSON.stringify(usage),
     });
 
@@ -148,8 +151,8 @@ export async function generateRollingSummary(
       completion_tokens: response.usage?.completion_tokens,
       total_tokens: response.usage?.total_tokens,
       latency_ms: latencyMs,
-      cache_hit_tokens: cachedTokens,
-      cache_miss_tokens: uncachedTokens,
+      cache_hit_tokens: cachedTokens ?? undefined,
+      cache_miss_tokens: uncachedTokens ?? undefined,
     }).catch((err) => {
       console.error(`[${callId}] Failed to log LLM summary:`, err);
     });
@@ -271,19 +274,22 @@ export async function generateAssistantReply(
   const assistantResponse = response.choices[0]?.message?.content || "";
 
   // Extract prompt caching data from Groq usage object
-  // Groq returns: usage.prompt_tokens_details.cached_tokens
+  // Only use REAL data from Groq - don't calculate/guess
   const chatUsage = response.usage as any;
-  const chatPromptTokens = chatUsage?.prompt_tokens ?? 0;
-  const chatCachedTokens = chatUsage?.prompt_tokens_details?.cached_tokens ?? 0;
-  const chatUncachedTokens = chatPromptTokens > 0 ? chatPromptTokens - chatCachedTokens : 0;
+  const chatPromptTokensDetails = chatUsage?.prompt_tokens_details;
+  const chatCachedTokens = chatPromptTokensDetails?.cached_tokens ?? null;
+  // Only calculate uncached if Groq returned cache data
+  const chatUncachedTokens = chatCachedTokens !== null && chatUsage?.prompt_tokens
+    ? chatUsage.prompt_tokens - chatCachedTokens
+    : null;
 
   // Debug log to see what Groq actually returns
   if (context?.callId) {
     console.log(`[${context.callId}] Groq cache stats:`, {
-      prompt_tokens: chatPromptTokens,
+      prompt_tokens: chatUsage?.prompt_tokens,
       cached_tokens: chatCachedTokens,
-      cache_hit_rate: chatPromptTokens > 0 ? ((chatCachedTokens / chatPromptTokens) * 100).toFixed(1) + '%' : '0%',
-      prompt_tokens_details: chatUsage?.prompt_tokens_details,
+      uncached_tokens: chatUncachedTokens,
+      has_cache_data: chatPromptTokensDetails !== undefined,
       full_usage_object: JSON.stringify(chatUsage),
     });
   }
@@ -306,8 +312,8 @@ export async function generateAssistantReply(
       completion_tokens: response.usage?.completion_tokens,
       total_tokens: response.usage?.total_tokens,
       latency_ms: latencyMs,
-      cache_hit_tokens: chatCachedTokens,
-      cache_miss_tokens: chatUncachedTokens,
+      cache_hit_tokens: chatCachedTokens ?? undefined,
+      cache_miss_tokens: chatUncachedTokens ?? undefined,
     }).catch((err) => {
       console.error(`[${context.callId}] Failed to log LLM chat:`, err);
     });
