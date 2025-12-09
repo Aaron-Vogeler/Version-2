@@ -5,9 +5,15 @@
  * Enables real-time audio monitoring of calls via WebRTC
  * Uses direct SIP credentials for authentication
  * Sends target_call_id in clientState to Cloudflare Worker
+ *
+ * Audio Quality Optimizations:
+ * - Opus codec preference for high quality audio (48kHz, stereo capable)
+ * - Proper remoteElement binding for efficient stream handling
+ * - Enhanced audio constraints for input quality
+ * - Audio element optimizations for playback
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -21,14 +27,57 @@ interface ListenInBrowserProps {
 
 type ConnectionState = 'idle' | 'connecting' | 'listening' | 'error' | 'disconnected';
 
+// Audio element ID for SDK binding
+const REMOTE_AUDIO_ELEMENT_ID = 'telnyx-remote-audio';
+
+/**
+ * Get preferred audio codecs for high quality streaming
+ * Prioritizes Opus (high quality, low latency) over legacy codecs
+ */
+function getPreferredAudioCodecs(): RTCRtpCodecCapability[] {
+  try {
+    const capabilities = RTCRtpReceiver.getCapabilities('audio');
+    if (!capabilities?.codecs) return [];
+
+    // Priority order: Opus > PCMU > PCMA
+    // Opus provides much higher quality (48kHz vs 8kHz for PCMU/PCMA)
+    const codecPriority = ['opus', 'PCMU', 'PCMA'];
+
+    const sortedCodecs = [...capabilities.codecs].sort((a, b) => {
+      const aCodec = a.mimeType.split('/')[1]?.toLowerCase() || '';
+      const bCodec = b.mimeType.split('/')[1]?.toLowerCase() || '';
+
+      const aIndex = codecPriority.findIndex(c => aCodec.includes(c.toLowerCase()));
+      const bIndex = codecPriority.findIndex(c => bCodec.includes(c.toLowerCase()));
+
+      // Put unknown codecs at the end
+      const aRank = aIndex === -1 ? 999 : aIndex;
+      const bRank = bIndex === -1 ? 999 : bIndex;
+
+      return aRank - bRank;
+    });
+
+    // Return top codecs, prioritizing Opus
+    const opusCodecs = sortedCodecs.filter(c => c.mimeType.toLowerCase().includes('opus'));
+    const otherCodecs = sortedCodecs.filter(c => !c.mimeType.toLowerCase().includes('opus'));
+
+    return [...opusCodecs, ...otherCodecs.slice(0, 3)];
+  } catch (e) {
+    console.warn('Failed to get audio codec capabilities:', e);
+    return [];
+  }
+}
+
 export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [isMuted, setIsMuted] = useState(true); // Start muted by default for monitoring
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
+  const [audioStats, setAudioStats] = useState<{ bitrate?: number; codec?: string } | null>(null);
   const telnyxClientRef = useRef<any>(null);
   const currentCallRef = useRef<any>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const statsIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Helper to safely stringify objects with circular references
   const safeStringify = (obj: any, indent?: number): string => {
@@ -53,8 +102,14 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
   };
 
   // Disconnect handler - defined before useEffect so notification handler can access it
-  const handleDisconnect = () => {
+  const handleDisconnect = useCallback(() => {
     addDebug('Disconnecting...');
+
+    // Clear stats interval
+    if (statsIntervalRef.current) {
+      clearInterval(statsIntervalRef.current);
+      statsIntervalRef.current = null;
+    }
 
     if (currentCallRef.current) {
       try {
@@ -72,7 +127,8 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
     setConnectionState('disconnected');
     setIsMuted(true);
-  };
+    setAudioStats(null);
+  }, []);
 
   // Initialize Telnyx client on component mount
   useEffect(() => {
@@ -105,16 +161,19 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
           return;
         }
 
-        addDebug('Creating TelnyxRTC client with SIP credentials...');
+        addDebug('Creating TelnyxRTC client with SIP credentials and audio optimizations...');
 
         // Create a new Telnyx RTC client instance with SIP credentials
+        // Configure remoteElement for proper stream binding and audio optimizations
         const client = new TelnyxRTC({
           login: sipUser,
           password: sipPassword,
           ringtoneFile: 'https://cdn.telnyx.com/audio/ring.mp3',
+          // Bind remote audio stream to our audio element for proper playback
+          remoteElement: REMOTE_AUDIO_ELEMENT_ID,
         });
 
-        addDebug('TelnyxRTC client created, setting up event listeners...');
+        addDebug('TelnyxRTC client created with remoteElement binding, setting up event listeners...');
 
         // Set up event listeners
         client.on('telnyx.ready', () => {
@@ -148,22 +207,34 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
                 addDebug('✅ CALL ACTIVE - Audio stream connected!');
                 setConnectionState('listening');
 
-                // Get the remote audio stream from the call object
-                // Try multiple ways to access the stream as SDK versions vary
-                let remoteStream = call.remoteStream;
-                
-                if (!remoteStream && typeof call.getRemoteStream === 'function') {
-                  remoteStream = call.getRemoteStream();
+                // The SDK handles remoteElement binding automatically
+                // Try to ensure audio playback starts (may be needed for autoplay policies)
+                if (remoteAudioRef.current) {
+                  remoteAudioRef.current.play().catch(err => {
+                    addDebug(`⚠️ Audio autoplay blocked: ${err.message} - User interaction may be required`);
+                  });
                 }
 
-                if (remoteStream && remoteAudioRef.current) {
-                  addDebug('🔊 Remote audio stream received, playing...');
-                  remoteAudioRef.current.srcObject = remoteStream;
-                  remoteAudioRef.current.play().catch(err => {
-                    addDebug(`⚠️ Audio play failed: ${err.message}`);
-                  });
-                } else {
-                  addDebug('⚠️ No remote stream available yet');
+                // Log codec information for debugging
+                try {
+                  if (call.peer && call.peer.instance) {
+                    const receivers = call.peer.instance.getReceivers?.();
+                    if (receivers) {
+                      receivers.forEach((receiver: RTCRtpReceiver) => {
+                        if (receiver.track?.kind === 'audio') {
+                          const params = receiver.getParameters?.();
+                          if (params?.codecs?.[0]) {
+                            const codec = params.codecs[0];
+                            addDebug(`🎵 Audio codec: ${codec.mimeType} (${codec.clockRate}Hz)`);
+                            setAudioStats(prev => ({ ...prev, codec: codec.mimeType }));
+                          }
+                        }
+                      });
+                    }
+                  }
+                } catch (e) {
+                  // Codec info is nice-to-have, don't fail on errors
+                  console.log('Could not get codec info:', e);
                 }
               } else if (call.state === 'hangup' || call.state === 'destroy') {
                 addDebug('📴 Call ended');
@@ -193,6 +264,11 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
     return () => {
       // Cleanup on unmount
+      if (statsIntervalRef.current) {
+        clearInterval(statsIntervalRef.current);
+        statsIntervalRef.current = null;
+      }
+
       if (currentCallRef.current) {
         try {
           currentCallRef.current.hangup();
@@ -233,11 +309,22 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       setConnectionState('connecting');
       setErrorMessage(null);
 
-      // Request microphone permission (required by browser for WebRTC even if listening only)
+      // Request microphone permission with high-quality audio constraints
+      // Even if just listening, WebRTC requires mic permission
       try {
-        addDebug('Requesting microphone permission...');
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        addDebug('✅ Microphone permission granted');
+        addDebug('Requesting microphone permission with optimized constraints...');
+        await navigator.mediaDevices.getUserMedia({
+          audio: {
+            // High quality audio constraints
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            // Prefer higher sample rates for better quality
+            sampleRate: { ideal: 48000 },
+            channelCount: { ideal: 2, min: 1 },
+          }
+        });
+        addDebug('✅ Microphone permission granted with optimized constraints');
       } catch (e: any) {
         addDebug(`⚠️ Microphone unavailable: ${e.message} - continuing anyway`);
         console.warn('Microphone permission denied or unavailable:', e);
@@ -265,14 +352,25 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       // Telnyx SDK expects clientState as a JSON STRING
       const clientStateString = JSON.stringify(clientState);
 
-      const callParams = {
+      // Get preferred codecs for high quality audio (Opus > PCMU > PCMA)
+      const preferredCodecs = getPreferredAudioCodecs();
+      addDebug(`🎵 Preferred codecs: ${preferredCodecs.map(c => c.mimeType).join(', ') || 'browser default'}`);
+
+      const callParams: any = {
         destinationNumber: monitorNumber,
-        clientState: clientStateString, 
+        clientState: clientStateString,
         audio: true,
         video: false,
+        // Use debug mode to enable quality monitoring
+        debug: process.env.NODE_ENV === 'development',
       };
 
-      addDebug('Initiating WebRTC call via newCall()...');
+      // Add preferred codecs if available (prioritizes Opus for high quality)
+      if (preferredCodecs.length > 0) {
+        callParams.preferred_codecs = preferredCodecs;
+      }
+
+      addDebug('Initiating WebRTC call via newCall() with codec preferences...');
 
       // Initiate the WebRTC call with the monitor number
       // The Cloudflare Worker listens on this number and routes based on target_call_id
@@ -366,8 +464,9 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Hidden audio element for remote audio */}
+        {/* Audio element for remote audio - bound to SDK via id */}
         <audio
+          id={REMOTE_AUDIO_ELEMENT_ID}
           ref={remoteAudioRef}
           autoPlay
           playsInline
@@ -377,7 +476,14 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         {/* Status */}
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Connection Status:</span>
-          {getStatusBadge()}
+          <div className="flex items-center gap-2">
+            {getStatusBadge()}
+            {audioStats?.codec && connectionState === 'listening' && (
+              <Badge variant="outline" className="text-xs">
+                {audioStats.codec.split('/')[1]?.toUpperCase() || audioStats.codec}
+              </Badge>
+            )}
+          </div>
         </div>
 
         {/* Error message */}
