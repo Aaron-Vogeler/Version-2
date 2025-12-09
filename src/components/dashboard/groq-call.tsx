@@ -54,6 +54,7 @@ import {
   Clock,
   MessageSquare,
   RefreshCw,
+  Volume2,
 } from 'lucide-react';
 
 // Model type from API
@@ -117,6 +118,25 @@ Available variable keys:
 
 The call goal will be automatically appended at the bottom:
 CALL GOAL (YOUR ONLY MISSION): "your goal here"`;
+
+// Audio sounds that can be played during calls
+const CALL_AUDIO_SOUNDS = [
+  {
+    id: 'standard-fart',
+    name: 'Standard Fart',
+    url: 'https://www.myinstants.com/media/sounds/dry-fart.mp3',
+  },
+  {
+    id: 'fart-song',
+    name: 'Fart Song',
+    url: 'https://www.myinstants.com/media/sounds/jerry-farts-united-clean-loop-original-3_48-hd-by-jtf-entertainment_chzyMf5.mp3',
+  },
+  {
+    id: 'quick-fart',
+    name: 'Quick Fart',
+    url: 'https://www.myinstants.com/media/sounds/dry-fart.mp3',
+  },
+];
 
 interface GroqCallProps {
   customAssistantName?: string;
@@ -192,6 +212,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
 
   // Expanded panel states
   const [expandedPanel, setExpandedPanel] = useState<'settings' | 'call' | 'context' | 'logs' | null>(null);
+
+  // Audio playback state
+  const [showAudioPopup, setShowAudioPopup] = useState(false);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
   // Update names when props change
   useEffect(() => {
@@ -494,6 +518,52 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     }
     // Reload defaults
     loadModels();
+  };
+
+  // Play audio into the active call via Telnyx API
+  const [audioStatus, setAudioStatus] = useState<string | null>(null);
+
+  const handlePlayAudio = async (soundId: string, url: string) => {
+    if (!activeCall?.id) {
+      console.error('No active call to play audio into');
+      setAudioStatus('No active call');
+      setTimeout(() => setAudioStatus(null), 3000);
+      return;
+    }
+
+    setPlayingAudioId(soundId);
+    setAudioStatus('Sending to call...');
+
+    try {
+      console.log('[Frontend] Playing audio:', { soundId, url, callId: activeCall.id });
+      const response = await fetch('/api/calls/play-audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          call_control_id: activeCall.id,
+          audio_url: url,
+        }),
+      });
+
+      const data = await response.json();
+      console.log('[Frontend] Play audio response:', data);
+
+      if (!response.ok) {
+        console.error('Failed to play audio:', data);
+        setAudioStatus(`Error: ${data.error || 'Failed'}`);
+      } else {
+        setAudioStatus('Playing in call!');
+      }
+    } catch (err) {
+      console.error('Error playing audio:', err);
+      setAudioStatus('Network error');
+    } finally {
+      // Reset after a delay
+      setTimeout(() => {
+        setPlayingAudioId(null);
+        setAudioStatus(null);
+      }, 3000);
+    }
   };
 
   // Helper functions for LLM logs
@@ -1523,6 +1593,16 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 <Brain className="h-4 w-4 mr-2" />
                 {showLlmLogs ? 'Hide' : 'Show'} LLM Logs
               </Button>
+              <Button
+                variant={isCallActive ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setShowAudioPopup(true)}
+                disabled={!isCallActive}
+                title={isCallActive ? 'Play audio into the call' : 'Start a call to play audio'}
+              >
+                <Volume2 className="h-4 w-4 mr-2" />
+                Play Audio
+              </Button>
             </>
           )}
           {expandedPanel && (
@@ -1696,6 +1776,55 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Audio Playback Popup */}
+      <Dialog open={showAudioPopup} onOpenChange={setShowAudioPopup}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Volume2 className="h-5 w-5" />
+              Play Audio Into Call
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3 py-4">
+            {/* Status message */}
+            {audioStatus && (
+              <div className={`text-center py-2 px-3 rounded-md text-sm ${
+                audioStatus.includes('Error') || audioStatus.includes('error')
+                  ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+                  : audioStatus.includes('Playing')
+                  ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+                  : 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400'
+              }`}>
+                {audioStatus}
+              </div>
+            )}
+            {!isCallActive && (
+              <div className="text-center py-4 text-muted-foreground">
+                <PhoneOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No active call</p>
+                <p className="text-xs mt-1">Start a call to play audio to the recipient</p>
+              </div>
+            )}
+            {isCallActive && CALL_AUDIO_SOUNDS.map((sound) => (
+              <Button
+                key={sound.id}
+                variant={playingAudioId === sound.id ? 'default' : 'outline'}
+                className="w-full h-12 text-lg justify-start gap-3"
+                onClick={() => handlePlayAudio(sound.id, sound.url)}
+                disabled={playingAudioId !== null}
+              >
+                {playingAudioId === sound.id ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                ) : (
+                  <Volume2 className="h-4 w-4" />
+                )}
+                {sound.name}
+              </Button>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
