@@ -80,12 +80,15 @@ function decodeMulaw(mulawByte: number): number {
 const MULAW_SILENCE = 0xff;
 
 // Silence threshold - PCM amplitude below this is considered silence
-// Raised to 1200 to prevent quiet speech from triggering toggling
-const SILENCE_THRESHOLD = 1200;
+// Must be high enough that quiet speech (unvoiced consonants) doesn't trigger
+// Typical speech RMS is 500-3000, peaks can be 2000-15000+
+// Setting to 3000 to only detect true silence, not quiet speech moments
+const SILENCE_THRESHOLD = 3000;
 
 // Hysteresis: require multiple consecutive packets to confirm state change
-// This prevents rapid toggling on borderline audio levels
-const HYSTERESIS_PACKETS = 3;
+// At 50 packets/sec, 8 packets = 160ms of consistent state required
+// This prevents brief quiet moments from triggering transitions
+const HYSTERESIS_PACKETS = 8;
 
 // Discontinuity threshold - if sample jumps by more than this, smooth it
 // μ-law decoded speech can have sample jumps of 10,000-15,000+ normally
