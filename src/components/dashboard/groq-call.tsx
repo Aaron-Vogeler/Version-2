@@ -55,7 +55,10 @@ import {
   MessageSquare,
   RefreshCw,
   Volume2,
+  Headphones,
+  Radio,
 } from 'lucide-react';
+import { LiveCallObserver } from './live-call-observer';
 
 // Model type from API
 interface GroqModel {
@@ -219,6 +222,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   // Audio playback state
   const [showAudioPopup, setShowAudioPopup] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+
+  // Live observer state
+  const [showObserver, setShowObserver] = useState(false);
 
   // Update names when props change
   useEffect(() => {
@@ -1632,6 +1638,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               {llmLogs.length} LLM Calls
             </Badge>
           )}
+          {showObserver && isCallActive && (
+            <Badge variant="success" className="gap-1 animate-pulse">
+              <Radio className="h-3 w-3" />
+              Listening Live
+            </Badge>
+          )}
           {!expandedPanel && (
             <>
               <Button
@@ -1667,6 +1679,16 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               >
                 <Volume2 className="h-4 w-4 mr-2" />
                 Play Audio
+              </Button>
+              <Button
+                variant={showObserver ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setShowObserver(!showObserver)}
+                disabled={!isCallActive}
+                title={isCallActive ? 'Listen to the call live' : 'Start a call to listen live'}
+              >
+                <Headphones className="h-4 w-4 mr-2" />
+                Listen Live
               </Button>
             </>
           )}
@@ -1725,6 +1747,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
             logsContent,
             'xl:col-span-12'
           )}
+        </div>
+      )}
+
+      {/* Live Call Observer Panel */}
+      {showObserver && activeCall && isCallActive && (
+        <div className="mt-6">
+          <LiveCallObserver
+            callControlId={activeCall.id}
+            onDisconnect={() => {
+              // Optionally close the observer panel when disconnected
+              // setShowObserver(false);
+            }}
+          />
         </div>
       )}
 

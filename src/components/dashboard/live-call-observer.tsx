@@ -1,0 +1,491 @@
+'use client';
+
+/**
+ * Live Call Observer Component
+ * ============================
+ * Allows users to listen to an active call in real-time via WebSocket.
+ * Features:
+ * - Real-time audio playback (stereo: left=caller, right=assistant)
+ * - Live transcript display
+ * - Volume control
+ * - Connection status indicator
+ */
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Slider } from '@/components/ui/slider';
+import {
+  Headphones,
+  Volume2,
+  VolumeX,
+  Wifi,
+  WifiOff,
+  User,
+  Bot,
+  Radio,
+  Square,
+  CircleOff,
+} from 'lucide-react';
+import { MulawAudioPlayer } from '@/lib/audio/mulaw-decoder';
+
+interface TranscriptEntry {
+  speaker: 'caller' | 'assistant';
+  text: string;
+  timestamp: number;
+  isFinal: boolean;
+}
+
+interface LiveCallObserverProps {
+  /** The call control ID to observe */
+  callControlId: string;
+  /** Optional user ID for authorization */
+  userId?: string;
+  /** Called when observer disconnects or call ends */
+  onDisconnect?: () => void;
+  /** AI Server WebSocket URL (defaults to Fly.io production) */
+  aiServerUrl?: string;
+}
+
+type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+type AudioState = 'stopped' | 'buffering' | 'playing';
+
+export function LiveCallObserver({
+  callControlId,
+  userId,
+  onDisconnect,
+  aiServerUrl,
+}: LiveCallObserverProps) {
+  // Connection state
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Audio state
+  const [audioState, setAudioState] = useState<AudioState>('stopped');
+  const [isListening, setIsListening] = useState(false);
+  const [volume, setVolume] = useState(0.8);
+  const [isMuted, setIsMuted] = useState(false);
+
+  // Transcript state
+  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
+
+  // Call info
+  const [callInfo, setCallInfo] = useState<{
+    goal?: string;
+    assistantName?: string;
+  } | null>(null);
+
+  // Refs
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioPlayerRef = useRef<MulawAudioPlayer | null>(null);
+
+  // Auto-scroll transcripts
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [transcripts]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      disconnect();
+    };
+  }, []);
+
+  // Update audio player volume
+  useEffect(() => {
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.setVolume(isMuted ? 0 : volume);
+    }
+  }, [volume, isMuted]);
+
+  /**
+   * Build the WebSocket URL for the observer endpoint
+   */
+  const buildWsUrl = useCallback(() => {
+    // Determine the base URL
+    let baseUrl = aiServerUrl;
+
+    console.log('[Observer DEBUG] buildWsUrl called');
+    console.log('[Observer DEBUG] aiServerUrl prop:', aiServerUrl);
+    console.log('[Observer DEBUG] callControlId:', callControlId);
+
+    if (!baseUrl) {
+      // Auto-detect based on environment
+      if (typeof window !== 'undefined') {
+        // In browser, use relative path or configured URL
+        const isLocalhost = window.location.hostname === 'localhost';
+        console.log('[Observer DEBUG] window.location.hostname:', window.location.hostname);
+        console.log('[Observer DEBUG] isLocalhost:', isLocalhost);
+        console.log('[Observer DEBUG] NEXT_PUBLIC_AI_SERVER_WS_URL:', process.env.NEXT_PUBLIC_AI_SERVER_WS_URL);
+
+        if (isLocalhost) {
+          // Local development - ai-server runs on port 3001
+          baseUrl = 'ws://localhost:3001';
+        } else {
+          // Production - use the Fly.io server
+          // Note: The actual Fly.io hostname is version-2-cr4fsa.fly.dev
+          baseUrl = process.env.NEXT_PUBLIC_AI_SERVER_WS_URL || 'wss://version-2-cr4fsa.fly.dev';
+        }
+      }
+    }
+
+    console.log('[Observer DEBUG] Final baseUrl:', baseUrl);
+
+    // Build observer URL with optional userId
+    let url = `${baseUrl}/observe/${encodeURIComponent(callControlId)}`;
+    if (userId) {
+      url += `?userId=${encodeURIComponent(userId)}`;
+    }
+
+    console.log('[Observer DEBUG] Final WebSocket URL:', url);
+    return url;
+  }, [callControlId, userId, aiServerUrl]);
+
+  /**
+   * Connect to the observer WebSocket
+   */
+  const connect = useCallback(async () => {
+    console.log('[Observer DEBUG] connect() called');
+    console.log('[Observer DEBUG] wsRef.current:', wsRef.current);
+
+    if (wsRef.current) {
+      console.log('[Observer DEBUG] Already connected, returning');
+      return;
+    }
+
+    try {
+      console.log('[Observer DEBUG] Setting state to connecting...');
+      setConnectionState('connecting');
+      setErrorMessage(null);
+
+      // Initialize audio player (requires user gesture, hence in connect)
+      console.log('[Observer DEBUG] Initializing audio player...');
+      if (!audioPlayerRef.current) {
+        audioPlayerRef.current = new MulawAudioPlayer((state) => {
+          console.log('[Observer DEBUG] Audio state changed:', state);
+          setAudioState(state);
+        });
+      }
+      await audioPlayerRef.current.initialize();
+      console.log('[Observer DEBUG] Audio player initialized');
+
+      // Connect to WebSocket
+      const wsUrl = buildWsUrl();
+      console.log('[Observer DEBUG] Creating WebSocket connection to:', wsUrl);
+
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      console.log('[Observer DEBUG] WebSocket object created, readyState:', ws.readyState);
+
+      ws.onopen = () => {
+        console.log('[Observer DEBUG] WebSocket onopen fired!');
+        console.log('[Observer DEBUG] WebSocket readyState:', ws.readyState);
+        setConnectionState('connected');
+        setIsListening(true);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          switch (msg.event) {
+            case 'connected':
+              console.log('[Observer] Connected to call:', msg);
+              setCallInfo({
+                goal: msg.goal,
+                assistantName: msg.assistantName,
+              });
+              break;
+
+            case 'audio':
+              // Log first few audio packets for debugging
+              if (!audioPlayerRef.current) {
+                console.error('[Observer] No audio player!');
+                return;
+              }
+              audioPlayerRef.current.addAudio(msg.track, msg.payload);
+              break;
+
+            case 'transcript':
+              console.log('[Observer] Transcript:', msg.speaker, msg.text?.substring(0, 50));
+              // Add transcript entry
+              setTranscripts((prev) => {
+                const newEntry: TranscriptEntry = {
+                  speaker: msg.speaker,
+                  text: msg.text,
+                  timestamp: msg.timestamp,
+                  isFinal: msg.isFinal,
+                };
+
+                // If interim transcript, update last entry for same speaker
+                if (!msg.isFinal && prev.length > 0) {
+                  const lastEntry = prev[prev.length - 1];
+                  if (lastEntry.speaker === msg.speaker && !lastEntry.isFinal) {
+                    return [...prev.slice(0, -1), newEntry];
+                  }
+                }
+
+                return [...prev, newEntry];
+              });
+              break;
+
+            case 'call_state':
+              console.log('[Observer] Call state:', msg.state);
+              if (msg.state === 'ended') {
+                disconnect();
+              }
+              break;
+
+            case 'pong':
+              break;
+
+            default:
+              console.log('[Observer] Unknown event:', msg.event);
+          }
+        } catch (error) {
+          console.error('[Observer] Error parsing message:', error);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('[Observer DEBUG] WebSocket onerror fired!');
+        console.error('[Observer DEBUG] Error object:', error);
+        console.error('[Observer DEBUG] WebSocket readyState:', ws.readyState);
+        setConnectionState('error');
+        setErrorMessage('Connection error - check browser console for details');
+      };
+
+      ws.onclose = (event) => {
+        console.log('[Observer DEBUG] WebSocket onclose fired!');
+        console.log('[Observer DEBUG] Close code:', event.code);
+        console.log('[Observer DEBUG] Close reason:', event.reason);
+        console.log('[Observer DEBUG] Clean close:', event.wasClean);
+        setConnectionState('disconnected');
+        setIsListening(false);
+        wsRef.current = null;
+
+        if (event.code !== 1000) {
+          setErrorMessage(`Connection closed: code=${event.code}, reason=${event.reason || 'unknown'}`);
+        }
+
+        onDisconnect?.();
+      };
+
+      // Setup keepalive ping
+      const pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          console.log('[Observer DEBUG] Sending ping');
+          ws.send(JSON.stringify({ event: 'ping' }));
+        }
+      }, 30000);
+
+      // Clear interval on close
+      ws.addEventListener('close', () => clearInterval(pingInterval));
+
+    } catch (error) {
+      console.error('[Observer DEBUG] Connection error in try/catch:', error);
+      setConnectionState('error');
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to connect');
+    }
+  }, [buildWsUrl, isListening, onDisconnect]);
+
+  /**
+   * Disconnect from the observer WebSocket
+   */
+  const disconnect = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close(1000, 'User disconnected');
+      wsRef.current = null;
+    }
+
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.stop();
+    }
+
+    setConnectionState('disconnected');
+    setIsListening(false);
+    setAudioState('stopped');
+  }, []);
+
+  /**
+   * Toggle listening state
+   */
+  const toggleListening = useCallback(() => {
+    if (connectionState === 'disconnected') {
+      connect();
+    } else {
+      disconnect();
+    }
+  }, [connectionState, connect, disconnect]);
+
+  /**
+   * Format timestamp for display
+   */
+  const formatTime = (timestamp: number) => {
+    return new Date(timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  };
+
+  return (
+    <Card className="w-full">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Radio className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">Live Call Observer</CardTitle>
+            {connectionState === 'connected' && (
+              <Badge variant="success" className="gap-1 animate-pulse">
+                <span className="h-2 w-2 rounded-full bg-green-500" />
+                Live
+              </Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Connection Status */}
+            {connectionState === 'connected' ? (
+              <Wifi className="h-4 w-4 text-green-500" />
+            ) : connectionState === 'connecting' ? (
+              <Wifi className="h-4 w-4 text-yellow-500 animate-pulse" />
+            ) : (
+              <WifiOff className="h-4 w-4 text-muted-foreground" />
+            )}
+
+            {/* Audio Status */}
+            {audioState === 'playing' && (
+              <Badge variant="outline" className="gap-1">
+                <Volume2 className="h-3 w-3" />
+                Playing
+              </Badge>
+            )}
+            {audioState === 'buffering' && (
+              <Badge variant="outline" className="gap-1 animate-pulse">
+                Buffering...
+              </Badge>
+            )}
+          </div>
+        </div>
+        <CardDescription>
+          {callInfo?.goal
+            ? `Goal: ${callInfo.goal.slice(0, 50)}${callInfo.goal.length > 50 ? '...' : ''}`
+            : `Call ID: ${callControlId.slice(-8)}`}
+        </CardDescription>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        {/* Error Message */}
+        {errorMessage && (
+          <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md text-sm">
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Controls */}
+        <div className="flex items-center gap-4">
+          {/* Listen/Stop Button */}
+          <Button
+            onClick={toggleListening}
+            variant={isListening ? 'destructive' : 'default'}
+            className="gap-2"
+          >
+            {isListening ? (
+              <>
+                <Square className="h-4 w-4" />
+                Stop Listening
+              </>
+            ) : (
+              <>
+                <Headphones className="h-4 w-4" />
+                Start Listening
+              </>
+            )}
+          </Button>
+
+          {/* Volume Control */}
+          <div className="flex items-center gap-2 flex-1 max-w-[200px]">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setIsMuted(!isMuted)}
+            >
+              {isMuted ? (
+                <VolumeX className="h-4 w-4" />
+              ) : (
+                <Volume2 className="h-4 w-4" />
+              )}
+            </Button>
+            <Slider
+              value={[volume * 100]}
+              min={0}
+              max={100}
+              step={5}
+              onValueChange={([v]) => setVolume(v / 100)}
+              className="flex-1"
+              disabled={!isListening}
+            />
+          </div>
+        </div>
+
+
+        {/* Live Transcript */}
+        {transcripts.length > 0 && (
+          <div className="border rounded-lg">
+            <div className="px-3 py-2 border-b bg-muted/30">
+              <span className="text-sm font-medium">Live Transcript</span>
+            </div>
+            <div className="max-h-[300px] overflow-y-auto p-3 space-y-2">
+              {transcripts.map((entry, index) => (
+                <div
+                  key={`${entry.timestamp}-${index}`}
+                  className={`flex gap-2 ${
+                    entry.isFinal ? '' : 'opacity-60'
+                  }`}
+                >
+                  <span className="text-[10px] text-muted-foreground mt-1 shrink-0 w-16">
+                    {formatTime(entry.timestamp)}
+                  </span>
+                  <div
+                    className={`flex-1 rounded-lg px-3 py-2 text-sm ${
+                      entry.speaker === 'caller'
+                        ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-400'
+                        : 'bg-green-50 dark:bg-green-900/20 border-l-2 border-green-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      {entry.speaker === 'caller' ? (
+                        <User className="h-3 w-3 text-blue-500" />
+                      ) : (
+                        <Bot className="h-3 w-3 text-green-500" />
+                      )}
+                      <span className="text-xs font-medium">
+                        {entry.speaker === 'caller' ? 'Caller' : callInfo?.assistantName || 'Assistant'}
+                      </span>
+                      {!entry.isFinal && (
+                        <span className="text-[10px] text-muted-foreground">(speaking...)</span>
+                      )}
+                    </div>
+                    <p className="text-sm">{entry.text}</p>
+                  </div>
+                </div>
+              ))}
+              <div ref={transcriptEndRef} />
+            </div>
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!isListening && transcripts.length === 0 && (
+          <div className="text-center py-8 text-muted-foreground">
+            <Headphones className="h-10 w-10 mx-auto mb-3 opacity-20" />
+            <p>Click &quot;Start Listening&quot; to hear the call live</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
