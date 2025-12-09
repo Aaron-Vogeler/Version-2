@@ -57,6 +57,11 @@ export function initSharedState(): void {
   if (redisInitialized) return;
   redisInitialized = true;
 
+  // Log machine ID for debugging multi-instance routing
+  console.log(`[SharedState] FLY_MACHINE_ID: ${FLY_MACHINE_ID || 'NOT SET'}`);
+  console.log(`[SharedState] FLY_ALLOC_ID env: ${process.env.FLY_ALLOC_ID || 'NOT SET'}`);
+  console.log(`[SharedState] FLY_MACHINE_ID env: ${process.env.FLY_MACHINE_ID || 'NOT SET'}`);
+
   const upstashUrl = process.env.UPSTASH_REDIS_REST_URL;
   const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
@@ -68,6 +73,7 @@ export function initSharedState(): void {
       });
       redisEnabled = true;
       console.log("[SharedState] Redis enabled for multi-instance TTS state sync");
+      console.log(`[SharedState] Multi-instance observer routing: ${FLY_MACHINE_ID ? 'ENABLED' : 'DISABLED (no machine ID)'}`);
     } catch (error) {
       console.warn(
         "[SharedState] Failed to initialize Redis:",
@@ -299,13 +305,14 @@ export function getCurrentMachineId(): string | null {
  */
 export async function registerCallMachine(callControlId: string): Promise<void> {
   if (!redisEnabled || !redis || !FLY_MACHINE_ID) {
+    console.log(`[SharedState] Cannot register call machine: redisEnabled=${redisEnabled}, redis=${!!redis}, FLY_MACHINE_ID=${FLY_MACHINE_ID || 'null'}`);
     return;
   }
 
   try {
     const key = getCallMachineKey(callControlId);
     await redis.setex(key, KEY_TTL_SECONDS, FLY_MACHINE_ID);
-    console.log(`[SharedState] Registered call ${callControlId.slice(-8)} on machine ${FLY_MACHINE_ID.slice(0, 8)}...`);
+    console.log(`[SharedState] ✅ Registered call ${callControlId.slice(-8)} on machine ${FLY_MACHINE_ID.slice(0, 8)}...`);
   } catch (error) {
     console.error(
       "[SharedState] Error registering call machine:",

@@ -289,14 +289,18 @@ export async function handleObserverUpgrade(
 
     // Check if this call is handled by this machine (multi-instance routing)
     const localContext = contextMgr.getContext(callControlId);
+    const currentMachineId = sharedState.getCurrentMachineId();
+    console.log(`[Observer] Routing check: localContext=${!!localContext}, currentMachine=${currentMachineId?.slice(0, 8) || 'null'}`);
+
     if (!localContext) {
       // Call context not found locally - check if another machine has it
       const { isLocal, machineId } = await sharedState.checkCallMachine(callControlId);
+      console.log(`[Observer] Redis lookup: isLocal=${isLocal}, machineId=${machineId?.slice(0, 8) || 'null'}`);
 
       if (!isLocal && machineId) {
         // Another machine handles this call - use fly-replay to redirect
         // Fly.io's proxy will intercept this response and replay the request to the correct machine
-        console.log(`[Observer] Call ${callControlId.slice(-8)} is on machine ${machineId.slice(0, 8)}..., using fly-replay`);
+        console.log(`[Observer] 🔄 Call ${callControlId.slice(-8)} is on machine ${machineId.slice(0, 8)}..., using fly-replay`);
         socket.write(
           'HTTP/1.1 409 Conflict\r\n' +
           `fly-replay: instance=${machineId}\r\n` +
@@ -307,7 +311,9 @@ export async function handleObserverUpgrade(
       }
 
       // Call not found anywhere - might have ended or not started yet
-      console.log(`[Observer] Call ${callControlId.slice(-8)} not found on any machine, allowing connection anyway`);
+      console.log(`[Observer] ⚠️ Call ${callControlId.slice(-8)} not found on any machine (isLocal=${isLocal}, machineId=${machineId}), allowing connection anyway`);
+    } else {
+      console.log(`[Observer] ✅ Call ${callControlId.slice(-8)} found locally on this machine`);
     }
 
     // Handle the upgrade
