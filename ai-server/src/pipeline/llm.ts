@@ -10,6 +10,46 @@ const groq = new OpenAI({
 });
 
 /**
+ * Call Groq's Responses API directly via HTTP.
+ * This returns input_tokens_details.cached_tokens for prompt caching visibility.
+ * The OpenAI SDK's responses.create() requires SDK v4.84.0+, so we use raw HTTP.
+ */
+async function callGroqResponsesApi(params: {
+  model: string;
+  input: Array<{ role: string; content: string }>;
+  temperature?: number;
+  max_output_tokens?: number;
+  top_p?: number;
+  reasoning?: { effort: string };
+  text?: { format: { type: string } };
+}): Promise<{
+  output_text: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    input_tokens_details?: { cached_tokens: number; reasoning_tokens?: number };
+    output_tokens_details?: { reasoning_tokens?: number };
+  };
+}> {
+  const response = await fetch("https://api.groq.com/openai/v1/responses", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${config.groq.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Groq Responses API error ${response.status}: ${errorText}`);
+  }
+
+  return response.json();
+}
+
+/**
  * Re-export CallContext from the context manager for backward compatibility.
  */
 export type CallContext = contextMgr.CallContext;
@@ -106,11 +146,11 @@ export async function generateRollingSummary(
     // Use model from context if available, otherwise fall back to config
     const modelToUse = context.model || config.groq.model;
 
-    // Use Responses API for accurate caching metrics
-    const response = await (groq as any).responses.create({
+    // Use Responses API for accurate caching metrics (raw HTTP since SDK is too old)
+    const response = await callGroqResponsesApi({
       model: modelToUse,
-      input: summaryMessages,  // Responses API uses 'input' instead of 'messages'
-      temperature: 0.2, // Lower temperature for consistency
+      input: summaryMessages,
+      temperature: 0.2,
       max_output_tokens: config_params.maxSummaryTokensHint,
     });
     const latencyMs = Date.now() - startTime;
@@ -260,8 +300,8 @@ export async function generateAssistantReply(
     apiParams.text = { format: { type: 'json_object' } };
   }
 
-  // Use Responses API for accurate caching metrics
-  const response = await (groq as any).responses.create(apiParams);
+  // Use Responses API for accurate caching metrics (raw HTTP since SDK is too old)
+  const response = await callGroqResponsesApi(apiParams);
   const latencyMs = Date.now() - startTime;
 
   // Responses API returns output_text directly
