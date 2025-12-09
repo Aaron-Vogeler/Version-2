@@ -8,7 +8,7 @@ import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
-import { synthesizeSpeech, stopSpeaking, hangupCall } from "./pipeline/tts";
+import { synthesizeSpeech, stopSpeaking, hangupCall, sendDtmf } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording } from "./utils/supabase";
 import * as sharedState from "./sharedState";
@@ -19,6 +19,7 @@ import {
   isCustomRecordingEnabled,
   getCustomRecordingMaxBytes,
 } from "./pipeline/recording";
+import * as ivrUtils from "./pipeline/ivr";
 
 // Call control settings are now in config.callControl
 // TTS_DEBOUNCE_MS, BARGE_IN_COOLDOWN_MS, CALLER_UTTERANCE_FLUSH_MS, HANGUP_DELAY_MS
@@ -36,12 +37,14 @@ const deepgram = createDeepgramClient();
  * Result of parsing an LLM response for speech and behavior.
  */
 interface ParsedLlmResponse {
-  /** Text to be spoken via TTS (null if behavior is wait/noop/hold) */
+  /** Text to be spoken via TTS (null if behavior is wait/noop/hold/dtmf) */
   speakText: string | null;
-  /** Behavior directive: "speak" | "wait" | "end" | "noop" | "hold" */
-  behavior: "speak" | "wait" | "end" | "noop" | "hold";
+  /** Behavior directive: "speak" | "wait" | "end" | "noop" | "hold" | "dtmf" */
+  behavior: "speak" | "wait" | "end" | "noop" | "hold" | "dtmf";
   /** Internal notes (for logging/debugging) */
   internal?: string;
+  /** DTMF digits to send (only used when behavior is "dtmf") */
+  dtmf?: string;
 }
 
 /**
@@ -165,6 +168,26 @@ function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
       if (behavior === "wait" || behavior === "noop" || behavior === "hold") {
         console.log(`[LLM] Behavior='${behavior}' - skipping TTS (silent response)`);
         return { speakText: null, behavior, internal };
+      }
+
+      // Handle "dtmf" behavior - send DTMF tones instead of speaking
+      if (behavior === "dtmf") {
+        // Extract DTMF digits from the response
+        let dtmfDigits = parsed.dtmf || parsed.digits || parsed.digit;
+
+        // If no explicit dtmf field, try to extract from speak field
+        if (!dtmfDigits && typeof parsed.speak === "string") {
+          dtmfDigits = ivrUtils.extractDtmfDigits(parsed.speak) || ivrUtils.parseNaturalDtmf(parsed.speak);
+        }
+
+        if (dtmfDigits) {
+          const cleanDigits = ivrUtils.extractDtmfDigits(String(dtmfDigits));
+          console.log(`[LLM] Behavior='dtmf' - will send DTMF: ${cleanDigits}`);
+          return { speakText: null, behavior: "dtmf", internal, dtmf: cleanDigits || undefined };
+        } else {
+          console.warn("[LLM] Behavior='dtmf' but no valid digits found, treating as noop");
+          return { speakText: null, behavior: "noop", internal };
+        }
       }
 
       // If it has a "speak" field, use that
@@ -420,10 +443,16 @@ function queueUserTranscript(
     clearTimeout(callContext.ttsDebounceTimer);
   }
 
+  // Use IVR-optimized timing if in IVR mode (faster response to automated systems)
+  const debounceMs = ivrUtils.getDebounceMs(callContext);
+  if (callContext.isIvrMode) {
+    console.log(`[IVR] ⚡ Using fast debounce: ${debounceMs}ms (IVR mode)`);
+  }
+
   // Schedule a new TTS response timer (uses configurable debounce)
   callContext.ttsDebounceTimer = setTimeout(() => {
     scheduleTtsResponse(callContext, ws, currentSeq);
-  }, config.callControl.ttsDebounceMs);
+  }, debounceMs);
 }
 
 /**
@@ -467,6 +496,17 @@ async function scheduleTtsResponse(
     }
 
     console.log("🎯 Processing accumulated transcript:", userText);
+
+    // ============================================================================
+    // IVR DETECTION: Analyze transcript for automated system patterns
+    // ============================================================================
+    const ivrAnalysis = ivrUtils.analyzeForIvr(userText);
+    if (ivrAnalysis.confidence > 0.3) {
+      console.log(`[IVR] 📊 Analysis: confidence=${(ivrAnalysis.confidence * 100).toFixed(1)}%, ` +
+        `isMenu=${ivrAnalysis.isMenu}, expectsInput=${ivrAnalysis.expectsInput}, ` +
+        `inputType=${ivrAnalysis.expectedInputType}`);
+    }
+    ivrUtils.updateIvrState(callContext, ivrAnalysis);
 
     // Append user turn to the call context if callId is available
     if (callContext.callId) {
@@ -522,7 +562,7 @@ async function scheduleTtsResponse(
     }
 
     // Extract speech text and behavior from LLM response (handles JSON format)
-    const { speakText, behavior } = extractSpeechAndBehavior(aiText);
+    const { speakText, behavior, dtmf } = extractSpeechAndBehavior(aiText);
 
     // Log both raw and extracted for debugging
     if (speakText !== aiText) {
@@ -546,6 +586,57 @@ async function scheduleTtsResponse(
     if (behavior === "hold") {
       console.log(`⏳ Behavior='hold' - entering hold mode with periodic check-ins`);
       startHoldMode(callContext, ws);
+      // Clear transcript to avoid reprocessing
+      callContext.lastUserTranscript = "";
+      return;
+    }
+
+    // Handle "dtmf" behavior - send DTMF tones for IVR navigation
+    if (behavior === "dtmf" && dtmf) {
+      console.log(`📱 Behavior='dtmf' - sending DTMF tones: ${dtmf}`);
+
+      // Exit hold mode if we were on hold (we're now actively navigating)
+      if (callContext.isOnHold) {
+        cancelHoldMode(callContext);
+      }
+
+      // Check DTMF pacing (prevent rapid-fire tones)
+      if (!ivrUtils.canSendDtmf(callContext)) {
+        const waitTime = config.ivr.dtmfMinPauseMs - (Date.now() - (callContext.lastDtmfSentAt || 0));
+        console.log(`[DTMF] ⏳ Waiting ${waitTime}ms before sending (pacing)`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+
+      // Send DTMF via Telnyx
+      if (callContext.callControlId) {
+        try {
+          await sendDtmf(callContext.callControlId, dtmf, config.ivr.dtmfDurationMs);
+          ivrUtils.recordDtmfSent(callContext, dtmf);
+
+          // Append to conversation turns for context
+          if (callContext.callId) {
+            contextMgr.appendTurn(callContext.callId, {
+              speaker: "assistant",
+              text: `[DTMF: ${dtmf}]`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+
+          // Log DTMF to transcript
+          if (isSupabaseConfigured()) {
+            insertTranscriptSegment({
+              call_id: callContext.callControlId,
+              speaker: "assistant",
+              track: "outbound",
+              text: `[DTMF: ${dtmf}]`,
+              created_at: new Date().toISOString(),
+            }).catch(err => console.error("[TRANSCRIPT] Error logging DTMF:", err));
+          }
+        } catch (dtmfError) {
+          console.error("❌ DTMF send failed:", dtmfError instanceof Error ? dtmfError.message : dtmfError);
+        }
+      }
+
       // Clear transcript to avoid reprocessing
       callContext.lastUserTranscript = "";
       return;
@@ -1389,7 +1480,10 @@ wss.on("connection", async (ws) => {
         const now = Date.now();
 
         // Check grace period - don't trigger barge-in too soon after TTS starts (prevents echo issues)
-        const gracePeriodMs = config.callControl.bargeInGracePeriodMs;
+        // In IVR mode, grace period can be disabled since IVRs don't have echo feedback issues
+        const gracePeriodMs = (callContext.isIvrMode && config.ivr.disableBargeInGracePeriod)
+          ? 0
+          : config.callControl.bargeInGracePeriodMs;
         const timeSinceTtsStart = callContext.speakStartedAt ? now - callContext.speakStartedAt : Infinity;
         if (timeSinceTtsStart < gracePeriodMs) {
           console.log(`[BARGE-IN] ⏳ Ignoring during grace period (${timeSinceTtsStart}ms < ${gracePeriodMs}ms): "${userText}"`);
@@ -1509,11 +1603,13 @@ wss.on("connection", async (ws) => {
         }
 
         // Schedule flush timer (configurable silence = utterance boundary)
+        // Use IVR-optimized timing if in IVR mode
+        const flushMs = ivrUtils.getUtteranceFlushMs(callContext);
         // Capture callContext and ws in local variables for closure
         const ctx = callContext;
         const wsRef = ws;
         callContext.callerFinalFlushTimer = setTimeout(() => {
-          console.log(`[TRANSCRIPT] Flush timer fired (${config.callControl.callerUtteranceFlushMs}ms with no new final chunks)`);
+          console.log(`[TRANSCRIPT] Flush timer fired (${flushMs}ms with no new final chunks)${ctx.isIvrMode ? " [IVR mode]" : ""}`);
           if (ctx) {
             // Get the full accumulated utterance before flushing
             const fullUtterance = [...(ctx.callerFinalBuf || [])].join(" ").trim();
@@ -1528,7 +1624,7 @@ wss.on("connection", async (ws) => {
               queueUserTranscript(ctx, fullUtterance, wsRef);
             }
           }
-        }, config.callControl.callerUtteranceFlushMs);
+        }, flushMs);
       }
 
       // NOTE: We do NOT call queueUserTranscript here!

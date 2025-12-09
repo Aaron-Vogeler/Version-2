@@ -84,6 +84,15 @@ export interface CallContext {
   // Per-call hold settings (overrides config defaults if provided)
   holdCheckInIntervalMs?: number; // Custom check-in interval for this call
   holdMaxCheckIns?: number; // Custom max check-ins for this call
+
+  // IVR/Phone Tree Navigation State
+  isIvrMode?: boolean; // Whether we're currently interacting with an automated system
+  ivrConfidence?: number; // Confidence level (0-1) that we're in IVR mode
+  lastIvrPrompt?: string; // The last IVR prompt we heard (for context)
+  ivrMenuOptions?: string[]; // Detected menu options from the IVR
+  ivrNavigationHistory?: string[]; // History of DTMF inputs sent during this call
+  lastDtmfSentAt?: number; // Timestamp of last DTMF sent (for pacing)
+  humanDetectedAt?: number; // Timestamp when human was detected (exits IVR mode)
 }
 
 /**
@@ -127,6 +136,11 @@ export function getOrCreateContext(
       callerFinalBuf: [],
       lastCallerUtterance: "",
       assistantFinalBuf: [],
+      // IVR state initialization
+      isIvrMode: false,
+      ivrConfidence: 0,
+      ivrMenuOptions: [],
+      ivrNavigationHistory: [],
     });
   }
   return callContextStore.get(callId)!;
@@ -235,6 +249,11 @@ export function clearContext(callId: string): void {
     context.ttsState = "idle";
     // Reset hold state
     context.isOnHold = false;
+    // Reset IVR state
+    context.isIvrMode = false;
+    context.ivrConfidence = 0;
+    context.ivrMenuOptions = [];
+    context.ivrNavigationHistory = [];
     // Close Deepgram if needed
     if (context.deepgramSocket) {
       try {
