@@ -170,6 +170,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     hangupDelayMs: 2000,
     holdCheckInIntervalMs: 30000,
     holdMaxCheckIns: 5,
+    holdCheckInPrompt: `[SYSTEM: You are currently on hold (check-in #{CHECK_IN_COUNT}/{MAX_CHECK_INS}, {HOLD_DURATION_SEC}s elapsed). Generate a brief, polite check-in phrase to let the other party know you're still waiting. Keep it very short (5-10 words max). Examples: "Still here, thank you", "I'm still waiting, no rush", "Take your time, I'll hold". Respond with ONLY the check-in phrase, no JSON.]`,
   });
   const [showCallControlSettings, setShowCallControlSettings] = useState(false);
 
@@ -394,6 +395,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           rolling_summary_prompt: rollingSummaryPrompt,
           hold_check_in_interval_ms: callControlSettings.holdCheckInIntervalMs,
           hold_max_check_ins: callControlSettings.holdMaxCheckIns,
+          hold_check_in_prompt: callControlSettings.holdCheckInPrompt,
         }),
       });
 
@@ -465,6 +467,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       hangupDelayMs: 2000,
       holdCheckInIntervalMs: 30000,
       holdMaxCheckIns: 5,
+      holdCheckInPrompt: `[SYSTEM: You are currently on hold (check-in #{CHECK_IN_COUNT}/{MAX_CHECK_INS}, {HOLD_DURATION_SEC}s elapsed). Generate a brief, polite check-in phrase to let the other party know you're still waiting. Keep it very short (5-10 words max). Examples: "Still here, thank you", "I'm still waiting, no rush", "Take your time, I'll hold". Respond with ONLY the check-in phrase, no JSON.]`,
     });
     if (models.length > 0) {
       setSelectedModel(models[0].id);
@@ -840,6 +843,18 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 className="text-xs h-8"
               />
               <p className="text-[10px] text-muted-foreground">Max check-ins before ending call (default: 5)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Hold Check-In Prompt</Label>
+              <Textarea
+                value={callControlSettings.holdCheckInPrompt}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, holdCheckInPrompt: e.target.value }))}
+                placeholder="Prompt template for generating check-in messages..."
+                className="min-h-[80px] resize-none text-[10px] font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Placeholders: <code className="bg-muted px-0.5 rounded">{'{CHECK_IN_COUNT}'}</code>, <code className="bg-muted px-0.5 rounded">{'{MAX_CHECK_INS}'}</code>, <code className="bg-muted px-0.5 rounded">{'{HOLD_DURATION_SEC}'}</code>
+              </p>
             </div>
           </div>
         )}

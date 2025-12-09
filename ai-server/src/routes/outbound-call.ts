@@ -15,6 +15,7 @@ interface OutboundCallRequest {
   rollingSummaryPrompt?: string;
   holdCheckInIntervalMs?: number;
   holdMaxCheckIns?: number;
+  holdCheckInPrompt?: string;
 }
 
 interface TelnyxCallResponse {
@@ -32,7 +33,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, holdCheckInIntervalMs, holdMaxCheckIns } = req.body as OutboundCallRequest;
+    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, holdCheckInIntervalMs, holdMaxCheckIns, holdCheckInPrompt } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -60,6 +61,7 @@ router.post("/", async (req: Request, res: Response) => {
       rollingSummaryPrompt: rollingSummaryPrompt || null,
       holdCheckInIntervalMs: holdCheckInIntervalMs || null,
       holdMaxCheckIns: holdMaxCheckIns || null,
+      holdCheckInPrompt: holdCheckInPrompt || null,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

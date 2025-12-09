@@ -100,6 +100,12 @@ const config = {
     // Hold max check-ins - maximum number of times AI will check in before ending the call
     // Default: 5 check-ins (2.5 minutes of hold time at 30s intervals). After this, AI ends call.
     holdMaxCheckIns: getEnvInt("HOLD_MAX_CHECK_INS", 5),
+    // Hold check-in prompt - template for generating check-in messages while on hold
+    // Available placeholders: {CHECK_IN_COUNT}, {MAX_CHECK_INS}, {HOLD_DURATION_SEC}
+    holdCheckInPrompt: getEnv(
+      "HOLD_CHECK_IN_PROMPT",
+      `[SYSTEM: You are currently on hold (check-in #{CHECK_IN_COUNT}/{MAX_CHECK_INS}, {HOLD_DURATION_SEC}s elapsed). Generate a brief, polite check-in phrase to let the other party know you're still waiting. Keep it very short (5-10 words max). Examples: "Still here, thank you", "I'm still waiting, no rush", "Take your time, I'll hold". Respond with ONLY the check-in phrase, no JSON.]`
+    ),
   },
 
   // =============================================================================

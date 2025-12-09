@@ -84,6 +84,7 @@ export interface CallContext {
   // Per-call hold settings (overrides config defaults if provided)
   holdCheckInIntervalMs?: number; // Custom check-in interval for this call
   holdMaxCheckIns?: number; // Custom max check-ins for this call
+  holdCheckInPrompt?: string; // Custom prompt template for generating check-in messages
 }
 
 /**

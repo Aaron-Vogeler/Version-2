@@ -307,7 +307,14 @@ async function performHoldCheckIn(
   // Generate a check-in message via LLM
   // We send a special prompt that tells the LLM we're still on hold and need a brief check-in
   try {
-    const checkInPrompt = `[SYSTEM: You are currently on hold (check-in #${checkInCount}/${maxCheckIns}, ${holdDurationSec}s elapsed). Generate a brief, polite check-in phrase to let the other party know you're still waiting. Keep it very short (5-10 words max). Examples: "Still here, thank you", "I'm still waiting, no rush", "Take your time, I'll hold". Respond with ONLY the check-in phrase, no JSON.]`;
+    // Use per-call prompt if provided, otherwise use config default
+    const promptTemplate = callContext.holdCheckInPrompt || config.callControl.holdCheckInPrompt;
+
+    // Replace placeholders in the prompt template
+    const checkInPrompt = promptTemplate
+      .replace(/\{CHECK_IN_COUNT\}/g, String(checkInCount))
+      .replace(/\{MAX_CHECK_INS\}/g, String(maxCheckIns))
+      .replace(/\{HOLD_DURATION_SEC\}/g, String(holdDurationSec));
 
     const checkInResponse = await generateAssistantReply(checkInPrompt, callContext);
 
@@ -1592,6 +1599,7 @@ wss.on("connection", async (ws) => {
           managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
           managedContext.holdCheckInIntervalMs = decoded.holdCheckInIntervalMs || null;
           managedContext.holdMaxCheckIns = decoded.holdMaxCheckIns || null;
+          managedContext.holdCheckInPrompt = decoded.holdCheckInPrompt || null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";
