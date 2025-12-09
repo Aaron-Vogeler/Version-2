@@ -55,6 +55,8 @@ import {
   MessageSquare,
   RefreshCw,
   Volume2,
+  Radio,
+  Mic,
 } from 'lucide-react';
 
 // Model type from API
@@ -98,6 +100,17 @@ interface ActiveCall {
   status: 'initiated' | 'ringing' | 'answered' | 'completed' | 'failed';
   goal?: string;
   started_at?: string;
+}
+
+// Live transcript segment type
+interface TranscriptSegment {
+  id: string;
+  call_id: string;
+  speaker: 'caller' | 'assistant';
+  track: 'inbound' | 'outbound';
+  text: string;
+  confidence?: number;
+  created_at: string;
 }
 
 // =============================================================================
@@ -157,6 +170,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [showLlmLogModal, setShowLlmLogModal] = useState(false);
   const [expandedLlmLogs, setExpandedLlmLogs] = useState<Set<string>>(new Set());
   const [showLlmLogs, setShowLlmLogs] = useState(true);
+
+  // Live transcript streaming
+  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
+  const [showLiveTranscript, setShowLiveTranscript] = useState(true);
 
   // Call-like context state
   const [goal, setGoal] = useState('');
@@ -275,12 +292,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     const supabase = createClient();
     const callId = activeCall.id;
 
-    console.log('[GroqCall] Setting up LLM logs for call:', callId);
-
     // Initial fetch of existing logs directly from Supabase (not API)
     const fetchLogs = async () => {
       try {
-        console.log('[GroqCall] Fetching existing LLM logs from Supabase...');
         const { data: logs, error } = await supabase
           .from('call_llm_exchanges')
           .select('*')
@@ -288,11 +302,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           .order('created_at', { ascending: true });
 
         if (error) {
-          console.error('[GroqCall] Supabase query error:', error);
           return;
         }
-
-        console.log('[GroqCall] Fetched logs:', logs?.length || 0, 'records');
 
         // Map call_llm_exchanges columns to expected format
         const mappedLogs = (logs || []).map((log: any) => ({
@@ -301,8 +312,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           latency_ms: log.duration_ms,
         }));
         setLlmLogs(mappedLogs);
-      } catch (err) {
-        console.error('[GroqCall] Failed to fetch LLM logs:', err);
+      } catch {
+        // Silently fail - will show empty logs
       }
     };
     fetchLogs();
@@ -325,7 +336,6 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           if (rawLog.call_id !== callId) {
             return;
           }
-          console.log('[GroqCall] Received new LLM log via realtime:', rawLog.id);
           // Map call_llm_exchanges columns to expected format
           const newLog: LlmLog = {
             ...rawLog,
@@ -335,12 +345,62 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           setLlmLogs((prev) => [...prev, newLog]);
         }
       )
-      .subscribe((status) => {
-        console.log('[GroqCall] LLM logs realtime status:', status);
-      });
+      .subscribe();
 
     return () => {
-      console.log('[GroqCall] Cleaning up LLM logs subscription');
+      supabase.removeChannel(channel);
+    };
+  }, [activeCall?.id]);
+
+  // Subscribe to live transcript segments for active call
+  useEffect(() => {
+    if (!activeCall?.id) return;
+
+    const supabase = createClient();
+    const callId = activeCall.id;
+
+    // Initial fetch of existing transcript segments
+    const fetchTranscripts = async () => {
+      try {
+        const { data: segments, error } = await supabase
+          .from('call_transcript_segments')
+          .select('*')
+          .eq('call_id', callId)
+          .order('created_at', { ascending: true });
+
+        if (error) {
+          return;
+        }
+
+        setTranscriptSegments(segments || []);
+      } catch {
+        // Silently fail - will show empty transcript
+      }
+    };
+    fetchTranscripts();
+
+    // Subscribe to new transcript segments
+    const channel = supabase
+      .channel(`transcript-segments-${callId.slice(-8)}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'call_transcript_segments',
+        },
+        (payload) => {
+          const newSegment = payload.new as TranscriptSegment;
+          // Filter client-side for our specific call
+          if (newSegment.call_id !== callId) {
+            return;
+          }
+          setTranscriptSegments((prev) => [...prev, newSegment]);
+        }
+      )
+      .subscribe();
+
+    return () => {
       supabase.removeChannel(channel);
     };
   }, [activeCall?.id]);
@@ -458,19 +518,14 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
 
       // Extract call ID from response to track LLM logs
       const callControlId = data.flyResponse?.call_control_id;
-      console.log('[GroqCall] Delegate response:', data);
-      console.log('[GroqCall] Extracted call_control_id:', callControlId);
 
       if (callControlId) {
-        console.log('[GroqCall] Setting active call with ID:', callControlId);
         setActiveCall({
           id: callControlId,
           status: 'initiated',
           goal: goal,
           started_at: new Date().toISOString(),
         });
-      } else {
-        console.warn('[GroqCall] No call_control_id found in response - LLM logs will not be tracked');
       }
 
       // Clear phone number only, keep settings for potential re-use
@@ -487,6 +542,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const handleClearActiveCall = () => {
     setActiveCall(null);
     setLlmLogs([]);
+    setTranscriptSegments([]);
   };
 
   const handleCopyPrompt = () => {
@@ -535,7 +591,6 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
 
   const handlePlayAudio = async (soundId: string, url: string) => {
     if (!activeCall?.id) {
-      console.error('No active call to play audio into');
       setAudioStatus('No active call');
       setTimeout(() => setAudioStatus(null), 3000);
       return;
@@ -545,7 +600,6 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     setAudioStatus('Sending to call...');
 
     try {
-      console.log('[Frontend] Playing audio:', { soundId, url, callId: activeCall.id });
       const response = await fetch('/api/calls/play-audio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -556,16 +610,13 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       });
 
       const data = await response.json();
-      console.log('[Frontend] Play audio response:', data);
 
       if (!response.ok) {
-        console.error('Failed to play audio:', data);
         setAudioStatus(`Error: ${data.error || 'Failed'}`);
       } else {
         setAudioStatus('Playing in call!');
       }
-    } catch (err) {
-      console.error('Error playing audio:', err);
+    } catch {
       setAudioStatus('Network error');
     } finally {
       // Reset after a delay
@@ -1596,6 +1647,102 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     </div>
   );
 
+  // Live Transcript panel content
+  const liveTranscriptContent = (
+    <div className="space-y-4">
+      {/* Active Call Header */}
+      {activeCall && (
+        <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+          <div className="flex items-center gap-3">
+            {isCallActive ? (
+              <Badge variant="success" className="animate-pulse">
+                <Radio className="h-3 w-3 mr-1" />
+                LIVE
+              </Badge>
+            ) : (
+              <Badge variant="secondary">
+                <PhoneOff className="h-3 w-3 mr-1" />
+                {activeCall.status.charAt(0).toUpperCase() + activeCall.status.slice(1)}
+              </Badge>
+            )}
+            <span className="text-sm text-muted-foreground">
+              {transcriptSegments.length} segments
+            </span>
+          </div>
+          {!isCallActive && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearActiveCall}
+              className="h-7 text-xs"
+            >
+              Clear
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Live Transcript Display */}
+      {!activeCall ? (
+        <div className="text-center py-8 text-muted-foreground">
+          <Mic className="h-10 w-10 mx-auto mb-3 opacity-20" />
+          <p>No active call</p>
+          <p className="text-xs mt-1">Make a call to see the live transcript</p>
+        </div>
+      ) : transcriptSegments.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground">
+          <Mic className="h-10 w-10 mx-auto mb-3 opacity-20" />
+          {isCallActive ? (
+            <>
+              <RefreshCw className="h-5 w-5 mx-auto mb-2 animate-spin" />
+              <p>Waiting for speech...</p>
+              <p className="text-xs mt-1">The transcript will appear as the call progresses</p>
+            </>
+          ) : (
+            <>
+              <p>No transcript recorded</p>
+              <p className="text-xs mt-1">The call ended without capturing speech</p>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
+          {transcriptSegments.map((segment) => (
+            <div
+              key={segment.id}
+              className={`p-3 rounded-lg ${
+                segment.speaker === 'assistant'
+                  ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 ml-4'
+                  : 'bg-green-50 dark:bg-green-900/20 border-l-4 border-green-500 mr-4'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  {segment.speaker === 'assistant' ? (
+                    <Bot className="h-3 w-3 text-blue-500" />
+                  ) : (
+                    <User className="h-3 w-3 text-green-500" />
+                  )}
+                  <span className="text-xs font-medium">
+                    {segment.speaker === 'assistant' ? 'Assistant' : 'Caller'}
+                  </span>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {new Date(segment.created_at).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </span>
+              </div>
+              <p className="text-sm">{segment.text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -1657,6 +1804,14 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               >
                 <Brain className="h-4 w-4 mr-2" />
                 {showLlmLogs ? 'Hide' : 'Show'} LLM Logs
+              </Button>
+              <Button
+                variant={showLiveTranscript ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setShowLiveTranscript(!showLiveTranscript)}
+              >
+                <Radio className="h-4 w-4 mr-2" />
+                {showLiveTranscript ? 'Hide' : 'Show'} Live Transcript
               </Button>
               <Button
                 variant={isCallActive ? 'default' : 'outline'}
@@ -1725,6 +1880,37 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
             logsContent,
             'xl:col-span-12'
           )}
+        </div>
+      )}
+
+      {/* Live Transcript Panel - Real-time caller/assistant speech */}
+      {showLiveTranscript && (
+        <div className="mt-6">
+          <Card>
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Radio className="h-5 w-5" />
+                    Live Transcript
+                    {isCallActive && (
+                      <Badge variant="success" className="animate-pulse ml-2">
+                        LIVE
+                      </Badge>
+                    )}
+                  </CardTitle>
+                  <CardDescription>
+                    {activeCall
+                      ? `Call ${activeCall.id.slice(-8)} - ${transcriptSegments.length} speech segments`
+                      : 'Real-time caller and assistant speech during calls'}
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {liveTranscriptContent}
+            </CardContent>
+          </Card>
         </div>
       )}
 
