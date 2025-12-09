@@ -21,6 +21,7 @@ import {
 } from "./pipeline/recording";
 import * as ivrUtils from "./pipeline/ivr";
 import * as observer from "./routes/observe";
+import { smoothAudio, clearSmootherState } from "./pipeline/audio-smoother";
 
 // Call control settings are now in config.callControl
 // TTS_DEBOUNCE_MS, BARGE_IN_COOLDOWN_MS, CALLER_UTTERANCE_FLUSH_MS, HANGUP_DELAY_MS
@@ -1000,6 +1001,8 @@ function cleanupCallState(callContext: CallContext): void {
     sharedState.clearCallMachine(callContext.callControlId).catch((err) => {
       console.error("[SharedState] Error clearing call machine mapping:", err);
     });
+    // Clear audio smoother state
+    clearSmootherState(callContext.callControlId);
   }
 }
 
@@ -1758,11 +1761,27 @@ wss.on("connection", async (ws) => {
       else if (msg.event === "media" && msg.media?.payload) {
         // Telnyx sends track information: "inbound" = caller, "outbound" = AI
         const track = msg.media?.track;
-        const audio = Buffer.from(msg.media.payload, "base64");
+        const rawAudio = Buffer.from(msg.media.payload, "base64");
+
+        // ============================================================================
+        // AUDIO SMOOTHING: Apply fade-in/fade-out at silence boundaries
+        // This eliminates clicks/pops when audio starts or stops
+        // ============================================================================
+        let audio = rawAudio;
+        if (callContext?.callControlId && (track === "inbound" || track === "outbound")) {
+          try {
+            audio = smoothAudio(callContext.callControlId, track, rawAudio);
+          } catch (smoothError) {
+            // If smoothing fails, use raw audio
+            console.error("[AudioSmoother] Error:", smoothError instanceof Error ? smoothError.message : smoothError);
+            audio = rawAudio;
+          }
+        }
 
         // ============================================================================
         // CUSTOM RECORDING: Capture BOTH tracks (inbound + outbound) for self-hosted recording
         // This runs regardless of which track we're processing for STT
+        // Uses smoothed audio to eliminate clicks in recordings
         // ============================================================================
         if (
           callContext &&
@@ -1770,7 +1789,7 @@ wss.on("connection", async (ws) => {
           !callContext.customRecordingDisabledDueToSize
         ) {
           try {
-            // Push audio chunk to the appropriate track buffer
+            // Push smoothed audio chunk to the appropriate track buffer
             if (track === "inbound") {
               callContext.recordingBuffers.inbound.push(audio);
             } else if (track === "outbound") {
@@ -1799,7 +1818,7 @@ wss.on("connection", async (ws) => {
         }
 
         // ============================================================================
-        // LIVE OBSERVER: Broadcast audio to any connected observers
+        // LIVE OBSERVER: Broadcast smoothed audio to any connected observers
         // This allows third-party listening in real-time via browser
         // ============================================================================
         if (callContext?.callControlId && (track === "inbound" || track === "outbound")) {
