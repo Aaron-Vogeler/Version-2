@@ -521,14 +521,21 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   };
 
   // Play audio into the active call via Telnyx API
+  const [audioStatus, setAudioStatus] = useState<string | null>(null);
+
   const handlePlayAudio = async (soundId: string, url: string) => {
     if (!activeCall?.id) {
       console.error('No active call to play audio into');
+      setAudioStatus('No active call');
+      setTimeout(() => setAudioStatus(null), 3000);
       return;
     }
 
     setPlayingAudioId(soundId);
+    setAudioStatus('Sending to call...');
+
     try {
+      console.log('[Frontend] Playing audio:', { soundId, url, callId: activeCall.id });
       const response = await fetch('/api/calls/play-audio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -538,15 +545,24 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         }),
       });
 
+      const data = await response.json();
+      console.log('[Frontend] Play audio response:', data);
+
       if (!response.ok) {
-        const error = await response.json();
-        console.error('Failed to play audio:', error);
+        console.error('Failed to play audio:', data);
+        setAudioStatus(`Error: ${data.error || 'Failed'}`);
+      } else {
+        setAudioStatus('Playing in call!');
       }
     } catch (err) {
       console.error('Error playing audio:', err);
+      setAudioStatus('Network error');
     } finally {
-      // Reset after a short delay (audio plays asynchronously)
-      setTimeout(() => setPlayingAudioId(null), 2000);
+      // Reset after a delay
+      setTimeout(() => {
+        setPlayingAudioId(null);
+        setAudioStatus(null);
+      }, 3000);
     }
   };
 
@@ -1773,6 +1789,18 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-4">
+            {/* Status message */}
+            {audioStatus && (
+              <div className={`text-center py-2 px-3 rounded-md text-sm ${
+                audioStatus.includes('Error') || audioStatus.includes('error')
+                  ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+                  : audioStatus.includes('Playing')
+                  ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+                  : 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400'
+              }`}>
+                {audioStatus}
+              </div>
+            )}
             {!isCallActive && (
               <div className="text-center py-4 text-muted-foreground">
                 <PhoneOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -1786,7 +1814,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 variant={playingAudioId === sound.id ? 'default' : 'outline'}
                 className="w-full h-12 text-lg justify-start gap-3"
                 onClick={() => handlePlayAudio(sound.id, sound.url)}
-                disabled={playingAudioId !== null && playingAudioId !== sound.id}
+                disabled={playingAudioId !== null}
               >
                 {playingAudioId === sound.id ? (
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
