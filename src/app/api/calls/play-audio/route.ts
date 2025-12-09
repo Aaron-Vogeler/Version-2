@@ -48,6 +48,9 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         audio_url: audio_url,
+        // Overlay allows audio to play ON TOP of existing audio (TTS)
+        // instead of being queued after it
+        overlay: true,
       }),
     });
 
