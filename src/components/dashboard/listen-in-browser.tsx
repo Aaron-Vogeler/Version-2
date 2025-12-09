@@ -26,6 +26,7 @@ interface ListenInBrowserProps {
 }
 
 type ConnectionState = 'idle' | 'connecting' | 'listening' | 'error' | 'disconnected';
+type ListenMode = 'listen' | 'join';
 
 // Audio element ID for SDK binding
 const REMOTE_AUDIO_ELEMENT_ID = 'telnyx-remote-audio';
@@ -83,6 +84,7 @@ function getPreferredAudioCodecs(): AudioCodecCapability[] {
 
 export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
+  const [listenMode, setListenMode] = useState<ListenMode>('listen'); // Default to listen-only mode
   const [isMuted, setIsMuted] = useState(true); // Start muted by default for monitoring
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
@@ -360,14 +362,16 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
       addDebug(`📞 Preparing call to monitor number: ${monitorNumber}`);
       addDebug(`🎯 Target call ID: ${callId}`);
 
-      // Create client state with target_call_id for the Cloudflare Worker
-      // CRITICAL: This exact format is required by the backend to route the call
+      // Create client state with target_call_id for the backend to route the call
       // NOTE: Don't include user_id - it would cause Supabase UUID validation error
       // The backend skips logging when userId is not present (see index.ts line ~1114)
       const clientState = {
         target_call_id: callId,
         isListener: true, // Mark as listener call for backend identification
+        mode: listenMode, // 'listen' = silent monitoring, 'join' = full two-way audio
       };
+
+      addDebug(`🎯 Mode: ${listenMode === 'listen' ? 'LISTEN (silent monitoring)' : 'JOIN (two-way audio)'}`);
 
       addDebug(`📋 Client state object: ${JSON.stringify(clientState, null, 2)}`);
 
@@ -508,6 +512,38 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
           </div>
         </div>
 
+        {/* Mode Selection - only show when not connected */}
+        {connectionState !== 'listening' && connectionState !== 'connecting' && (
+          <div className="space-y-2">
+            <span className="text-sm text-muted-foreground">Mode:</span>
+            <div className="flex gap-2">
+              <Button
+                variant={listenMode === 'listen' ? 'default' : 'outline'}
+                size="sm"
+                className="flex-1"
+                onClick={() => setListenMode('listen')}
+              >
+                <Headphones className="mr-2 h-4 w-4" />
+                Listen Only
+              </Button>
+              <Button
+                variant={listenMode === 'join' ? 'default' : 'outline'}
+                size="sm"
+                className="flex-1"
+                onClick={() => setListenMode('join')}
+              >
+                <Mic className="mr-2 h-4 w-4" />
+                Join Call
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {listenMode === 'listen'
+                ? 'Silent monitoring - you can hear but cannot be heard'
+                : 'Two-way audio - you can take over the conversation'}
+            </p>
+          </div>
+        )}
+
         {/* Error message */}
         {errorMessage && (
           <div className="bg-destructive/10 border border-destructive/20 rounded p-3 text-sm text-destructive">
@@ -540,13 +576,18 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
             )}
             {connectionState !== 'connecting' && connectionState !== 'listening' && (
               <>
-                <Headphones className="mr-2 h-4 w-4" />
-                Listen Live
+                {listenMode === 'listen' ? (
+                  <Headphones className="mr-2 h-4 w-4" />
+                ) : (
+                  <Mic className="mr-2 h-4 w-4" />
+                )}
+                {listenMode === 'listen' ? 'Listen Live' : 'Join Call'}
               </>
             )}
           </Button>
 
-          {connectionState === 'listening' && (
+          {/* Only show mute toggle in Join mode when connected */}
+          {connectionState === 'listening' && listenMode === 'join' && (
             <Button
               onClick={handleMuteToggle}
               variant="outline"
@@ -565,8 +606,13 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
         {/* Info text */}
         <p className="text-xs text-muted-foreground">
-          Connects to the target call via WebRTC using SIP credentials. Audio streams in real-time to your browser.
-          {connectionState === 'listening' && ' Mic is available for two-way audio.'}
+          {connectionState === 'listening' ? (
+            listenMode === 'listen'
+              ? 'You are silently monitoring this call. Neither party can hear you.'
+              : 'You are connected with two-way audio. Use the mic button to speak.'
+          ) : (
+            'Connect to monitor or join the ongoing call in real-time.'
+          )}
         </p>
       </CardContent>
     </Card>

@@ -1112,10 +1112,11 @@ app.post("/webhooks/telnyx", async (req, res) => {
   // Check if this is a listener call (from Listen in Browser feature)
   const isListenerCall = clientStateData.isListener === true;
   const targetCallId = clientStateData.target_call_id;
+  const listenerMode = clientStateData.mode || 'listen'; // Default to listen-only mode
 
   // Handle listener call - answer and bridge to target call
   if (isListenerCall && eventType === "call.initiated" && callControlId && targetCallId) {
-    console.log(`🎧 Listener call detected! Target: ${targetCallId}`);
+    console.log(`🎧 Listener call detected! Target: ${targetCallId}, Mode: ${listenerMode}`);
 
     try {
       // Answer the listener call
@@ -1133,14 +1134,11 @@ app.post("/webhooks/telnyx", async (req, res) => {
       console.log(`✅ Listener call answered: ${callControlId}`);
 
       // Bridge the listener to the target call
-      // Using "parkAfterUnbridge: true" so listener doesn't affect target call when they disconnect
       console.log(`🔗 Bridging listener to target call: ${targetCallId}`);
       await axios.post(
         `https://api.telnyx.com/v2/calls/${callControlId}/actions/bridge`,
         {
           call_control_id: targetCallId,
-          // Listener in "whisper" mode - can hear but not be heard by the callee
-          // Actually, for monitoring we want to hear both sides
           park_after_unbridge: "self", // Park listener after target hangs up
         },
         {
@@ -1151,6 +1149,25 @@ app.post("/webhooks/telnyx", async (req, res) => {
         }
       );
       console.log(`✅ Listener bridged to target call: ${targetCallId}`);
+
+      // For "listen" mode, mute the listener at Telnyx level so they cannot be heard
+      // For "join" mode, leave them unmuted so they can participate
+      if (listenerMode === 'listen') {
+        console.log(`🔇 Muting listener for silent monitoring mode`);
+        await axios.post(
+          `https://api.telnyx.com/v2/calls/${callControlId}/actions/mute`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${config.telnyx.apiKey}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+        console.log(`✅ Listener muted - silent monitoring active`);
+      } else {
+        console.log(`🎤 Join mode - listener can speak (unmuted)`);
+      }
     } catch (error) {
       console.error(`❌ Failed to handle listener call:`, error instanceof Error ? error.message : error);
       if (axios.isAxiosError(error) && error.response) {
@@ -1159,7 +1176,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
     }
 
     // Don't process listener calls further - return early
-    return res.status(200).json({ status: "listener_handled" });
+    return res.status(200).json({ status: "listener_handled", mode: listenerMode });
   }
 
   // Handle call.initiated - create call record if it doesn't exist
