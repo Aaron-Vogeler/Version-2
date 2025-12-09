@@ -20,6 +20,7 @@ import {
   getCustomRecordingMaxBytes,
 } from "./pipeline/recording";
 import * as ivrUtils from "./pipeline/ivr";
+import * as observer from "./routes/observe";
 
 // Call control settings are now in config.callControl
 // TTS_DEBOUNCE_MS, BARGE_IN_COOLDOWN_MS, CALLER_UTTERANCE_FLUSH_MS, HANGUP_DELAY_MS
@@ -787,6 +788,11 @@ async function sendTtsResponse(
     // Log what TTS will actually speak (only logged after successful TTS API call)
     console.log("🤖 AI (speaking):", aiText);
 
+    // Broadcast assistant speech to live observers
+    if (callContext.callControlId) {
+      observer.broadcastTranscript(callContext.callControlId, 'assistant', aiText, true);
+    }
+
     // NOTE: Do NOT set ttsState='idle' here!
     // The HTTP response returns BEFORE audio finishes playing.
     // Telnyx webhooks (call.speak.ended) will set ttsState='idle' when playback truly ends.
@@ -908,6 +914,13 @@ async function finalizeCustomRecording(callContext: CallContext): Promise<void> 
  */
 function cleanupCallState(callContext: CallContext): void {
   console.log("🧹 Cleaning up call state");
+
+  // Notify observers that call has ended
+  if (callContext.callControlId) {
+    observer.broadcastCallState(callContext.callControlId, 'ended', {
+      reason: 'Call cleanup',
+    });
+  }
 
   // Flush any pending caller utterance before cleanup
   if (callContext.callerFinalBuf && callContext.callerFinalBuf.length > 0) {
@@ -1449,6 +1462,11 @@ wss.on("connection", async (ws) => {
 
       console.log("🗣️ Caller transcript:", userText, `(is_final: ${isFinal}, speech_final: ${speechFinal})`);
 
+      // Broadcast transcript to live observers
+      if (callContext.callControlId) {
+        observer.broadcastTranscript(callContext.callControlId, 'caller', userText, isFinal);
+      }
+
       // ============================================================================
       // BARGE-IN: Trigger on any recognized words (interim or final) for responsiveness
       // Barge-in ONLY stops TTS - it does NOT immediately send partials to LLM.
@@ -1772,6 +1790,14 @@ wss.on("connection", async (ws) => {
         }
 
         // ============================================================================
+        // LIVE OBSERVER: Broadcast audio to any connected observers
+        // This allows third-party listening in real-time via browser
+        // ============================================================================
+        if (callContext?.callControlId && (track === "inbound" || track === "outbound")) {
+          observer.broadcastAudio(callContext.callControlId, track, audio);
+        }
+
+        // ============================================================================
         // STT: ONLY send inbound audio to Deepgram (caller's voice)
         // Skip outbound (AI's voice) and any undefined/unknown tracks
         // ============================================================================
@@ -1813,6 +1839,9 @@ wss.on("connection", async (ws) => {
 
 // Initialize shared state (Redis for multi-instance support)
 sharedState.initSharedState();
+
+// Initialize observer WebSocket server for live call listening
+observer.setupObserverWebSocket(server);
 
 server.listen(config.port, () => {
   console.log(`🚀 AI Server running on port ${config.port}`);
