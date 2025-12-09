@@ -105,29 +105,27 @@ export async function generateRollingSummary(
     const startTime = Date.now();
     // Use model from context if available, otherwise fall back to config
     const modelToUse = context.model || config.groq.model;
-    const response = await groq.chat.completions.create({
+
+    // Use Responses API for accurate caching metrics
+    const response = await (groq as any).responses.create({
       model: modelToUse,
-      messages: summaryMessages,
+      input: summaryMessages,  // Responses API uses 'input' instead of 'messages'
       temperature: 0.2, // Lower temperature for consistency
-      max_tokens: config_params.maxSummaryTokensHint,
+      max_output_tokens: config_params.maxSummaryTokensHint,
     });
     const latencyMs = Date.now() - startTime;
 
-    const newSummary = response.choices[0]?.message?.content || "";
+    // Responses API returns output_text directly
+    const newSummary = response.output_text || "";
 
     // Debug: Log the full usage object to see what Groq returns
     console.log(`[${callId}] Groq summary usage response:`, JSON.stringify(response.usage, null, 2));
 
-    // Extract prompt caching metrics from Groq response (if available)
-    // Groq Responses API uses: input_tokens_details.cached_tokens
-    // OpenAI Chat Completions uses: prompt_tokens_details.cached_tokens
+    // Extract prompt caching metrics from Groq Responses API
     const summaryUsage = response.usage as any;
-    const cachedTokens =
-      summaryUsage?.input_tokens_details?.cached_tokens ??   // Groq Responses API format
-      summaryUsage?.prompt_tokens_details?.cached_tokens ??  // OpenAI format
-      0;
+    const cachedTokens = summaryUsage?.input_tokens_details?.cached_tokens ?? 0;
 
-    console.log(`[${callId}] Extracted summary cachedTokens: ${cachedTokens} (input_details: ${JSON.stringify(summaryUsage?.input_tokens_details)}, prompt_details: ${JSON.stringify(summaryUsage?.prompt_tokens_details)})`);
+    console.log(`[${callId}] Extracted summary cachedTokens: ${cachedTokens} (input_tokens_details: ${JSON.stringify(summaryUsage?.input_tokens_details)})`);
 
     // Log the LLM interaction to database for live visibility
     insertLlmLog({
@@ -142,9 +140,9 @@ export async function generateRollingSummary(
       assistant_response: newSummary,
       rolling_summary: existingSummary,
       recent_turns_count: newTurns.length,
-      prompt_tokens: response.usage?.prompt_tokens,
-      completion_tokens: response.usage?.completion_tokens,
-      total_tokens: response.usage?.total_tokens,
+      prompt_tokens: summaryUsage?.input_tokens,
+      completion_tokens: summaryUsage?.output_tokens,
+      total_tokens: summaryUsage?.total_tokens,
       cached_tokens: cachedTokens,
       latency_ms: latencyMs,
     }).catch((err) => {
@@ -243,29 +241,31 @@ export async function generateAssistantReply(
   const reasoningToUse = callContext?.reasoning || 'medium';
   const jsonModeToUse = callContext?.jsonMode || false;
 
-  // Build API request parameters
+  // Build API request parameters for Responses API
   const apiParams: any = {
     model: modelToUse,
-    messages,
+    input: messages,  // Responses API uses 'input' instead of 'messages'
     temperature: temperatureToUse,
-    max_tokens: maxTokensToUse,
+    max_output_tokens: maxTokensToUse,
     top_p: topPToUse,
   };
 
   // Add reasoning_effort if model supports it (openai/gpt-oss-20b)
   if (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) {
-    apiParams.reasoning_effort = reasoningToUse;
+    apiParams.reasoning = { effort: reasoningToUse };
   }
 
-  // Add response_format for JSON mode
+  // Add text format for JSON mode
   if (jsonModeToUse) {
-    apiParams.response_format = { type: 'json_object' };
+    apiParams.text = { format: { type: 'json_object' } };
   }
 
-  const response = await groq.chat.completions.create(apiParams);
+  // Use Responses API for accurate caching metrics
+  const response = await (groq as any).responses.create(apiParams);
   const latencyMs = Date.now() - startTime;
 
-  const assistantResponse = response.choices[0]?.message?.content || "";
+  // Responses API returns output_text directly
+  const assistantResponse = response.output_text || "";
 
   // Debug: Estimate system prompt size (rough: ~4 chars per token)
   const systemPromptChars = systemPrompt.length;
@@ -273,19 +273,13 @@ export async function generateAssistantReply(
   console.log(`[${context?.callId || 'no-call'}] System prompt: ~${estimatedSystemTokens} tokens (${systemPromptChars} chars). Need 1024+ for caching.`);
 
   // Debug: Log the full usage object to see what Groq returns
-  console.log(`[${context?.callId || 'no-call'}] Groq usage response:`, JSON.stringify(response.usage, null, 2));
+  console.log(`[${context?.callId || 'no-call'}] Groq Responses API usage:`, JSON.stringify(response.usage, null, 2));
 
-  // Extract prompt caching metrics from Groq response (if available)
-  // Groq Responses API uses: input_tokens_details.cached_tokens
-  // OpenAI Chat Completions uses: prompt_tokens_details.cached_tokens
-  // Check both locations for compatibility
+  // Extract prompt caching metrics from Groq Responses API
   const usage = response.usage as any;
-  const cachedTokens =
-    usage?.input_tokens_details?.cached_tokens ??   // Groq Responses API format
-    usage?.prompt_tokens_details?.cached_tokens ??  // OpenAI format
-    0;
+  const cachedTokens = usage?.input_tokens_details?.cached_tokens ?? 0;
 
-  console.log(`[${context?.callId || 'no-call'}] Extracted cachedTokens: ${cachedTokens} (input_details: ${JSON.stringify(usage?.input_tokens_details)}, prompt_details: ${JSON.stringify(usage?.prompt_tokens_details)})`);
+  console.log(`[${context?.callId || 'no-call'}] Extracted cachedTokens: ${cachedTokens} (input_tokens_details: ${JSON.stringify(usage?.input_tokens_details)})`);
 
   // Log the LLM interaction to database for live visibility
   if (context?.callId) {
@@ -301,9 +295,9 @@ export async function generateAssistantReply(
       assistant_response: assistantResponse,
       rolling_summary: rollingSummary,
       recent_turns_count: recentTurnsCount,
-      prompt_tokens: response.usage?.prompt_tokens,
-      completion_tokens: response.usage?.completion_tokens,
-      total_tokens: response.usage?.total_tokens,
+      prompt_tokens: usage?.input_tokens,
+      completion_tokens: usage?.output_tokens,
+      total_tokens: usage?.total_tokens,
       cached_tokens: cachedTokens,
       latency_ms: latencyMs,
     }).catch((err) => {
