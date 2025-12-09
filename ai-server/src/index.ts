@@ -997,6 +997,9 @@ function cleanupCallState(callContext: CallContext): void {
     sharedState.clearTtsState(callContext.callControlId).catch((err) => {
       console.error("[SharedState] Error clearing Redis state:", err);
     });
+    sharedState.clearCallMachine(callContext.callControlId).catch((err) => {
+      console.error("[SharedState] Error clearing call machine mapping:", err);
+    });
   }
 }
 
@@ -1743,6 +1746,9 @@ wss.on("connection", async (ws) => {
             userId: callContext.userId,
             customRecordingEnabled: isCustomRecordingEnabled(),
           });
+
+          // Register this machine as the handler for this call (for multi-instance observer routing)
+          sharedState.registerCallMachine(callControlId);
         } catch (err) {
           console.error("❌ Failed to decode Telnyx client_state:", err instanceof Error ? err.message : err);
           // Do NOT throw; just continue without context

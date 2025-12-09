@@ -15,6 +15,7 @@ import { IncomingMessage } from "http";
 import { Server } from "http";
 import * as contextMgr from "../callContextManager";
 import { CallContext } from "../callContextManager";
+import * as sharedState from "../sharedState";
 
 /**
  * Observer connection state
@@ -284,6 +285,29 @@ export async function handleObserverUpgrade(
       socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n${reason}`);
       socket.destroy();
       return;
+    }
+
+    // Check if this call is handled by this machine (multi-instance routing)
+    const localContext = contextMgr.getContext(callControlId);
+    if (!localContext) {
+      // Call context not found locally - check if another machine has it
+      const { isLocal, machineId } = await sharedState.checkCallMachine(callControlId);
+
+      if (!isLocal && machineId) {
+        // Another machine handles this call - use fly-replay to redirect
+        // Fly.io's proxy will intercept this response and replay the request to the correct machine
+        console.log(`[Observer] Call ${callControlId.slice(-8)} is on machine ${machineId.slice(0, 8)}..., using fly-replay`);
+        socket.write(
+          'HTTP/1.1 409 Conflict\r\n' +
+          `fly-replay: instance=${machineId}\r\n` +
+          '\r\n'
+        );
+        socket.destroy();
+        return;
+      }
+
+      // Call not found anywhere - might have ended or not started yet
+      console.log(`[Observer] Call ${callControlId.slice(-8)} not found on any machine, allowing connection anyway`);
     }
 
     // Handle the upgrade

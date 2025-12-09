@@ -46,6 +46,9 @@ let redisInitialized = false;
 // TTL for Redis keys (1 hour - calls should not last longer)
 const KEY_TTL_SECONDS = 3600;
 
+// Get Fly.io machine ID from environment
+const FLY_MACHINE_ID = process.env.FLY_ALLOC_ID || process.env.FLY_MACHINE_ID || null;
+
 /**
  * Initialize Redis connection.
  * Call this at startup to check if Redis is available.
@@ -270,4 +273,122 @@ export async function syncToRedis(
   }
 ): Promise<void> {
   await setTtsState(callControlId, localState);
+}
+
+// =============================================================================
+// CALL-TO-MACHINE ROUTING (for multi-instance observer support)
+// =============================================================================
+
+/**
+ * Get Redis key for call-to-machine mapping.
+ */
+function getCallMachineKey(callControlId: string): string {
+  return `call_machine:${callControlId}`;
+}
+
+/**
+ * Get the current Fly.io machine ID.
+ */
+export function getCurrentMachineId(): string | null {
+  return FLY_MACHINE_ID;
+}
+
+/**
+ * Register this machine as the handler for a call.
+ * Call this when a call context is created.
+ */
+export async function registerCallMachine(callControlId: string): Promise<void> {
+  if (!redisEnabled || !redis || !FLY_MACHINE_ID) {
+    return;
+  }
+
+  try {
+    const key = getCallMachineKey(callControlId);
+    await redis.setex(key, KEY_TTL_SECONDS, FLY_MACHINE_ID);
+    console.log(`[SharedState] Registered call ${callControlId.slice(-8)} on machine ${FLY_MACHINE_ID.slice(0, 8)}...`);
+  } catch (error) {
+    console.error(
+      "[SharedState] Error registering call machine:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/**
+ * Get the machine ID that is handling a specific call.
+ * Returns null if not found or Redis is disabled.
+ */
+export async function getCallMachine(callControlId: string): Promise<string | null> {
+  if (!redisEnabled || !redis) {
+    return null;
+  }
+
+  try {
+    const key = getCallMachineKey(callControlId);
+    const machineId = await redis.get<string>(key);
+    return machineId;
+  } catch (error) {
+    console.error(
+      "[SharedState] Error getting call machine:",
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+}
+
+/**
+ * Clear the call-to-machine mapping when a call ends.
+ */
+export async function clearCallMachine(callControlId: string): Promise<void> {
+  if (!redisEnabled || !redis) {
+    return;
+  }
+
+  try {
+    await redis.del(getCallMachineKey(callControlId));
+  } catch (error) {
+    console.error(
+      "[SharedState] Error clearing call machine:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/**
+ * Check if this machine is the one handling a call.
+ * Returns: { isLocal: true } if we handle it locally
+ *          { isLocal: false, machineId: string } if another machine handles it
+ *          { isLocal: false, machineId: null } if unknown
+ */
+export async function checkCallMachine(callControlId: string): Promise<{
+  isLocal: boolean;
+  machineId: string | null;
+}> {
+  // If we don't have Redis or machine ID, assume local
+  if (!redisEnabled || !redis || !FLY_MACHINE_ID) {
+    return { isLocal: true, machineId: null };
+  }
+
+  try {
+    const machineId = await getCallMachine(callControlId);
+
+    if (!machineId) {
+      // Call not registered - unknown
+      return { isLocal: false, machineId: null };
+    }
+
+    if (machineId === FLY_MACHINE_ID) {
+      // We handle this call
+      return { isLocal: true, machineId };
+    }
+
+    // Another machine handles this call
+    return { isLocal: false, machineId };
+  } catch (error) {
+    console.error(
+      "[SharedState] Error checking call machine:",
+      error instanceof Error ? error.message : error
+    );
+    return { isLocal: true, machineId: null };
+  }
 }
