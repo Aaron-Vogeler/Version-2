@@ -28,7 +28,7 @@ import {
   Square,
   CircleOff,
 } from 'lucide-react';
-import { MulawAudioPlayer } from '@/lib/audio/mulaw-decoder';
+import { StreamingAudioPlayer } from '@/lib/audio/streaming-audio-player';
 
 interface TranscriptEntry {
   speaker: 'caller' | 'assistant';
@@ -79,7 +79,7 @@ export function LiveCallObserver({
 
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
-  const audioPlayerRef = useRef<MulawAudioPlayer | null>(null);
+  const audioPlayerRef = useRef<StreamingAudioPlayer | null>(null);
 
   // Auto-scroll transcripts
   useEffect(() => {
@@ -163,7 +163,7 @@ export function LiveCallObserver({
       // Initialize audio player (requires user gesture, hence in connect)
       console.log('[Observer DEBUG] Initializing audio player...');
       if (!audioPlayerRef.current) {
-        audioPlayerRef.current = new MulawAudioPlayer((state) => {
+        audioPlayerRef.current = new StreamingAudioPlayer((state) => {
           console.log('[Observer DEBUG] Audio state changed:', state);
           setAudioState(state);
         });
@@ -301,7 +301,8 @@ export function LiveCallObserver({
     }
 
     if (audioPlayerRef.current) {
-      audioPlayerRef.current.stop();
+      audioPlayerRef.current.dispose();
+      audioPlayerRef.current = null;
     }
 
     setConnectionState('disconnected');
