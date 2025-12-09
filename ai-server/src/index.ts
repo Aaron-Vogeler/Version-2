@@ -33,43 +33,76 @@ const deepgram = createDeepgramClient();
 // -----------------------------------------------------------------------------
 
 /**
- * Extract the speech text from an LLM response.
+ * Result of parsing an LLM response for speech and behavior.
+ */
+interface ParsedLlmResponse {
+  /** Text to be spoken via TTS (null if behavior is wait/noop) */
+  speakText: string | null;
+  /** Behavior directive: "speak" | "wait" | "end" | "noop" */
+  behavior: "speak" | "wait" | "end" | "noop";
+  /** Internal notes (for logging/debugging) */
+  internal?: string;
+}
+
+/**
+ * Extract the speech text and behavior from an LLM response.
  * Handles two response formats:
  * 1. JSON object with "speak" field: {"speak": "text to speak", "behavior": "...", "internal": "..."}
- * 2. Plain text string (returned as-is)
+ * 2. Plain text string (returned as-is with behavior="speak")
  *
  * @param llmResponse - The raw response from the LLM
- * @returns The text that should be sent to TTS
+ * @returns Parsed response with speakText, behavior, and optional internal notes
  */
-function extractSpeechText(llmResponse: string): string {
+function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
   const trimmed = llmResponse.trim();
 
   // Check if response looks like JSON (starts with {)
   if (trimmed.startsWith("{")) {
     try {
       const parsed = JSON.parse(trimmed);
+
+      // Extract behavior (default to "speak" if not provided)
+      const behavior = parsed.behavior || "speak";
+      const internal = parsed.internal;
+
+      // Log internal notes if present
+      if (internal) {
+        console.log("[LLM] Internal notes:", internal);
+      }
+
+      // If behavior is "wait" or "noop", don't speak anything
+      if (behavior === "wait" || behavior === "noop") {
+        console.log(`[LLM] Behavior='${behavior}' - skipping TTS (silent response)`);
+        return { speakText: null, behavior, internal };
+      }
+
       // If it has a "speak" field, use that
       if (typeof parsed.speak === "string") {
-        console.log("[LLM] Parsed JSON response, extracting 'speak' field");
-        return parsed.speak;
+        console.log(`[LLM] Parsed JSON response, behavior='${behavior}', extracting 'speak' field`);
+        return { speakText: parsed.speak, behavior, internal };
+      }
+      // If speak is null, treat as silent
+      if (parsed.speak === null) {
+        console.log(`[LLM] speak=null, behavior='${behavior}' - skipping TTS`);
+        return { speakText: null, behavior, internal };
       }
       // If no speak field but has text field, try that
       if (typeof parsed.text === "string") {
-        console.log("[LLM] Parsed JSON response, extracting 'text' field");
-        return parsed.text;
+        console.log(`[LLM] Parsed JSON response, behavior='${behavior}', extracting 'text' field`);
+        return { speakText: parsed.text, behavior, internal };
       }
       // If no recognized field, log warning and return original
       console.warn("[LLM] JSON response has no 'speak' or 'text' field, using raw response");
-      return llmResponse;
+      return { speakText: llmResponse, behavior: "speak" };
     } catch (parseError) {
       // Not valid JSON despite starting with {, use as-is
       console.log("[LLM] Response starts with { but is not valid JSON, using raw response");
-      return llmResponse;
+      return { speakText: llmResponse, behavior: "speak" };
     }
   }
 
-  // Plain text response, return as-is
-  return llmResponse;
+  // Plain text response, return as-is with default behavior
+  return { speakText: llmResponse, behavior: "speak" };
 }
 
 /**
@@ -232,26 +265,42 @@ async function scheduleTtsResponse(
       return;
     }
 
-    // Extract speech text from LLM response (handles JSON format with "speak" field)
-    const speechText = extractSpeechText(aiText);
+    // Extract speech text and behavior from LLM response (handles JSON format)
+    const { speakText, behavior } = extractSpeechAndBehavior(aiText);
 
-    if (!speechText) {
-      console.warn("⚠️ No speech text extracted from LLM response");
-      if (canSpeak(callContext, ws)) {
-        ws.send(
-          JSON.stringify({
-            event: "error",
-            payload: { message: "No speech text in AI response" },
-          })
-        );
-      }
+    // Log both raw and extracted for debugging
+    if (speakText !== aiText) {
+      console.log("🤖 AI raw response:", aiText.substring(0, 200) + (aiText.length > 200 ? "..." : ""));
+      console.log(`🤖 AI speech text: ${speakText ?? "(silent)"}, behavior: ${behavior}`);
+    }
+
+    // Handle "wait" or "noop" behavior - skip TTS entirely (no sound)
+    if (behavior === "wait" || behavior === "noop") {
+      console.log(`🤫 Behavior='${behavior}' - staying silent, no TTS triggered`);
+      // Still clear transcript to avoid reprocessing
+      callContext.lastUserTranscript = "";
       return;
     }
 
-    // Log both raw and extracted for debugging
-    if (speechText !== aiText) {
-      console.log("🤖 AI raw response:", aiText.substring(0, 200) + (aiText.length > 200 ? "..." : ""));
-      console.log("🤖 AI speech text:", speechText);
+    // Handle "end" behavior - will hang up after TTS completes
+    if (behavior === "end") {
+      console.log("👋 Behavior='end' - will hang up after TTS completes");
+      callContext.pendingHangupAfterTts = true;
+    }
+
+    // Check if we have text to speak
+    if (!speakText) {
+      console.warn("⚠️ No speech text extracted from LLM response");
+      // If behavior is "end" with no text, hang up immediately
+      if (behavior === "end" && callContext.callControlId) {
+        console.log("📞 Ending call (no speech text, behavior='end')");
+        try {
+          await hangupCall(callContext.callControlId);
+        } catch (hangupError) {
+          console.error("❌ Hangup failed:", hangupError);
+        }
+      }
+      return;
     }
 
     // Append assistant turn to the call context if callId is available
@@ -259,7 +308,7 @@ async function scheduleTtsResponse(
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
         speaker: "assistant",
-        text: speechText,
+        text: speakText,
         timestamp: new Date().toISOString(),
       });
 
@@ -281,8 +330,8 @@ async function scheduleTtsResponse(
     }
 
     // Send to TTS only if we can still speak and seq is still valid
-    // Use extracted speechText (not raw aiText) to send only speakable text to TTS
-    await sendTtsResponse(callContext, ws, speechText, expectedSeq);
+    // Use extracted speakText (not raw aiText) to send only speakable text to TTS
+    await sendTtsResponse(callContext, ws, speakText, expectedSeq);
 
     // Clear transcript after processing
     callContext.lastUserTranscript = "";
@@ -344,9 +393,11 @@ async function sendTtsResponse(
   }
 
   // Check if this response contains "Chow" (end of call signal)
+  // Set pendingHangupAfterTts flag so we hang up AFTER TTS completes (via call.speak.ended webhook)
   const shouldHangup = /\bchow\b/i.test(aiText);
   if (shouldHangup) {
-    console.log("👋 Detected 'Chow' in AI response - will hangup after TTS");
+    console.log("👋 Detected 'Chow' in AI response - will hangup after TTS completes");
+    callContext.pendingHangupAfterTts = true;
   }
 
   try {
@@ -368,19 +419,7 @@ async function sendTtsResponse(
     // NOTE: Do NOT set ttsState='idle' here!
     // The HTTP response returns BEFORE audio finishes playing.
     // Telnyx webhooks (call.speak.ended) will set ttsState='idle' when playback truly ends.
-
-    // If AI said "Chow", wait a moment then hangup (uses configurable delay)
-    if (shouldHangup && callContext.callControlId) {
-      console.log(`⏳ Waiting ${config.callControl.hangupDelayMs}ms for TTS to complete before hangup...`);
-      await new Promise(resolve => setTimeout(resolve, config.callControl.hangupDelayMs));
-
-      try {
-        await hangupCall(callContext.callControlId);
-        console.log("📞 Call ended after 'Chow'");
-      } catch (hangupError) {
-        console.error("❌ Hangup failed:", hangupError);
-      }
-    }
+    // If pendingHangupAfterTts is set, the call.speak.ended handler will perform the hangup.
   } catch (ttsError) {
     console.error(
       "❌ Telnyx TTS error:",
@@ -837,6 +876,18 @@ app.post("/webhooks/telnyx", async (req, res) => {
           ctx.currentSpeakText = undefined;
           ctx.speakStartedAt = undefined;
           ctx.speakWasInterrupted = undefined;
+        }
+
+        // Check if we should hang up after TTS completed (triggered by "end" behavior or "Chow" signal)
+        if (ctx.pendingHangupAfterTts) {
+          console.log("📞 TTS completed - executing pending hangup (behavior='end' or 'Chow' detected)");
+          ctx.pendingHangupAfterTts = false; // Clear flag
+          try {
+            await hangupCall(callControlId);
+            console.log("✅ Call ended successfully after TTS completion");
+          } catch (hangupError) {
+            console.error("❌ Hangup after TTS failed:", hangupError);
+          }
         }
       } else {
         console.log(`[TTS] ✅ call.speak.ended - local context not found, Redis updated (callControlId: ${callControlId})`);
