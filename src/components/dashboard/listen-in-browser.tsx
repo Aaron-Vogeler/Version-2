@@ -177,16 +177,13 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
         addDebug('Creating TelnyxRTC client with SIP credentials and audio optimizations...');
 
         // Create a new Telnyx RTC client instance with SIP credentials
-        // Configure remoteElement for proper stream binding and audio optimizations
         const client = new TelnyxRTC({
           login: sipUser,
           password: sipPassword,
           ringtoneFile: 'https://cdn.telnyx.com/audio/ring.mp3',
-          // Bind remote audio stream to our audio element for proper playback
-          remoteElement: REMOTE_AUDIO_ELEMENT_ID,
         });
 
-        addDebug('TelnyxRTC client created with remoteElement binding, setting up event listeners...');
+        addDebug('TelnyxRTC client created, setting up event listeners...');
 
         // Set up event listeners
         client.on('telnyx.ready', () => {
@@ -220,12 +217,22 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
                 addDebug('✅ CALL ACTIVE - Audio stream connected!');
                 setConnectionState('listening');
 
-                // The SDK handles remoteElement binding automatically
-                // Try to ensure audio playback starts (may be needed for autoplay policies)
-                if (remoteAudioRef.current) {
+                // Get the remote audio stream from the call object
+                // Try multiple ways to access the stream as SDK versions vary
+                let remoteStream = call.remoteStream;
+
+                if (!remoteStream && typeof call.getRemoteStream === 'function') {
+                  remoteStream = call.getRemoteStream();
+                }
+
+                if (remoteStream && remoteAudioRef.current) {
+                  addDebug('🔊 Remote audio stream received, binding to audio element...');
+                  remoteAudioRef.current.srcObject = remoteStream;
                   remoteAudioRef.current.play().catch(err => {
                     addDebug(`⚠️ Audio autoplay blocked: ${err.message} - User interaction may be required`);
                   });
+                } else {
+                  addDebug('⚠️ No remote stream available yet');
                 }
 
                 // Log codec information for debugging
