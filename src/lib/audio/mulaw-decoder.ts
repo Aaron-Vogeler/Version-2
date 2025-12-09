@@ -144,19 +144,16 @@ export function base64ToUint8Array(base64: string): Uint8Array {
 
 /**
  * Audio Player class for streaming μ-law audio playback
- * Handles buffering, decoding, and smooth playback of streamed audio
+ * Mixes both caller and assistant audio together for natural conversation listening
  */
 export class MulawAudioPlayer {
   private audioContext: AudioContext | null = null;
-  private inboundBuffer: Float32Array[] = [];
-  private outboundBuffer: Float32Array[] = [];
+  private audioBuffer: Float32Array[] = [];
   private isPlaying = false;
   private scheduledTime = 0;
-  private readonly bufferDuration = 0.02; // 20ms chunks (160 samples at 8kHz)
-  private readonly minBufferMs = 100; // Buffer 100ms before starting playback
+  private readonly minBufferMs = 60; // Buffer 60ms before starting playback
   private onStateChange?: (state: 'playing' | 'stopped' | 'buffering') => void;
   private gainNode: GainNode | null = null;
-  private stereoMerger: ChannelMergerNode | null = null;
 
   constructor(onStateChange?: (state: 'playing' | 'stopped' | 'buffering') => void) {
     this.onStateChange = onStateChange;
@@ -173,28 +170,21 @@ export class MulawAudioPlayer {
     // Create gain node for volume control
     this.gainNode = this.audioContext.createGain();
     this.gainNode.gain.value = 1.0;
-
-    // Create stereo merger (left = inbound/caller, right = outbound/assistant)
-    this.stereoMerger = this.audioContext.createChannelMerger(2);
-    this.stereoMerger.connect(this.gainNode);
     this.gainNode.connect(this.audioContext.destination);
 
-    console.log('[MulawPlayer] Audio context initialized');
+    console.log('[MulawPlayer] Audio context initialized, sample rate:', MULAW_SAMPLE_RATE);
   }
 
   /**
-   * Add audio chunk to the appropriate buffer
+   * Add audio chunk - both tracks go to the same buffer (mixed output)
    */
   addAudio(track: 'inbound' | 'outbound', mulawBase64: string): void {
     try {
       const mulawData = base64ToUint8Array(mulawBase64);
       const pcmData = decodeMulawToFloat32(mulawData);
 
-      if (track === 'inbound') {
-        this.inboundBuffer.push(pcmData);
-      } else {
-        this.outboundBuffer.push(pcmData);
-      }
+      // Add to single mixed buffer - both tracks play through both speakers
+      this.audioBuffer.push(pcmData);
 
       // Start playback if we have enough buffer
       if (!this.isPlaying && this.getBufferedMs() >= this.minBufferMs) {
@@ -209,10 +199,8 @@ export class MulawAudioPlayer {
    * Get total buffered audio duration in milliseconds
    */
   private getBufferedMs(): number {
-    const inboundSamples = this.inboundBuffer.reduce((sum, chunk) => sum + chunk.length, 0);
-    const outboundSamples = this.outboundBuffer.reduce((sum, chunk) => sum + chunk.length, 0);
-    const maxSamples = Math.max(inboundSamples, outboundSamples);
-    return (maxSamples / MULAW_SAMPLE_RATE) * 1000;
+    const totalSamples = this.audioBuffer.reduce((sum, chunk) => sum + chunk.length, 0);
+    return (totalSamples / MULAW_SAMPLE_RATE) * 1000;
   }
 
   /**
@@ -222,8 +210,9 @@ export class MulawAudioPlayer {
     if (!this.audioContext || this.isPlaying) return;
 
     this.isPlaying = true;
-    this.scheduledTime = this.audioContext.currentTime + 0.05; // Small initial delay
+    this.scheduledTime = this.audioContext.currentTime + 0.02; // Small initial delay
     this.onStateChange?.('playing');
+    console.log('[MulawPlayer] Starting playback');
     this.scheduleNextChunk();
   }
 
@@ -233,45 +222,26 @@ export class MulawAudioPlayer {
   private scheduleNextChunk(): void {
     if (!this.audioContext || !this.isPlaying) return;
 
-    // Get next chunks from both buffers
-    const inboundChunk = this.inboundBuffer.shift();
-    const outboundChunk = this.outboundBuffer.shift();
+    // Get next chunk from buffer
+    const chunk = this.audioBuffer.shift();
 
-    if (!inboundChunk && !outboundChunk) {
+    if (!chunk) {
       // Buffer underrun - wait for more data
       this.onStateChange?.('buffering');
-      setTimeout(() => this.scheduleNextChunk(), 50);
+      setTimeout(() => this.scheduleNextChunk(), 30);
       return;
     }
 
-    // Determine chunk length (use the longer one)
-    const chunkLength = Math.max(
-      inboundChunk?.length || 0,
-      outboundChunk?.length || 0
-    );
-
-    if (chunkLength === 0) {
+    if (chunk.length === 0) {
       setTimeout(() => this.scheduleNextChunk(), 10);
       return;
     }
 
-    // Create stereo buffer (left = inbound, right = outbound)
-    const buffer = this.audioContext.createBuffer(2, chunkLength, MULAW_SAMPLE_RATE);
-
-    // Fill left channel (inbound/caller)
-    const leftChannel = buffer.getChannelData(0);
-    if (inboundChunk) {
-      for (let i = 0; i < inboundChunk.length; i++) {
-        leftChannel[i] = inboundChunk[i];
-      }
-    }
-
-    // Fill right channel (outbound/assistant)
-    const rightChannel = buffer.getChannelData(1);
-    if (outboundChunk) {
-      for (let i = 0; i < outboundChunk.length; i++) {
-        rightChannel[i] = outboundChunk[i];
-      }
+    // Create mono buffer - plays through both speakers
+    const buffer = this.audioContext.createBuffer(1, chunk.length, MULAW_SAMPLE_RATE);
+    const channelData = buffer.getChannelData(0);
+    for (let i = 0; i < chunk.length; i++) {
+      channelData[i] = chunk[i];
     }
 
     // Create and schedule buffer source
@@ -281,12 +251,12 @@ export class MulawAudioPlayer {
     source.start(this.scheduledTime);
 
     // Update scheduled time
-    const chunkDuration = chunkLength / MULAW_SAMPLE_RATE;
+    const chunkDuration = chunk.length / MULAW_SAMPLE_RATE;
     this.scheduledTime += chunkDuration;
 
-    // Schedule next chunk
+    // Schedule next chunk - tighter timing for smoother playback
     const now = this.audioContext.currentTime;
-    const delay = Math.max(0, (this.scheduledTime - now - 0.1) * 1000);
+    const delay = Math.max(0, (this.scheduledTime - now - 0.05) * 1000);
     setTimeout(() => this.scheduleNextChunk(), delay);
 
     this.onStateChange?.('playing');
@@ -306,8 +276,7 @@ export class MulawAudioPlayer {
    */
   stop(): void {
     this.isPlaying = false;
-    this.inboundBuffer = [];
-    this.outboundBuffer = [];
+    this.audioBuffer = [];
     this.onStateChange?.('stopped');
   }
 
@@ -321,7 +290,6 @@ export class MulawAudioPlayer {
       this.audioContext = null;
     }
     this.gainNode = null;
-    this.stereoMerger = null;
   }
 
   /**

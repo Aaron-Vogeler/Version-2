@@ -433,19 +433,6 @@ export function LiveCallObserver({
           </div>
         </div>
 
-        {/* Audio Channel Legend */}
-        {isListening && (
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <User className="h-3 w-3" />
-              Left ear: Caller
-            </span>
-            <span className="flex items-center gap-1">
-              <Bot className="h-3 w-3" />
-              Right ear: Assistant
-            </span>
-          </div>
-        )}
 
         {/* Live Transcript */}
         {transcripts.length > 0 && (
@@ -498,7 +485,6 @@ export function LiveCallObserver({
           <div className="text-center py-8 text-muted-foreground">
             <Headphones className="h-10 w-10 mx-auto mb-3 opacity-20" />
             <p>Click &quot;Start Listening&quot; to hear the call live</p>
-            <p className="text-xs mt-1">Audio will play in stereo: caller in left ear, assistant in right</p>
           </div>
         )}
       </CardContent>
