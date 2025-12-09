@@ -520,13 +520,34 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     loadModels();
   };
 
-  // Play audio during call
-  const handlePlayAudio = (soundId: string, url: string) => {
+  // Play audio into the active call via Telnyx API
+  const handlePlayAudio = async (soundId: string, url: string) => {
+    if (!activeCall?.id) {
+      console.error('No active call to play audio into');
+      return;
+    }
+
     setPlayingAudioId(soundId);
-    const audio = new Audio(url);
-    audio.onended = () => setPlayingAudioId(null);
-    audio.onerror = () => setPlayingAudioId(null);
-    audio.play().catch(() => setPlayingAudioId(null));
+    try {
+      const response = await fetch('/api/calls/play-audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          call_control_id: activeCall.id,
+          audio_url: url,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error('Failed to play audio:', error);
+      }
+    } catch (err) {
+      console.error('Error playing audio:', err);
+    } finally {
+      // Reset after a short delay (audio plays asynchronously)
+      setTimeout(() => setPlayingAudioId(null), 2000);
+    }
   };
 
   // Helper functions for LLM logs
@@ -1557,9 +1578,11 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 {showLlmLogs ? 'Hide' : 'Show'} LLM Logs
               </Button>
               <Button
-                variant="outline"
+                variant={isCallActive ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setShowAudioPopup(true)}
+                disabled={!isCallActive}
+                title={isCallActive ? 'Play audio into the call' : 'Start a call to play audio'}
               >
                 <Volume2 className="h-4 w-4 mr-2" />
                 Play Audio
@@ -1746,11 +1769,18 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Volume2 className="h-5 w-5" />
-              Play Audio
+              Play Audio Into Call
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-4">
-            {CALL_AUDIO_SOUNDS.map((sound) => (
+            {!isCallActive && (
+              <div className="text-center py-4 text-muted-foreground">
+                <PhoneOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No active call</p>
+                <p className="text-xs mt-1">Start a call to play audio to the recipient</p>
+              </div>
+            )}
+            {isCallActive && CALL_AUDIO_SOUNDS.map((sound) => (
               <Button
                 key={sound.id}
                 variant={playingAudioId === sound.id ? 'default' : 'outline'}
