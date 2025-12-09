@@ -103,6 +103,29 @@ const config = {
   },
 
   // =============================================================================
+  // IVR/PHONE TREE SETTINGS
+  // =============================================================================
+  ivr: {
+    // IVR debounce - milliseconds of silence before responding to IVR (faster than human conversation)
+    // IVR menus typically have short pauses between options, so respond quickly
+    debounceMs: getEnvInt("IVR_DEBOUNCE_MS", 150),
+    // IVR utterance flush - how quickly to finalize what the IVR said
+    utteranceFlushMs: getEnvInt("IVR_UTTERANCE_FLUSH_MS", 200),
+    // Minimum pause after sending DTMF before sending another (prevents double-presses)
+    dtmfMinPauseMs: getEnvInt("IVR_DTMF_MIN_PAUSE_MS", 500),
+    // DTMF tone duration in milliseconds
+    dtmfDurationMs: getEnvInt("IVR_DTMF_DURATION_MS", 250),
+    // Confidence threshold (0-1) for entering IVR mode automatically
+    autoDetectThreshold: parseFloat(getEnv("IVR_AUTO_DETECT_THRESHOLD", "0.7")),
+    // How long to wait for IVR response before re-sending DTMF (retry timeout)
+    responseTimeoutMs: getEnvInt("IVR_RESPONSE_TIMEOUT_MS", 8000),
+    // Maximum DTMF retries for same menu option
+    maxDtmfRetries: getEnvInt("IVR_MAX_DTMF_RETRIES", 2),
+    // Disable barge-in grace period in IVR mode (IVRs don't have echo issues)
+    disableBargeInGracePeriod: getEnv("IVR_DISABLE_BARGE_IN_GRACE", "true") === "true",
+  },
+
+  // =============================================================================
   // CONTEXT MANAGEMENT SETTINGS
   // =============================================================================
   context: {

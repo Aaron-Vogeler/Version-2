@@ -173,6 +173,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   });
   const [showCallControlSettings, setShowCallControlSettings] = useState(false);
 
+  // IVR/Phone Tree settings
+  const [ivrSettings, setIvrSettings] = useState({
+    debounceMs: 150,
+    utteranceFlushMs: 200,
+    dtmfMinPauseMs: 500,
+    dtmfDurationMs: 250,
+    autoDetectThreshold: 0.7,
+    responseTimeoutMs: 8000,
+    maxDtmfRetries: 2,
+    disableBargeInGracePeriod: true,
+  });
+  const [showIvrSettings, setShowIvrSettings] = useState(false);
+
   // UI state
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [expandedSystemPrompt, setExpandedSystemPrompt] = useState(false);
@@ -465,6 +478,16 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       hangupDelayMs: 2000,
       holdCheckInIntervalMs: 30000,
       holdMaxCheckIns: 5,
+    });
+    setIvrSettings({
+      debounceMs: 150,
+      utteranceFlushMs: 200,
+      dtmfMinPauseMs: 500,
+      dtmfDurationMs: 250,
+      autoDetectThreshold: 0.7,
+      responseTimeoutMs: 8000,
+      maxDtmfRetries: 2,
+      disableBargeInGracePeriod: true,
     });
     if (models.length > 0) {
       setSelectedModel(models[0].id);
@@ -845,6 +868,112 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         )}
       </div>
 
+      {/* IVR/Phone Tree Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Phone className="h-4 w-4" />
+            IVR/Phone Tree Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowIvrSettings(!showIvrSettings)}
+            className="h-6 text-xs"
+          >
+            {showIvrSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Settings for navigating automated phone systems and IVRs
+        </p>
+        {showIvrSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">IVR Debounce (ms)</Label>
+              <Input
+                type="number"
+                min="50"
+                max="500"
+                step="25"
+                value={ivrSettings.debounceMs}
+                onChange={(e) => setIvrSettings(prev => ({ ...prev, debounceMs: parseInt(e.target.value) || 150 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Faster response to IVR prompts (default: 150ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">IVR Utterance Flush (ms)</Label>
+              <Input
+                type="number"
+                min="50"
+                max="500"
+                step="25"
+                value={ivrSettings.utteranceFlushMs}
+                onChange={(e) => setIvrSettings(prev => ({ ...prev, utteranceFlushMs: parseInt(e.target.value) || 200 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Quick utterance finalization for IVR (default: 200ms)</p>
+            </div>
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">DTMF Settings</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">DTMF Duration (ms)</Label>
+              <Input
+                type="number"
+                min="100"
+                max="500"
+                step="50"
+                value={ivrSettings.dtmfDurationMs}
+                onChange={(e) => setIvrSettings(prev => ({ ...prev, dtmfDurationMs: parseInt(e.target.value) || 250 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Duration of each DTMF tone (default: 250ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">DTMF Min Pause (ms)</Label>
+              <Input
+                type="number"
+                min="200"
+                max="1000"
+                step="100"
+                value={ivrSettings.dtmfMinPauseMs}
+                onChange={(e) => setIvrSettings(prev => ({ ...prev, dtmfMinPauseMs: parseInt(e.target.value) || 500 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Minimum pause between DTMF sends (default: 500ms)</p>
+            </div>
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Auto-Detection</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Auto-Detect Threshold</Label>
+              <Input
+                type="number"
+                min="0.1"
+                max="1.0"
+                step="0.1"
+                value={ivrSettings.autoDetectThreshold}
+                onChange={(e) => setIvrSettings(prev => ({ ...prev, autoDetectThreshold: parseFloat(e.target.value) || 0.7 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Confidence threshold for IVR mode (0.1-1.0, default: 0.7)</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Disable Grace Period in IVR</Label>
+              <input
+                type="checkbox"
+                checked={ivrSettings.disableBargeInGracePeriod}
+                onChange={(e) => setIvrSettings(prev => ({ ...prev, disableBargeInGracePeriod: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">IVRs don&apos;t have echo issues, so grace period can be disabled</p>
+          </div>
+        )}
+      </div>
+
       {/* Reset Button */}
       <Button
         variant="outline"
@@ -1078,6 +1207,21 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
             <span className="text-muted-foreground">Max Hold Check-Ins:</span>
             <span className="font-mono">{callControlSettings.holdMaxCheckIns}</span>
           </div>
+          <div className="border-t border-border/30 pt-2 mt-2">
+            <p className="text-xs font-medium text-muted-foreground mb-1">IVR Settings</p>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">IVR Debounce:</span>
+            <span className="font-mono">{ivrSettings.debounceMs}ms</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">DTMF Duration:</span>
+            <span className="font-mono">{ivrSettings.dtmfDurationMs}ms</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Auto-Detect Threshold:</span>
+            <span className="font-mono">{ivrSettings.autoDetectThreshold}</span>
+          </div>
         </div>
       </div>
 
@@ -1085,7 +1229,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       <div className="bg-muted/20 border border-border/50 rounded-md p-3">
         <p className="text-xs text-muted-foreground">
           This panel shows exactly what configuration will be used when you make a call.
-          The system prompt, goal injection, and context are combined to guide your AI assistant's behavior during the call.
+          The system prompt, goal injection, and context are combined to guide your AI assistant&apos;s behavior during the call.
+          IVR navigation is automatically detected and optimized with DTMF support for phone tree navigation.
         </p>
       </div>
     </div>

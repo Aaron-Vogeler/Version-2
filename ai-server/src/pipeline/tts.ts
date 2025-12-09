@@ -2,6 +2,59 @@ import axios from "axios";
 import config from "../config";
 
 /**
+ * Sends DTMF tones on an active Telnyx call.
+ * Used for navigating phone trees and IVR systems.
+ *
+ * @param callControlId - The Telnyx call control ID
+ * @param digits - The DTMF digits to send (0-9, *, #, A-D, w for pause)
+ * @param durationMs - Duration of each tone in milliseconds (default: 250ms)
+ * @param pauseBetweenDigitsMs - Pause between digits in milliseconds (default: 250ms)
+ */
+export async function sendDtmf(
+  callControlId: string,
+  digits: string,
+  durationMs: number = 250,
+  pauseBetweenDigitsMs: number = 250
+): Promise<void> {
+  const startTime = Date.now();
+  console.log("[DTMF] 📱 ========== DTMF SEND START ==========");
+  console.log(`[DTMF] 🔢 Digits to send: "${digits}" (callControlId: ${callControlId})`);
+  console.log(`[DTMF] ⏱️ Duration: ${durationMs}ms, Pause: ${pauseBetweenDigitsMs}ms`);
+
+  try {
+    await axios.post(
+      `https://api.telnyx.com/v2/calls/${callControlId}/actions/send_dtmf`,
+      {
+        digits: digits,
+        duration_millis: durationMs,
+        // Note: Telnyx API handles inter-digit pause automatically
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${config.telnyx.apiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const apiResponseTime = Date.now();
+    console.log(`[DTMF] ✅ DTMF sent successfully in ${apiResponseTime - startTime}ms`);
+    console.log("[DTMF] ==========================================");
+  } catch (error) {
+    console.error(`[DTMF] ❌ DTMF Error (callControlId: ${callControlId}):`, error);
+    if (error instanceof Error && "response" in error) {
+      const err = error as any;
+      console.error("[DTMF] 📋 Telnyx API Error Details:", {
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data,
+      });
+    }
+    throw error;
+  }
+}
+
+/**
  * Stops the currently playing audio on a Telnyx call.
  * Used for handling caller interrupts (barge-in).
  * Uses playback_stop with stop:'all' to halt current playback AND clear queued audio.
