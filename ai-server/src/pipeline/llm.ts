@@ -115,6 +115,10 @@ export async function generateRollingSummary(
 
     const newSummary = response.choices[0]?.message?.content || "";
 
+    // Extract prompt caching metrics from Groq response (if available)
+    // Groq returns cached_tokens in usage.prompt_tokens_details.cached_tokens
+    const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+
     // Log the LLM interaction to database for live visibility
     insertLlmLog({
       call_id: callId,
@@ -131,6 +135,7 @@ export async function generateRollingSummary(
       prompt_tokens: response.usage?.prompt_tokens,
       completion_tokens: response.usage?.completion_tokens,
       total_tokens: response.usage?.total_tokens,
+      cached_tokens: cachedTokens,
       latency_ms: latencyMs,
     }).catch((err) => {
       console.error(`[${callId}] Failed to log LLM summary:`, err);
@@ -252,6 +257,10 @@ export async function generateAssistantReply(
 
   const assistantResponse = response.choices[0]?.message?.content || "";
 
+  // Extract prompt caching metrics from Groq response (if available)
+  // Groq returns cached_tokens in usage.prompt_tokens_details.cached_tokens
+  const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+
   // Log the LLM interaction to database for live visibility
   if (context?.callId) {
     insertLlmLog({
@@ -269,6 +278,7 @@ export async function generateAssistantReply(
       prompt_tokens: response.usage?.prompt_tokens,
       completion_tokens: response.usage?.completion_tokens,
       total_tokens: response.usage?.total_tokens,
+      cached_tokens: cachedTokens,
       latency_ms: latencyMs,
     }).catch((err) => {
       console.error(`[${context.callId}] Failed to log LLM chat:`, err);

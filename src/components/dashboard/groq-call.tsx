@@ -88,8 +88,22 @@ interface LlmLog {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  cached_tokens?: number;  // Groq prompt caching: tokens served from cache
   latency_ms?: number;
   created_at: string;
+}
+
+// Helper: Calculate cache hit rate percentage
+function getCacheHitRate(promptTokens?: number, cachedTokens?: number): number {
+  if (!promptTokens || promptTokens === 0) return 0;
+  return ((cachedTokens || 0) / promptTokens) * 100;
+}
+
+// Helper: Calculate effective billed prompt tokens (cached tokens are 50% cheaper)
+function getEffectiveBilledPromptTokens(promptTokens?: number, cachedTokens?: number): number {
+  const prompt = promptTokens || 0;
+  const cached = cachedTokens || 0;
+  return prompt - (0.5 * cached);
 }
 
 // Call status type
@@ -1486,6 +1500,24 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                         {log.total_tokens}
                       </span>
                     )}
+                    {/* Prompt cache badge - shows cache hit rate */}
+                    {(() => {
+                      const cacheRate = getCacheHitRate(log.prompt_tokens, log.cached_tokens);
+                      const cachedCount = log.cached_tokens || 0;
+                      const isHit = cachedCount > 0;
+                      return (
+                        <span
+                          className={`text-xs px-1.5 py-0.5 rounded font-mono ${
+                            isHit
+                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                              : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                          }`}
+                          title={`Cached tokens: ${cachedCount} of ${log.prompt_tokens || 0} prompt tokens`}
+                        >
+                          CACHE: {cacheRate.toFixed(1)}% ({cachedCount})
+                        </span>
+                      );
+                    })()}
                     {log.latency_ms && (
                       <span className="text-xs text-muted-foreground flex items-center gap-1">
                         <Clock className="h-3 w-3" />
@@ -1542,6 +1574,33 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                         <Badge variant="outline" className="text-xs">{log.recent_turns_count} turns</Badge>
                       )}
                     </div>
+
+                    {/* Detailed Token Usage & Caching Metrics */}
+                    {(log.prompt_tokens !== undefined || log.cached_tokens !== undefined) && (
+                      <div className="bg-muted/30 rounded p-2 space-y-1">
+                        <p className="text-xs font-medium text-muted-foreground mb-2">Token Usage & Caching</p>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs font-mono">
+                          <span className="text-muted-foreground">prompt_tokens:</span>
+                          <span>{log.prompt_tokens ?? 0}</span>
+                          <span className="text-muted-foreground">cached_tokens:</span>
+                          <span className={log.cached_tokens ? 'text-green-600 dark:text-green-400' : ''}>
+                            {log.cached_tokens ?? 0}
+                          </span>
+                          <span className="text-muted-foreground">completion_tokens:</span>
+                          <span>{log.completion_tokens ?? 0}</span>
+                          <span className="text-muted-foreground">total_tokens:</span>
+                          <span>{log.total_tokens ?? 0}</span>
+                          <span className="text-muted-foreground">cache_hit_rate:</span>
+                          <span className={log.cached_tokens ? 'text-green-600 dark:text-green-400' : ''}>
+                            {getCacheHitRate(log.prompt_tokens, log.cached_tokens).toFixed(1)}%
+                          </span>
+                          <span className="text-muted-foreground">effective_billed_prompt:</span>
+                          <span className={log.cached_tokens ? 'text-green-600 dark:text-green-400' : ''}>
+                            {getEffectiveBilledPromptTokens(log.prompt_tokens, log.cached_tokens).toFixed(0)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Rolling Summary */}
                     {log.rolling_summary && (
@@ -1754,7 +1813,56 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                     Tokens: {selectedLlmLog.prompt_tokens} + {selectedLlmLog.completion_tokens} = {selectedLlmLog.total_tokens}
                   </Badge>
                 )}
+                {/* Cache badge */}
+                {(() => {
+                  const cacheRate = getCacheHitRate(selectedLlmLog.prompt_tokens, selectedLlmLog.cached_tokens);
+                  const isHit = (selectedLlmLog.cached_tokens || 0) > 0;
+                  return (
+                    <Badge variant={isHit ? 'success' : 'secondary'}>
+                      CACHE: {cacheRate.toFixed(1)}% ({selectedLlmLog.cached_tokens || 0})
+                    </Badge>
+                  );
+                })()}
               </div>
+
+              {/* Detailed Token & Caching Metrics */}
+              {(selectedLlmLog.prompt_tokens !== undefined || selectedLlmLog.cached_tokens !== undefined) && (
+                <div className="bg-muted/30 rounded-lg p-3">
+                  <p className="text-sm font-medium mb-2">Token Usage & Prompt Caching</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm font-mono">
+                    <div>
+                      <span className="text-muted-foreground text-xs">prompt_tokens</span>
+                      <p className="font-medium">{selectedLlmLog.prompt_tokens ?? 0}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground text-xs">cached_tokens</span>
+                      <p className={`font-medium ${selectedLlmLog.cached_tokens ? 'text-green-600 dark:text-green-400' : ''}`}>
+                        {selectedLlmLog.cached_tokens ?? 0}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground text-xs">completion_tokens</span>
+                      <p className="font-medium">{selectedLlmLog.completion_tokens ?? 0}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground text-xs">total_tokens</span>
+                      <p className="font-medium">{selectedLlmLog.total_tokens ?? 0}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground text-xs">cache_hit_rate</span>
+                      <p className={`font-medium ${selectedLlmLog.cached_tokens ? 'text-green-600 dark:text-green-400' : ''}`}>
+                        {getCacheHitRate(selectedLlmLog.prompt_tokens, selectedLlmLog.cached_tokens).toFixed(1)}%
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground text-xs">effective_billed_prompt</span>
+                      <p className={`font-medium ${selectedLlmLog.cached_tokens ? 'text-green-600 dark:text-green-400' : ''}`}>
+                        {getEffectiveBilledPromptTokens(selectedLlmLog.prompt_tokens, selectedLlmLog.cached_tokens).toFixed(0)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* System Prompt */}
               {selectedLlmLog.system_prompt && (

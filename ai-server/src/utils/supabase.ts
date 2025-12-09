@@ -425,6 +425,7 @@ export interface LlmLogRecord {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  cached_tokens?: number;  // Groq prompt caching: tokens served from cache
   latency_ms?: number;
 }
 
@@ -470,6 +471,7 @@ export async function insertLlmLog(
       prompt_tokens: log.prompt_tokens,
       completion_tokens: log.completion_tokens,
       total_tokens: log.total_tokens,
+      cached_tokens: log.cached_tokens, // Groq prompt caching metric
       duration_ms: log.latency_ms, // Maps to existing column
       created_at: new Date().toISOString(),
     };
@@ -485,8 +487,9 @@ export async function insertLlmLog(
     const callIdSuffix = log.call_id.substring(
       Math.max(0, log.call_id.length - 8)
     );
+    const cacheInfo = log.cached_tokens ? `, cached: ${log.cached_tokens}` : '';
     console.log(
-      `[Supabase] LLM exchange inserted (${log.request_type}, ${log.total_tokens || 0} tokens, call: ...${callIdSuffix})`
+      `[Supabase] LLM exchange inserted (${log.request_type}, ${log.total_tokens || 0} tokens${cacheInfo}, call: ...${callIdSuffix})`
     );
     return { success: true };
   } catch (error) {
