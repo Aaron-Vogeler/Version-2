@@ -13,7 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { ListenInBrowser } from './listen-in-browser';
+import { LiveAudioListener } from './live-audio-listener';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -98,7 +98,7 @@ interface LlmLog {
 
 // Call status type
 interface ActiveCall {
-  id: string;
+  id: string; // This is the call_control_id
   status: 'initiated' | 'ringing' | 'answered' | 'completed' | 'failed';
   goal?: string;
   started_at?: string;
@@ -1883,12 +1883,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           )}
       </div>
 
-      {/* Listen Live Panel - Real-time audio monitoring */}
+      {/* Listen Live Panel - Real-time audio monitoring via WebSocket */}
       {showListenLive && activeCall && (
         <div className="mt-6">
-          <ListenInBrowser
-            callId={activeCall.id}
-            isCallOngoing={!!isCallActive}
+          <LiveAudioListener
+            callControlId={activeCall.id}
+            isCallActive={!!isCallActive}
           />
         </div>
       )}

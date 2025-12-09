@@ -30,6 +30,77 @@ import * as ivrUtils from "./pipeline/ivr";
 const deepgram = createDeepgramClient();
 
 // -----------------------------------------------------------------------------
+// LIVE AUDIO LISTENERS (for browser-based call monitoring)
+// -----------------------------------------------------------------------------
+// Map of callControlId -> Set of WebSocket connections listening to that call
+const liveAudioListeners = new Map<string, Set<WebSocket>>();
+
+/**
+ * Add a browser listener for a specific call's live audio
+ */
+function addLiveAudioListener(callControlId: string, ws: WebSocket): void {
+  if (!liveAudioListeners.has(callControlId)) {
+    liveAudioListeners.set(callControlId, new Set());
+  }
+  liveAudioListeners.get(callControlId)!.add(ws);
+  console.log(`[LiveAudio] Listener added for call ${callControlId}. Total listeners: ${liveAudioListeners.get(callControlId)!.size}`);
+}
+
+/**
+ * Remove a browser listener
+ */
+function removeLiveAudioListener(callControlId: string, ws: WebSocket): void {
+  const listeners = liveAudioListeners.get(callControlId);
+  if (listeners) {
+    listeners.delete(ws);
+    console.log(`[LiveAudio] Listener removed for call ${callControlId}. Remaining: ${listeners.size}`);
+    if (listeners.size === 0) {
+      liveAudioListeners.delete(callControlId);
+    }
+  }
+}
+
+/**
+ * Broadcast audio chunk to all listeners of a call
+ * @param callControlId - The call to broadcast for
+ * @param audioBase64 - Base64-encoded μ-law audio
+ * @param track - "inbound" (caller) or "outbound" (AI)
+ */
+function broadcastAudioToListeners(callControlId: string, audioBase64: string, track: string): void {
+  const listeners = liveAudioListeners.get(callControlId);
+  if (!listeners || listeners.size === 0) return;
+
+  const message = JSON.stringify({
+    type: "audio",
+    track,
+    payload: audioBase64,
+  });
+
+  listeners.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
+    }
+  });
+}
+
+/**
+ * Clean up all listeners for a call (when call ends)
+ */
+function cleanupCallListeners(callControlId: string): void {
+  const listeners = liveAudioListeners.get(callControlId);
+  if (listeners) {
+    listeners.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "call_ended" }));
+        ws.close(1000, "Call ended");
+      }
+    });
+    liveAudioListeners.delete(callControlId);
+    console.log(`[LiveAudio] All listeners cleaned up for call ${callControlId}`);
+  }
+}
+
+// -----------------------------------------------------------------------------
 // HELPER FUNCTIONS
 // -----------------------------------------------------------------------------
 
@@ -979,6 +1050,11 @@ function cleanupCallState(callContext: CallContext): void {
     contextMgr.clearContext(callContext.callId);
   }
 
+  // Clean up live audio listeners
+  if (callContext.callControlId) {
+    cleanupCallListeners(callContext.callControlId);
+  }
+
   // Clean up Redis state for multi-instance support
   if (callContext.callControlId) {
     sharedState.clearTtsState(callContext.callControlId).catch((err) => {
@@ -992,7 +1068,70 @@ function cleanupCallState(callContext: CallContext): void {
 // -----------------------------------------------------------------------------
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+
+// Main WebSocket server for Telnyx audio streams (default path)
+const wss = new WebSocketServer({ noServer: true });
+
+// Separate WebSocket server for browser live audio listeners
+const wssLiveAudio = new WebSocketServer({ noServer: true });
+
+// Handle WebSocket upgrade requests - route by URL path
+server.on("upgrade", (request, socket, head) => {
+  const pathname = new URL(request.url || "/", `http://${request.headers.host}`).pathname;
+
+  if (pathname === "/live-audio") {
+    // Browser listener connection for live audio
+    wssLiveAudio.handleUpgrade(request, socket, head, (ws) => {
+      wssLiveAudio.emit("connection", ws, request);
+    });
+  } else {
+    // Default: Telnyx audio stream connection
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  }
+});
+
+// Handle browser live audio listener connections
+wssLiveAudio.on("connection", (ws, request) => {
+  console.log("🎧 Live audio listener connected");
+
+  let subscribedCallId: string | null = null;
+
+  ws.on("message", (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+
+      if (msg.type === "subscribe" && msg.callControlId) {
+        const callId: string = msg.callControlId;
+        subscribedCallId = callId;
+        addLiveAudioListener(callId, ws);
+        ws.send(JSON.stringify({ type: "subscribed", callControlId: callId }));
+        console.log(`[LiveAudio] Browser subscribed to call: ${callId}`);
+      } else if (msg.type === "unsubscribe" && subscribedCallId) {
+        removeLiveAudioListener(subscribedCallId, ws);
+        ws.send(JSON.stringify({ type: "unsubscribed" }));
+        subscribedCallId = null;
+      }
+    } catch (err) {
+      console.error("[LiveAudio] Error parsing message:", err);
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("🎧 Live audio listener disconnected");
+    if (subscribedCallId) {
+      removeLiveAudioListener(subscribedCallId, ws);
+    }
+  });
+
+  ws.on("error", (err) => {
+    console.error("[LiveAudio] WebSocket error:", err);
+    if (subscribedCallId) {
+      removeLiveAudioListener(subscribedCallId, ws);
+    }
+  });
+});
 
 app.use(express.json());
 
@@ -1769,6 +1908,13 @@ wss.on("connection", async (ws) => {
               recordingError instanceof Error ? recordingError.message : recordingError
             );
           }
+        }
+
+        // ============================================================================
+        // LIVE AUDIO BROADCAST: Forward audio to browser listeners (both tracks)
+        // ============================================================================
+        if (callContext?.callControlId && track) {
+          broadcastAudioToListeners(callContext.callControlId, msg.media.payload, track);
         }
 
         // ============================================================================
