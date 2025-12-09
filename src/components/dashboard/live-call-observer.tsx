@@ -107,11 +107,19 @@ export function LiveCallObserver({
     // Determine the base URL
     let baseUrl = aiServerUrl;
 
+    console.log('[Observer DEBUG] buildWsUrl called');
+    console.log('[Observer DEBUG] aiServerUrl prop:', aiServerUrl);
+    console.log('[Observer DEBUG] callControlId:', callControlId);
+
     if (!baseUrl) {
       // Auto-detect based on environment
       if (typeof window !== 'undefined') {
         // In browser, use relative path or configured URL
         const isLocalhost = window.location.hostname === 'localhost';
+        console.log('[Observer DEBUG] window.location.hostname:', window.location.hostname);
+        console.log('[Observer DEBUG] isLocalhost:', isLocalhost);
+        console.log('[Observer DEBUG] NEXT_PUBLIC_AI_SERVER_WS_URL:', process.env.NEXT_PUBLIC_AI_SERVER_WS_URL);
+
         if (isLocalhost) {
           // Local development - ai-server runs on port 3001
           baseUrl = 'ws://localhost:3001';
@@ -122,12 +130,15 @@ export function LiveCallObserver({
       }
     }
 
+    console.log('[Observer DEBUG] Final baseUrl:', baseUrl);
+
     // Build observer URL with optional userId
     let url = `${baseUrl}/observe/${encodeURIComponent(callControlId)}`;
     if (userId) {
       url += `?userId=${encodeURIComponent(userId)}`;
     }
 
+    console.log('[Observer DEBUG] Final WebSocket URL:', url);
     return url;
   }, [callControlId, userId, aiServerUrl]);
 
@@ -135,43 +146,54 @@ export function LiveCallObserver({
    * Connect to the observer WebSocket
    */
   const connect = useCallback(async () => {
+    console.log('[Observer DEBUG] connect() called');
+    console.log('[Observer DEBUG] wsRef.current:', wsRef.current);
+
     if (wsRef.current) {
-      console.log('[Observer] Already connected');
+      console.log('[Observer DEBUG] Already connected, returning');
       return;
     }
 
     try {
+      console.log('[Observer DEBUG] Setting state to connecting...');
       setConnectionState('connecting');
       setErrorMessage(null);
 
       // Initialize audio player (requires user gesture, hence in connect)
+      console.log('[Observer DEBUG] Initializing audio player...');
       if (!audioPlayerRef.current) {
         audioPlayerRef.current = new MulawAudioPlayer((state) => {
+          console.log('[Observer DEBUG] Audio state changed:', state);
           setAudioState(state);
         });
       }
       await audioPlayerRef.current.initialize();
+      console.log('[Observer DEBUG] Audio player initialized');
 
       // Connect to WebSocket
       const wsUrl = buildWsUrl();
-      console.log('[Observer] Connecting to:', wsUrl);
+      console.log('[Observer DEBUG] Creating WebSocket connection to:', wsUrl);
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
+      console.log('[Observer DEBUG] WebSocket object created, readyState:', ws.readyState);
 
       ws.onopen = () => {
-        console.log('[Observer] Connected');
+        console.log('[Observer DEBUG] WebSocket onopen fired!');
+        console.log('[Observer DEBUG] WebSocket readyState:', ws.readyState);
         setConnectionState('connected');
         setIsListening(true);
       };
 
       ws.onmessage = (event) => {
+        console.log('[Observer DEBUG] WebSocket onmessage fired, data length:', event.data?.length);
         try {
           const msg = JSON.parse(event.data);
+          console.log('[Observer DEBUG] Parsed message event:', msg.event);
 
           switch (msg.event) {
             case 'connected':
-              console.log('[Observer] Received connection info:', msg);
+              console.log('[Observer DEBUG] Received connection info:', msg);
               setCallInfo({
                 goal: msg.goal,
                 assistantName: msg.assistantName,
@@ -179,13 +201,14 @@ export function LiveCallObserver({
               break;
 
             case 'audio':
-              // Add audio to player
+              // Add audio to player (don't log every packet - too noisy)
               if (audioPlayerRef.current && isListening) {
                 audioPlayerRef.current.addAudio(msg.track, msg.payload);
               }
               break;
 
             case 'transcript':
+              console.log('[Observer DEBUG] Transcript received:', msg.speaker, msg.text?.substring(0, 50));
               // Add transcript entry
               setTranscripts((prev) => {
                 const newEntry: TranscriptEntry = {
@@ -208,38 +231,44 @@ export function LiveCallObserver({
               break;
 
             case 'call_state':
-              console.log('[Observer] Call state changed:', msg.state);
+              console.log('[Observer DEBUG] Call state changed:', msg.state, msg.details);
               if (msg.state === 'ended') {
                 disconnect();
               }
               break;
 
             case 'pong':
-              // Keepalive response
+              console.log('[Observer DEBUG] Pong received');
               break;
 
             default:
-              console.log('[Observer] Unknown event:', msg.event);
+              console.log('[Observer DEBUG] Unknown event:', msg.event, msg);
           }
         } catch (error) {
-          console.error('[Observer] Error parsing message:', error);
+          console.error('[Observer DEBUG] Error parsing message:', error);
+          console.error('[Observer DEBUG] Raw message:', event.data?.substring?.(0, 200));
         }
       };
 
       ws.onerror = (error) => {
-        console.error('[Observer] WebSocket error:', error);
+        console.error('[Observer DEBUG] WebSocket onerror fired!');
+        console.error('[Observer DEBUG] Error object:', error);
+        console.error('[Observer DEBUG] WebSocket readyState:', ws.readyState);
         setConnectionState('error');
-        setErrorMessage('Connection error');
+        setErrorMessage('Connection error - check browser console for details');
       };
 
       ws.onclose = (event) => {
-        console.log('[Observer] Disconnected:', event.code, event.reason);
+        console.log('[Observer DEBUG] WebSocket onclose fired!');
+        console.log('[Observer DEBUG] Close code:', event.code);
+        console.log('[Observer DEBUG] Close reason:', event.reason);
+        console.log('[Observer DEBUG] Clean close:', event.wasClean);
         setConnectionState('disconnected');
         setIsListening(false);
         wsRef.current = null;
 
         if (event.code !== 1000) {
-          setErrorMessage(event.reason || 'Connection closed unexpectedly');
+          setErrorMessage(`Connection closed: code=${event.code}, reason=${event.reason || 'unknown'}`);
         }
 
         onDisconnect?.();
@@ -248,6 +277,7 @@ export function LiveCallObserver({
       // Setup keepalive ping
       const pingInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
+          console.log('[Observer DEBUG] Sending ping');
           ws.send(JSON.stringify({ event: 'ping' }));
         }
       }, 30000);
@@ -256,7 +286,7 @@ export function LiveCallObserver({
       ws.addEventListener('close', () => clearInterval(pingInterval));
 
     } catch (error) {
-      console.error('[Observer] Connection error:', error);
+      console.error('[Observer DEBUG] Connection error in try/catch:', error);
       setConnectionState('error');
       setErrorMessage(error instanceof Error ? error.message : 'Failed to connect');
     }

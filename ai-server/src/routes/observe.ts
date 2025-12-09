@@ -40,11 +40,15 @@ const connectionMap = new Map<WebSocket, ObserverConnection>();
  * Register an observer for a call
  */
 export function addObserver(callControlId: string, observer: ObserverConnection): void {
+  console.log(`[Observer DEBUG] addObserver called for callControlId: ${callControlId}`);
   if (!observersByCall.has(callControlId)) {
+    console.log(`[Observer DEBUG] Creating new Set for callControlId: ${callControlId}`);
     observersByCall.set(callControlId, new Set());
   }
   observersByCall.get(callControlId)!.add(observer);
   connectionMap.set(observer.ws, observer);
+  console.log(`[Observer DEBUG] Observer added. Total observers for this call: ${observersByCall.get(callControlId)!.size}`);
+  console.log(`[Observer DEBUG] Total calls being observed: ${observersByCall.size}`);
   console.log(`[Observer] Added observer for call ${callControlId} (total: ${observersByCall.get(callControlId)!.size})`);
 }
 
@@ -80,6 +84,10 @@ export function hasObservers(callControlId: string): boolean {
   return (observersByCall.get(callControlId)?.size || 0) > 0;
 }
 
+// Track audio packet count for debug logging (don't spam logs)
+let audioPacketCount = 0;
+let lastAudioLogTime = 0;
+
 /**
  * Broadcast audio data to all observers of a call
  * @param callControlId - The call to broadcast to
@@ -88,6 +96,16 @@ export function hasObservers(callControlId: string): boolean {
  */
 export function broadcastAudio(callControlId: string, track: 'inbound' | 'outbound', audioData: Buffer): void {
   const observers = observersByCall.get(callControlId);
+
+  // Log periodically (every 5 seconds) to avoid spam
+  audioPacketCount++;
+  const now = Date.now();
+  if (now - lastAudioLogTime > 5000) {
+    console.log(`[Observer DEBUG] broadcastAudio called ${audioPacketCount} times, callControlId: ${callControlId}, observers: ${observers?.size || 0}`);
+    audioPacketCount = 0;
+    lastAudioLogTime = now;
+  }
+
   if (!observers || observers.size === 0) return;
 
   // Create message with track info and base64 audio
@@ -194,8 +212,23 @@ async function verifyObserverAuth(
   callControlId: string,
   userId: string | undefined
 ): Promise<{ authorized: boolean; reason?: string }> {
+  console.log(`[Observer DEBUG] verifyObserverAuth called`);
+  console.log(`[Observer DEBUG] Looking for callControlId: ${callControlId}`);
+
   // Get the call context
   const context = contextMgr.getContext(callControlId);
+  console.log(`[Observer DEBUG] context found: ${!!context}`);
+
+  if (context) {
+    console.log(`[Observer DEBUG] context.isCallActive: ${context.isCallActive}`);
+    console.log(`[Observer DEBUG] context.userId: ${context.userId}`);
+    console.log(`[Observer DEBUG] context.callId: ${context.callId}`);
+    console.log(`[Observer DEBUG] context.callControlId: ${context.callControlId}`);
+  }
+
+  // List all active call IDs for debugging
+  const activeCallIds = contextMgr.getActiveCallIds();
+  console.log(`[Observer DEBUG] All active call IDs (${activeCallIds.length}):`, activeCallIds);
 
   if (!context) {
     return { authorized: false, reason: 'Call not found or not active' };
@@ -245,10 +278,16 @@ export async function handleObserverUpgrade(
   head: Buffer
 ): Promise<void> {
   const url = request.url || '';
+  console.log(`[Observer DEBUG] handleObserverUpgrade called with URL: ${url}`);
+
   const wss = getObserverWss();
+  console.log(`[Observer DEBUG] Got observer WSS instance`);
 
   const callControlId = parseObservePath(url);
+  console.log(`[Observer DEBUG] Parsed callControlId: ${callControlId}`);
+
   if (!callControlId) {
+    console.log(`[Observer DEBUG] No callControlId found, returning 400`);
     socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
     socket.destroy();
     return;
@@ -257,10 +296,14 @@ export async function handleObserverUpgrade(
   // Extract userId from query params if present (for auth)
   const urlObj = new URL(url, 'http://localhost');
   const userId = urlObj.searchParams.get('userId') || undefined;
+  console.log(`[Observer DEBUG] userId from query: ${userId}`);
 
   // Verify authorization
   try {
+    console.log(`[Observer DEBUG] Verifying auth for callControlId: ${callControlId}`);
     const { authorized, reason } = await verifyObserverAuth(callControlId, userId);
+    console.log(`[Observer DEBUG] Auth result: authorized=${authorized}, reason=${reason}`);
+
     if (!authorized) {
       console.log(`[Observer] Unauthorized connection attempt for ${callControlId}: ${reason}`);
       socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n${reason}`);
@@ -269,11 +312,13 @@ export async function handleObserverUpgrade(
     }
 
     // Handle the upgrade
+    console.log(`[Observer DEBUG] Auth passed, calling wss.handleUpgrade...`);
     wss.handleUpgrade(request, socket, head, (ws) => {
+      console.log(`[Observer DEBUG] handleUpgrade callback fired, calling handleObserverConnection`);
       handleObserverConnection(ws, callControlId, userId);
     });
   } catch (error) {
-    console.error('[Observer] Auth error:', error);
+    console.error('[Observer DEBUG] Auth error:', error);
     socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
     socket.destroy();
   }
@@ -283,6 +328,10 @@ export async function handleObserverUpgrade(
  * Handle a new observer WebSocket connection
  */
 function handleObserverConnection(ws: WebSocket, callControlId: string, userId?: string): void {
+  console.log(`[Observer DEBUG] handleObserverConnection called`);
+  console.log(`[Observer DEBUG] callControlId: ${callControlId}`);
+  console.log(`[Observer DEBUG] userId: ${userId}`);
+  console.log(`[Observer DEBUG] ws.readyState: ${ws.readyState}`);
   console.log(`[Observer] New observer connected for call ${callControlId}`);
 
   // Create observer record
