@@ -81,14 +81,14 @@ const MULAW_SILENCE = 0xff;
 const SILENCE_THRESHOLD = 500; // PCM amplitude below this is considered silence
 
 // Discontinuity threshold - if sample jumps by more than this, smooth it
-// At 8kHz telephony audio, typical speech transitions are gradual
-// A jump of 200+ between adjacent samples is usually a discontinuity/click
-const DISCONTINUITY_THRESHOLD = 200;
+// Speech naturally has large sample-to-sample variations (500-3000 is normal)
+// Only catch truly extreme discontinuities that indicate packet boundary issues
+const DISCONTINUITY_THRESHOLD = 4000;
 
 // Fade duration in samples (at 8kHz)
 // 8 samples = 1ms, 16 samples = 2ms, 32 samples = 4ms
-const FADE_SAMPLES = 8; // 1ms fade for discontinuities - very short to preserve audio quality
-const SILENCE_FADE_SAMPLES = 16; // 2ms fade for silence transitions
+const FADE_SAMPLES = 16; // 2ms fade for discontinuities
+const SILENCE_FADE_SAMPLES = 32; // 4ms fade for silence transitions (longer for smoother transitions)
 
 /**
  * Track state for audio smoothing
