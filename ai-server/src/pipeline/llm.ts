@@ -115,9 +115,14 @@ export async function generateRollingSummary(
 
     const newSummary = response.choices[0]?.message?.content || "";
 
+    // Debug: Log the full usage object to see what Groq returns
+    console.log(`[${callId}] Groq summary usage response:`, JSON.stringify(response.usage, null, 2));
+
     // Extract prompt caching metrics from Groq response (if available)
     // Groq returns cached_tokens in usage.prompt_tokens_details.cached_tokens
     const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+
+    console.log(`[${callId}] Extracted summary cachedTokens: ${cachedTokens}`);
 
     // Log the LLM interaction to database for live visibility
     insertLlmLog({
@@ -257,9 +262,14 @@ export async function generateAssistantReply(
 
   const assistantResponse = response.choices[0]?.message?.content || "";
 
+  // Debug: Log the full usage object to see what Groq returns
+  console.log(`[${context?.callId || 'no-call'}] Groq usage response:`, JSON.stringify(response.usage, null, 2));
+
   // Extract prompt caching metrics from Groq response (if available)
   // Groq returns cached_tokens in usage.prompt_tokens_details.cached_tokens
   const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+
+  console.log(`[${context?.callId || 'no-call'}] Extracted cachedTokens: ${cachedTokens}`);
 
   // Log the LLM interaction to database for live visibility
   if (context?.callId) {
