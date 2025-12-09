@@ -71,6 +71,9 @@ export interface CallContext {
   };
   // Flag to disable custom recording if size limit exceeded (fallback to Telnyx native)
   customRecordingDisabledDueToSize?: boolean;
+
+  // Flag to hang up after current TTS completes (triggered by "end" behavior or "Chow" signal)
+  pendingHangupAfterTts?: boolean;
 }
 
 /**
