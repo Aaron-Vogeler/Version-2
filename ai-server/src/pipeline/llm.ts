@@ -225,14 +225,29 @@ export async function generateAssistantReply(
   const temperatureToUse = callContext?.temperature ?? 0.7;
   const maxTokensToUse = callContext?.maxTokens ?? 1024;
   const topPToUse = callContext?.topP ?? 1.0;
+  const reasoningToUse = callContext?.reasoning || 'medium';
+  const jsonModeToUse = callContext?.jsonMode || false;
 
-  const response = await groq.chat.completions.create({
+  // Build API request parameters
+  const apiParams: any = {
     model: modelToUse,
     messages,
     temperature: temperatureToUse,
     max_tokens: maxTokensToUse,
     top_p: topPToUse,
-  });
+  };
+
+  // Add reasoning_effort if model supports it (openai/gpt-oss-20b)
+  if (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) {
+    apiParams.reasoning_effort = reasoningToUse;
+  }
+
+  // Add response_format for JSON mode
+  if (jsonModeToUse) {
+    apiParams.response_format = { type: 'json_object' };
+  }
+
+  const response = await groq.chat.completions.create(apiParams);
   const latencyMs = Date.now() - startTime;
 
   const assistantResponse = response.choices[0]?.message?.content || "";

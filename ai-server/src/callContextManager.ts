@@ -34,6 +34,9 @@ export interface CallContext {
   temperature?: number; // Temperature for LLM calls (overrides default)
   maxTokens?: number; // Max tokens for LLM calls (overrides default)
   topP?: number; // Top P for LLM calls (overrides default)
+  reasoning?: 'low' | 'medium' | 'high'; // Reasoning effort for LLM calls
+  stream?: boolean; // Enable streaming for LLM calls
+  jsonMode?: boolean; // Enable JSON mode for LLM calls
   initiatedAt?: string;
 
   // Rolling summary and turn tracking

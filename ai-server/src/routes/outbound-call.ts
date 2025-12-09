@@ -19,6 +19,9 @@ interface OutboundCallRequest {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  reasoning?: 'low' | 'medium' | 'high';
+  stream?: boolean;
+  jsonMode?: boolean;
 }
 
 interface TelnyxCallResponse {
@@ -36,7 +39,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, holdCheckInIntervalMs, holdMaxCheckIns, model, temperature, maxTokens, topP } = req.body as OutboundCallRequest;
+    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, holdCheckInIntervalMs, holdMaxCheckIns, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -68,6 +71,9 @@ router.post("/", async (req: Request, res: Response) => {
       temperature: temperature || null,
       maxTokens: maxTokens || null,
       topP: topP || null,
+      reasoning: reasoning || null,
+      stream: stream || null,
+      jsonMode: jsonMode || null,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

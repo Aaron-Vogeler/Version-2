@@ -176,6 +176,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [topP, setTopP] = useState(1);
+  const [reasoning, setReasoning] = useState<'low' | 'medium' | 'high'>('medium');
+  const [stream, setStream] = useState(false);
+  const [jsonMode, setJsonMode] = useState(false);
   const [contextConfig, setContextConfig] = useState<ContextConfig>({
     maxTurnsInWindow: 12,
     summaryUpdateIntervalTurns: 6,
@@ -435,6 +438,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           temperature: temperature,
           max_tokens: maxTokens,
           top_p: topP,
+          reasoning: reasoning,
+          stream: stream,
+          json_mode: jsonMode,
         }),
       });
 
@@ -793,6 +799,61 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           onChange={(e) => setTopP(parseFloat(e.target.value) || 1)}
           className="text-sm"
         />
+      </div>
+
+      {/* Reasoning */}
+      <div className="space-y-2">
+        <Label htmlFor="reasoning" className="text-sm">Reasoning</Label>
+        <Select value={reasoning} onValueChange={(value: 'low' | 'medium' | 'high') => setReasoning(value)}>
+          <SelectTrigger className="text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Stream */}
+      <div className="flex items-center justify-between">
+        <Label htmlFor="stream" className="text-sm">Stream</Label>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={stream}
+          onClick={() => setStream(!stream)}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            stream ? 'bg-primary' : 'bg-muted'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              stream ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* JSON Mode */}
+      <div className="flex items-center justify-between">
+        <Label htmlFor="jsonMode" className="text-sm">JSON Mode</Label>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={jsonMode}
+          onClick={() => setJsonMode(!jsonMode)}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            jsonMode ? 'bg-primary' : 'bg-muted'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              jsonMode ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
       </div>
 
       {/* System Prompt (REQUIRED) */}
