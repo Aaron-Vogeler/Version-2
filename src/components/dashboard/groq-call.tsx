@@ -13,6 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { ListenInBrowser } from './listen-in-browser';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -57,6 +58,7 @@ import {
   Volume2,
   Radio,
   Mic,
+  Headphones,
 } from 'lucide-react';
 
 // Model type from API
@@ -174,6 +176,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   // Live transcript streaming
   const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
   const [showLiveTranscript, setShowLiveTranscript] = useState(true);
+
+  // Listen live audio
+  const [showListenLive, setShowListenLive] = useState(true);
 
   // Call-like context state
   const [goal, setGoal] = useState('');
@@ -1814,6 +1819,14 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 {showLiveTranscript ? 'Hide' : 'Show'} Live Transcript
               </Button>
               <Button
+                variant={showListenLive ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setShowListenLive(!showListenLive)}
+              >
+                <Headphones className="h-4 w-4 mr-2" />
+                {showListenLive ? 'Hide' : 'Show'} Listen Live
+              </Button>
+              <Button
                 variant={isCallActive ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setShowAudioPopup(true)}
@@ -1869,6 +1882,16 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
             'xl:col-span-4'
           )}
       </div>
+
+      {/* Listen Live Panel - Real-time audio monitoring */}
+      {showListenLive && activeCall && (
+        <div className="mt-6">
+          <ListenInBrowser
+            callId={activeCall.id}
+            isCallOngoing={isCallActive}
+          />
+        </div>
+      )}
 
       {/* LLM Logs Panel - Separate full-width section below */}
       {(showLlmLogs || expandedPanel === 'logs') && (
