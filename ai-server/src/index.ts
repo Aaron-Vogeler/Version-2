@@ -1764,19 +1764,10 @@ wss.on("connection", async (ws) => {
         const rawAudio = Buffer.from(msg.media.payload, "base64");
 
         // ============================================================================
-        // AUDIO SMOOTHING: Apply fade-in/fade-out at silence boundaries
-        // This eliminates clicks/pops when audio starts or stops
+        // AUDIO SMOOTHING: DISABLED FOR TESTING
+        // The smoother may be introducing artifacts - testing with raw audio
         // ============================================================================
-        let audio = rawAudio;
-        if (callContext?.callControlId && (track === "inbound" || track === "outbound")) {
-          try {
-            audio = Buffer.from(smoothAudio(callContext.callControlId, track, rawAudio));
-          } catch (smoothError) {
-            // If smoothing fails, use raw audio
-            console.error("[AudioSmoother] Error:", smoothError instanceof Error ? smoothError.message : smoothError);
-            audio = rawAudio;
-          }
-        }
+        const audio = rawAudio;
 
         // ============================================================================
         // CUSTOM RECORDING: Capture BOTH tracks (inbound + outbound) for self-hosted recording
