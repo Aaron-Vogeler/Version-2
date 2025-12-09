@@ -286,6 +286,10 @@ async function scheduleTtsResponse(
     if (behavior === "end") {
       console.log("👋 Behavior='end' - will hang up after TTS completes");
       callContext.pendingHangupAfterTts = true;
+      // Sync to Redis for multi-instance support
+      if (callContext.callControlId) {
+        await sharedState.setPendingHangup(callContext.callControlId, true);
+      }
     }
 
     // Check if we have text to speak
@@ -398,6 +402,8 @@ async function sendTtsResponse(
   if (shouldHangup) {
     console.log("👋 Detected 'Chow' in AI response - will hangup after TTS completes");
     callContext.pendingHangupAfterTts = true;
+    // Sync to Redis for multi-instance support
+    await sharedState.setPendingHangup(callContext.callControlId, true);
   }
 
   try {
@@ -879,9 +885,11 @@ app.post("/webhooks/telnyx", async (req, res) => {
         }
 
         // Check if we should hang up after TTS completed (triggered by "end" behavior or "Chow" signal)
+        // Check local context first, then fall back to Redis
         if (ctx.pendingHangupAfterTts) {
           console.log("📞 TTS completed - executing pending hangup (behavior='end' or 'Chow' detected)");
-          ctx.pendingHangupAfterTts = false; // Clear flag
+          ctx.pendingHangupAfterTts = false; // Clear local flag
+          await sharedState.setPendingHangup(callControlId, false); // Clear Redis flag
           try {
             await hangupCall(callControlId);
             console.log("✅ Call ended successfully after TTS completion");
@@ -890,7 +898,20 @@ app.post("/webhooks/telnyx", async (req, res) => {
           }
         }
       } else {
-        console.log(`[TTS] ✅ call.speak.ended - local context not found, Redis updated (callControlId: ${callControlId})`);
+        console.log(`[TTS] ✅ call.speak.ended - local context not found, checking Redis (callControlId: ${callControlId})`);
+
+        // Check Redis for pending hangup (multi-instance case: webhook hit different instance than WebSocket)
+        const pendingHangup = await sharedState.getPendingHangup(callControlId);
+        if (pendingHangup) {
+          console.log("📞 TTS completed - executing pending hangup from Redis (behavior='end' or 'Chow' detected)");
+          await sharedState.setPendingHangup(callControlId, false); // Clear Redis flag
+          try {
+            await hangupCall(callControlId);
+            console.log("✅ Call ended successfully after TTS completion (via Redis)");
+          } catch (hangupError) {
+            console.error("❌ Hangup after TTS failed:", hangupError);
+          }
+        }
       }
     }
   } else if (eventType === "call.playback.ended") {

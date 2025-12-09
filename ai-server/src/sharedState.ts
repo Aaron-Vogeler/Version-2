@@ -29,6 +29,7 @@ export interface SyncedTtsState {
   speakWasInterrupted?: boolean;
   turnSeq: number;
   currentSpeakText?: string;
+  pendingHangupAfterTts?: boolean; // Flag to hang up after TTS completes
 }
 
 // Default state for new calls
@@ -180,6 +181,25 @@ export async function markTtsInterrupted(callControlId: string): Promise<void> {
     speakWasInterrupted: true,
     ttsState: "stopping",
   });
+}
+
+/**
+ * Set pending hangup flag (to hang up after TTS completes).
+ * Called when "end" behavior or "Chow" is detected.
+ */
+export async function setPendingHangup(callControlId: string, pending: boolean): Promise<void> {
+  await setTtsState(callControlId, {
+    pendingHangupAfterTts: pending,
+  });
+}
+
+/**
+ * Check if there's a pending hangup for this call.
+ * Returns true if we should hang up after TTS completes.
+ */
+export async function getPendingHangup(callControlId: string): Promise<boolean> {
+  const state = await getTtsState(callControlId);
+  return state?.pendingHangupAfterTts ?? false;
 }
 
 /**
