@@ -31,6 +31,9 @@ export interface CallContext {
   systemPrompt?: string; // Custom system prompt passed from frontend
   rollingSummaryPrompt?: string; // Custom rolling summary prompt template passed from frontend
   model?: string; // Model to use for this call (overrides config default)
+  temperature?: number; // Temperature for LLM calls (overrides default)
+  maxTokens?: number; // Max tokens for LLM calls (overrides default)
+  topP?: number; // Top P for LLM calls (overrides default)
   initiatedAt?: string;
 
   // Rolling summary and turn tracking

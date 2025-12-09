@@ -219,11 +219,19 @@ export async function generateAssistantReply(
   }
 
   const startTime = Date.now();
-  // Use model from context if available, otherwise fall back to config
-  const modelToUse = (context?.callId && contextMgr.getContext(context.callId)?.model) || config.groq.model;
+  // Use parameters from context if available, otherwise fall back to defaults
+  const callContext = context?.callId ? contextMgr.getContext(context.callId) : null;
+  const modelToUse = callContext?.model || config.groq.model;
+  const temperatureToUse = callContext?.temperature ?? 0.7;
+  const maxTokensToUse = callContext?.maxTokens ?? 1024;
+  const topPToUse = callContext?.topP ?? 1.0;
+
   const response = await groq.chat.completions.create({
     model: modelToUse,
     messages,
+    temperature: temperatureToUse,
+    max_tokens: maxTokensToUse,
+    top_p: topPToUse,
   });
   const latencyMs = Date.now() - startTime;
 
@@ -235,6 +243,8 @@ export async function generateAssistantReply(
       call_id: context.callId,
       request_type: "chat",
       model: modelToUse,
+      temperature: temperatureToUse,
+      max_tokens: maxTokensToUse,
       system_prompt: systemPrompt,
       messages: messages,
       user_input: userText,

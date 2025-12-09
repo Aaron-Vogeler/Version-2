@@ -432,6 +432,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           hold_check_in_interval_ms: callControlSettings.holdCheckInIntervalMs,
           hold_max_check_ins: callControlSettings.holdMaxCheckIns,
           model: selectedModel,
+          temperature: temperature,
+          max_tokens: maxTokens,
+          top_p: topP,
         }),
       });
 
