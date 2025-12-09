@@ -262,6 +262,11 @@ export async function generateAssistantReply(
 
   const assistantResponse = response.choices[0]?.message?.content || "";
 
+  // Debug: Estimate system prompt size (rough: ~4 chars per token)
+  const systemPromptChars = systemPrompt.length;
+  const estimatedSystemTokens = Math.round(systemPromptChars / 4);
+  console.log(`[${context?.callId || 'no-call'}] System prompt: ~${estimatedSystemTokens} tokens (${systemPromptChars} chars). Need 1024+ for caching.`);
+
   // Debug: Log the full usage object to see what Groq returns
   console.log(`[${context?.callId || 'no-call'}] Groq usage response:`, JSON.stringify(response.usage, null, 2));
 
