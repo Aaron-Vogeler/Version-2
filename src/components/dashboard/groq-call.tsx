@@ -1414,10 +1414,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                   <Clock className="h-3 w-3" />
                   ~{avgLlmLatency}ms
                 </Badge>
-                {(totalCacheHits > 0 || totalCacheMisses > 0) && (
-                  <Badge variant="outline" className="gap-1" title={`Cache: ${totalCacheHits.toLocaleString()} hits / ${totalCacheMisses.toLocaleString()} misses`}>
+                {totalCacheMisses > 0 && (
+                  <Badge variant="outline" className="gap-1" title={`Cached: ${totalCacheHits.toLocaleString()} / Uncached: ${totalCacheMisses.toLocaleString()}`}>
                     <Database className="h-3 w-3" />
-                    {cacheHitRate}% hit
+                    {totalCacheHits > 0 ? `${cacheHitRate}% cached` : `${totalCacheMisses.toLocaleString()} uncached`}
                   </Badge>
                 )}
               </>
@@ -1508,10 +1508,15 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                         {log.latency_ms}ms
                       </span>
                     )}
-                    {(log.cache_hit_tokens !== undefined && log.cache_hit_tokens > 0) && (
-                      <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1" title={`${log.cache_hit_tokens} cached / ${log.cache_miss_tokens || 0} uncached`}>
+                    {(log.cache_miss_tokens !== undefined && log.cache_miss_tokens > 0) && (
+                      <span
+                        className={`text-xs flex items-center gap-1 ${log.cache_hit_tokens && log.cache_hit_tokens > 0 ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}
+                        title={`${log.cache_hit_tokens || 0} cached / ${log.cache_miss_tokens} uncached`}
+                      >
                         <Database className="h-3 w-3" />
-                        {log.cache_hit_tokens}
+                        {log.cache_hit_tokens && log.cache_hit_tokens > 0
+                          ? `${log.cache_hit_tokens} cached`
+                          : `${log.cache_miss_tokens} uncached`}
                       </span>
                     )}
                     <Button
@@ -1563,10 +1568,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                       {log.recent_turns_count !== undefined && (
                         <Badge variant="outline" className="text-xs">{log.recent_turns_count} turns</Badge>
                       )}
-                      {(log.cache_hit_tokens !== undefined || log.cache_miss_tokens !== undefined) && (
+                      {log.cache_miss_tokens !== undefined && log.cache_miss_tokens > 0 && (
                         <Badge variant="outline" className="text-xs gap-1">
                           <Database className="h-3 w-3" />
-                          Cache: {log.cache_hit_tokens || 0} hit / {log.cache_miss_tokens || 0} miss
+                          {log.cache_hit_tokens && log.cache_hit_tokens > 0
+                            ? `${log.cache_hit_tokens} cached / ${log.cache_miss_tokens} uncached`
+                            : `${log.cache_miss_tokens} prompt tokens (uncached)`}
                         </Badge>
                       )}
                     </div>
@@ -1782,10 +1789,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                     Tokens: {selectedLlmLog.prompt_tokens} + {selectedLlmLog.completion_tokens} = {selectedLlmLog.total_tokens}
                   </Badge>
                 )}
-                {(selectedLlmLog.cache_hit_tokens !== undefined || selectedLlmLog.cache_miss_tokens !== undefined) && (
+                {selectedLlmLog.cache_miss_tokens !== undefined && selectedLlmLog.cache_miss_tokens > 0 && (
                   <Badge variant="outline" className="gap-1">
                     <Database className="h-3 w-3" />
-                    Cache: {selectedLlmLog.cache_hit_tokens || 0} hit / {selectedLlmLog.cache_miss_tokens || 0} miss
+                    {selectedLlmLog.cache_hit_tokens && selectedLlmLog.cache_hit_tokens > 0
+                      ? `${selectedLlmLog.cache_hit_tokens} cached / ${selectedLlmLog.cache_miss_tokens} uncached`
+                      : `${selectedLlmLog.cache_miss_tokens} prompt tokens (uncached)`}
                   </Badge>
                 )}
               </div>
