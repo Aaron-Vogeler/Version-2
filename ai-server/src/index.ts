@@ -45,6 +45,67 @@ interface ParsedLlmResponse {
 }
 
 /**
+ * Try to fix common JSON malformations from LLM responses.
+ * LLMs sometimes return incomplete or malformed JSON.
+ */
+function tryFixMalformedJson(text: string): string | null {
+  let fixed = text.trim();
+
+  // Count opening and closing braces
+  const openBraces = (fixed.match(/\{/g) || []).length;
+  const closeBraces = (fixed.match(/\}/g) || []).length;
+
+  // Add missing closing braces
+  if (openBraces > closeBraces) {
+    const missing = openBraces - closeBraces;
+    fixed = fixed + "}".repeat(missing);
+    console.log(`[LLM] Fixed JSON: added ${missing} missing closing brace(s)`);
+  }
+
+  // Try to parse
+  try {
+    JSON.parse(fixed);
+    return fixed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract JSON fields using regex as a fallback when JSON.parse fails.
+ * This handles cases where the LLM returns partial/malformed JSON.
+ */
+function extractFieldsViaRegex(text: string): { speak?: string; behavior?: string; internal?: string } | null {
+  const result: { speak?: string; behavior?: string; internal?: string } = {};
+
+  // Extract "speak" field value
+  const speakMatch = text.match(/"speak"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (speakMatch) {
+    // Unescape the string
+    result.speak = speakMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+  }
+
+  // Extract "behavior" field value
+  const behaviorMatch = text.match(/"behavior"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (behaviorMatch) {
+    result.behavior = behaviorMatch[1];
+  }
+
+  // Extract "internal" field value
+  const internalMatch = text.match(/"internal"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (internalMatch) {
+    result.internal = internalMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+  }
+
+  // Return null if we couldn't extract any useful fields
+  if (!result.speak && !result.behavior) {
+    return null;
+  }
+
+  return result;
+}
+
+/**
  * Extract the speech text and behavior from an LLM response.
  * Handles two response formats:
  * 1. JSON object with "speak" field: {"speak": "text to speak", "behavior": "...", "internal": "..."}
@@ -58,9 +119,38 @@ function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
 
   // Check if response looks like JSON (starts with {)
   if (trimmed.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(trimmed);
+    let parsed: any = null;
 
+    // Try 1: Direct JSON.parse
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (parseError) {
+      console.log("[LLM] Initial JSON parse failed:", parseError instanceof Error ? parseError.message : parseError);
+
+      // Try 2: Fix malformed JSON (missing closing braces)
+      const fixed = tryFixMalformedJson(trimmed);
+      if (fixed) {
+        try {
+          parsed = JSON.parse(fixed);
+          console.log("[LLM] Successfully parsed after fixing malformed JSON");
+        } catch {
+          // Continue to regex fallback
+        }
+      }
+
+      // Try 3: Extract fields via regex
+      if (!parsed) {
+        console.log("[LLM] Attempting regex extraction of JSON fields");
+        const extracted = extractFieldsViaRegex(trimmed);
+        if (extracted && extracted.speak) {
+          console.log("[LLM] Successfully extracted fields via regex");
+          parsed = extracted;
+        }
+      }
+    }
+
+    // If we successfully parsed or extracted the JSON
+    if (parsed) {
       // Extract behavior (default to "speak" if not provided)
       const behavior = parsed.behavior || "speak";
       const internal = parsed.internal;
@@ -94,11 +184,14 @@ function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
       // If no recognized field, log warning and return original
       console.warn("[LLM] JSON response has no 'speak' or 'text' field, using raw response");
       return { speakText: llmResponse, behavior: "speak" };
-    } catch (parseError) {
-      // Not valid JSON despite starting with {, use as-is
-      console.log("[LLM] Response starts with { but is not valid JSON, using raw response");
-      return { speakText: llmResponse, behavior: "speak" };
     }
+
+    // All parsing attempts failed - this is a critical error
+    // Do NOT use raw JSON as speech text!
+    console.error("[LLM] ❌ CRITICAL: Failed to parse JSON response after all attempts. Raw response starts with '{' - will NOT speak raw JSON.");
+    console.error("[LLM] Raw response (first 500 chars):", trimmed.substring(0, 500));
+    // Return null speech to avoid speaking JSON
+    return { speakText: null, behavior: "speak" };
   }
 
   // Plain text response, return as-is with default behavior
