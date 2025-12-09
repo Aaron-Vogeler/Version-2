@@ -1,15 +1,18 @@
 /**
  * Audio Smoother for μ-law Streams
  * =================================
- * Eliminates clicks/pops at audio boundaries by applying fade-in/fade-out
- * when transitioning between silence and audio.
+ * Eliminates clicks/pops at audio boundaries by:
+ * 1. Detecting large sample discontinuities between packets
+ * 2. Applying fade-in/fade-out at silence boundaries
+ * 3. Smoothing sudden jumps in sample values during continuous audio
  *
- * Problem: μ-law silence is 0xFF (decodes to ~0). When audio suddenly starts
- * with a non-zero sample value, this creates a discontinuity that sounds like
- * a click or pop.
+ * Problem: μ-law packets can have discontinuities at boundaries due to:
+ * - Silence value 0xFF decoding to ~0, then sudden audio
+ * - Network jitter causing packet gaps
+ * - Encoder artifacts between packets
  *
- * Solution: Track the previous sample value for each track and apply a short
- * crossfade when there's a large amplitude jump.
+ * Solution: Track the previous sample value and apply crossfade smoothing
+ * when there's a large amplitude jump between packets.
  */
 
 // μ-law decode table (same as browser-side)
@@ -77,9 +80,15 @@ function decodeMulaw(mulawByte: number): number {
 const MULAW_SILENCE = 0xff;
 const SILENCE_THRESHOLD = 500; // PCM amplitude below this is considered silence
 
+// Discontinuity threshold - if sample jumps by more than this, smooth it
+// At 8kHz telephony audio, typical speech transitions are gradual
+// A jump of 200+ between adjacent samples is usually a discontinuity/click
+const DISCONTINUITY_THRESHOLD = 200;
+
 // Fade duration in samples (at 8kHz)
 // 8 samples = 1ms, 16 samples = 2ms, 32 samples = 4ms
-const FADE_SAMPLES = 16; // 2ms fade - short enough to not affect speech quality
+const FADE_SAMPLES = 8; // 1ms fade for discontinuities - very short to preserve audio quality
+const SILENCE_FADE_SAMPLES = 16; // 2ms fade for silence transitions
 
 /**
  * Track state for audio smoothing
@@ -150,63 +159,79 @@ export class AudioSmoother {
     const rms = Math.sqrt(sumSquares / pcmSamples.length);
     const isCurrentlySilent = peakAmplitude < SILENCE_THRESHOLD;
 
+    // Check for discontinuity at packet boundary (large jump from last packet's end to this packet's start)
+    const boundaryJump = Math.abs(firstSample - state.lastPcmValue);
+    const hasDiscontinuity = boundaryJump > DISCONTINUITY_THRESHOLD && state.packetCount > 1;
+
     // Debug logging (every 5 seconds per track)
     const now = Date.now();
     if (this.debugEnabled && now - state.lastLogTime > 5000) {
       console.log(`[AudioSmoother] Track ${trackId}: packet #${state.packetCount}, ` +
         `first=${firstSample}, last=${lastSample}, peak=${peakAmplitude}, rms=${rms.toFixed(0)}, ` +
-        `silent=${isCurrentlySilent}, wasSilent=${state.wasInSilence}`);
+        `silent=${isCurrentlySilent}, wasSilent=${state.wasInSilence}, boundaryJump=${boundaryJump}`);
       state.lastLogTime = now;
     }
 
-    // Detect transitions and apply smoothing
+    // Detect transitions
     const transitioningToAudio = state.wasInSilence && !isCurrentlySilent;
     const transitioningToSilence = !state.wasInSilence && isCurrentlySilent;
 
+    // Determine if we need to smooth the packet boundary
+    let smoothBoundary = false;
+    let fadeLength = FADE_SAMPLES;
+
     if (transitioningToAudio) {
-      // Starting audio after silence - apply fade-in
-      state.fadeInRemaining = FADE_SAMPLES;
+      // Silence to audio transition - use longer fade
+      smoothBoundary = true;
+      fadeLength = SILENCE_FADE_SAMPLES;
       if (this.debugEnabled) {
-        console.log(`[AudioSmoother] Track ${trackId}: FADE-IN triggered at packet #${state.packetCount}, ` +
+        console.log(`[AudioSmoother] Track ${trackId}: SILENCE→AUDIO at packet #${state.packetCount}, ` +
           `jump from ${state.lastPcmValue} to ${firstSample}`);
+      }
+    } else if (hasDiscontinuity && !isCurrentlySilent) {
+      // Discontinuity during audio - use short fade to prevent click
+      smoothBoundary = true;
+      fadeLength = FADE_SAMPLES;
+      if (this.debugEnabled) {
+        console.log(`[AudioSmoother] Track ${trackId}: DISCONTINUITY at packet #${state.packetCount}, ` +
+          `jump=${boundaryJump} (${state.lastPcmValue} → ${firstSample})`);
       }
     }
 
-    if (transitioningToSilence) {
-      // Going to silence - the previous packet should have had fade-out
-      // (handled at end of processing)
-    }
-
-    // Apply fade-in if active
-    if (state.fadeInRemaining > 0) {
-      const fadeStart = FADE_SAMPLES - state.fadeInRemaining;
-      for (let i = 0; i < pcmSamples.length && state.fadeInRemaining > 0; i++) {
-        const fadePosition = fadeStart + i;
-        const fadeFactor = fadePosition / FADE_SAMPLES;
-        // Blend from last known value to current value
+    // Apply boundary smoothing - crossfade from last sample to current samples
+    if (smoothBoundary) {
+      const startValue = state.lastPcmValue;
+      for (let i = 0; i < Math.min(fadeLength, pcmSamples.length); i++) {
+        const fadeFactor = i / fadeLength;
+        // Crossfade: blend from previous packet's last value to current value
         pcmSamples[i] = Math.round(
-          state.lastPcmValue * (1 - fadeFactor) + pcmSamples[i] * fadeFactor
+          startValue * (1 - fadeFactor) + pcmSamples[i] * fadeFactor
         );
-        state.fadeInRemaining--;
       }
     }
 
     // Check if we should apply fade-out at end of this packet
-    // (if the last few samples are heading toward silence)
-    const tailSamples = Math.min(8, pcmSamples.length);
-    let tailPeak = 0;
-    for (let i = pcmSamples.length - tailSamples; i < pcmSamples.length; i++) {
-      tailPeak = Math.max(tailPeak, Math.abs(pcmSamples[i]));
-    }
-    const tailGoingQuiet = tailPeak < SILENCE_THRESHOLD * 2 && peakAmplitude > SILENCE_THRESHOLD * 2;
+    // (if transitioning to silence or if the tail is going quiet)
+    if (transitioningToSilence || (!isCurrentlySilent && state.packetCount > 1)) {
+      const tailSamples = Math.min(8, pcmSamples.length);
+      let tailPeak = 0;
+      for (let i = pcmSamples.length - tailSamples; i < pcmSamples.length; i++) {
+        tailPeak = Math.max(tailPeak, Math.abs(pcmSamples[i]));
+      }
+      const tailGoingQuiet = tailPeak < SILENCE_THRESHOLD && peakAmplitude > SILENCE_THRESHOLD;
 
-    if (tailGoingQuiet) {
-      // Apply gentle fade-out to last few samples
-      const fadeOutStart = pcmSamples.length - FADE_SAMPLES;
-      for (let i = Math.max(0, fadeOutStart); i < pcmSamples.length; i++) {
-        const fadePosition = i - fadeOutStart;
-        const fadeFactor = 1 - (fadePosition / FADE_SAMPLES);
-        pcmSamples[i] = Math.round(pcmSamples[i] * fadeFactor);
+      if (tailGoingQuiet || transitioningToSilence) {
+        // Apply gentle fade-out to last few samples
+        const fadeOutLen = SILENCE_FADE_SAMPLES;
+        const fadeOutStart = pcmSamples.length - fadeOutLen;
+        for (let i = Math.max(0, fadeOutStart); i < pcmSamples.length; i++) {
+          const fadePosition = i - Math.max(0, fadeOutStart);
+          const fadeFactor = 1 - (fadePosition / fadeOutLen);
+          pcmSamples[i] = Math.round(pcmSamples[i] * fadeFactor);
+        }
+        if (this.debugEnabled && transitioningToSilence) {
+          console.log(`[AudioSmoother] Track ${trackId}: AUDIO→SILENCE fade-out at packet #${state.packetCount}`);
+        }
       }
     }
 
