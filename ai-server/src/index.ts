@@ -36,10 +36,10 @@ const deepgram = createDeepgramClient();
  * Result of parsing an LLM response for speech and behavior.
  */
 interface ParsedLlmResponse {
-  /** Text to be spoken via TTS (null if behavior is wait/noop) */
+  /** Text to be spoken via TTS (null if behavior is wait/noop/hold) */
   speakText: string | null;
-  /** Behavior directive: "speak" | "wait" | "end" | "noop" */
-  behavior: "speak" | "wait" | "end" | "noop";
+  /** Behavior directive: "speak" | "wait" | "end" | "noop" | "hold" */
+  behavior: "speak" | "wait" | "end" | "noop" | "hold";
   /** Internal notes (for logging/debugging) */
   internal?: string;
 }
@@ -160,8 +160,9 @@ function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
         console.log("[LLM] Internal notes:", internal);
       }
 
-      // If behavior is "wait" or "noop", don't speak anything
-      if (behavior === "wait" || behavior === "noop") {
+      // If behavior is "wait", "noop", or "hold", don't speak anything immediately
+      // (For "hold", the caller will handle periodic check-ins separately)
+      if (behavior === "wait" || behavior === "noop" || behavior === "hold") {
         console.log(`[LLM] Behavior='${behavior}' - skipping TTS (silent response)`);
         return { speakText: null, behavior, internal };
       }
@@ -229,6 +230,168 @@ function estimateSpokenText(fullText: string, durationMs: number): string {
   // Return estimated portion
   const spokenWords = words.slice(0, estimatedWordsSpoken);
   return spokenWords.join(" ");
+}
+
+/**
+ * Cancel any active hold mode for a call.
+ * Called when the callee speaks (ending hold) or when the call ends.
+ */
+function cancelHoldMode(callContext: CallContext): void {
+  if (callContext.isOnHold) {
+    console.log(`[HOLD] 📞 Exiting hold mode (was on hold for ${callContext.holdCheckInCount || 0} check-ins)`);
+  }
+  callContext.isOnHold = false;
+  callContext.holdStartedAt = undefined;
+  callContext.holdCheckInCount = undefined;
+  if (callContext.holdCheckInTimer) {
+    clearTimeout(callContext.holdCheckInTimer);
+    callContext.holdCheckInTimer = undefined;
+  }
+}
+
+/**
+ * Perform a hold check-in. This is called periodically while on hold.
+ * Sends a prompt to the LLM to generate a check-in message, then speaks it via TTS.
+ * After speaking, schedules the next check-in if within limits.
+ */
+async function performHoldCheckIn(
+  callContext: CallContext,
+  ws: WebSocket
+): Promise<void> {
+  if (!callContext.isOnHold || !callContext.isCallActive) {
+    console.log("[HOLD] Check-in aborted - no longer on hold or call inactive");
+    return;
+  }
+
+  const checkInCount = (callContext.holdCheckInCount || 0) + 1;
+  callContext.holdCheckInCount = checkInCount;
+
+  // Use per-call setting if provided, otherwise use config default
+  const maxCheckIns = callContext.holdMaxCheckIns || config.callControl.holdMaxCheckIns;
+  const holdDurationSec = callContext.holdStartedAt
+    ? Math.round((Date.now() - callContext.holdStartedAt) / 1000)
+    : 0;
+
+  console.log(`[HOLD] ⏰ Check-in #${checkInCount}/${maxCheckIns} (on hold for ${holdDurationSec}s)`);
+
+  // Check if we've exceeded max check-ins
+  if (checkInCount >= maxCheckIns) {
+    console.log(`[HOLD] 🛑 Max check-ins (${maxCheckIns}) reached - ending call`);
+
+    // Generate a polite hang-up message
+    const hangupMessage = `I've been on hold for a while now, and I need to go. I'll try calling back later. Goodbye.`;
+
+    // Speak the hang-up message and end the call
+    callContext.pendingHangupAfterTts = true;
+    if (callContext.callControlId) {
+      await sharedState.setPendingHangup(callContext.callControlId, true);
+    }
+
+    // Append to conversation turns
+    if (callContext.callId) {
+      contextMgr.appendTurn(callContext.callId, {
+        speaker: "assistant",
+        text: hangupMessage,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    cancelHoldMode(callContext);
+
+    // Increment turn sequence and send TTS
+    callContext.turnSeq = (callContext.turnSeq || 0) + 1;
+    await sendTtsResponse(callContext, ws, hangupMessage, callContext.turnSeq);
+    return;
+  }
+
+  // Generate a check-in message via LLM
+  // We send a special prompt that tells the LLM we're still on hold and need a brief check-in
+  try {
+    const checkInPrompt = `[SYSTEM: You are currently on hold (check-in #${checkInCount}/${maxCheckIns}, ${holdDurationSec}s elapsed). Generate a brief, polite check-in phrase to let the other party know you're still waiting. Keep it very short (5-10 words max). Examples: "Still here, thank you", "I'm still waiting, no rush", "Take your time, I'll hold". Respond with ONLY the check-in phrase, no JSON.]`;
+
+    const checkInResponse = await generateAssistantReply(checkInPrompt, callContext);
+
+    // Clean up the response (remove any JSON formatting if present)
+    let checkInText = checkInResponse.trim();
+    if (checkInText.startsWith("{")) {
+      // Try to extract speak field from JSON response
+      try {
+        const parsed = JSON.parse(checkInText);
+        checkInText = parsed.speak || "Still here, thank you.";
+      } catch {
+        checkInText = "Still here, thank you.";
+      }
+    }
+
+    // Ensure it's not too long
+    if (checkInText.length > 100) {
+      checkInText = checkInText.substring(0, 100);
+    }
+
+    console.log(`[HOLD] 📢 Check-in message: "${checkInText}"`);
+
+    // Append to conversation turns
+    if (callContext.callId) {
+      contextMgr.appendTurn(callContext.callId, {
+        speaker: "assistant",
+        text: checkInText,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Speak the check-in message
+    callContext.turnSeq = (callContext.turnSeq || 0) + 1;
+    await sendTtsResponse(callContext, ws, checkInText, callContext.turnSeq);
+
+    // Schedule next check-in if still on hold
+    if (callContext.isOnHold && callContext.isCallActive) {
+      scheduleHoldCheckIn(callContext, ws);
+    }
+  } catch (error) {
+    console.error("[HOLD] ❌ Error generating check-in:", error instanceof Error ? error.message : error);
+    // Even on error, schedule next check-in to avoid getting stuck
+    if (callContext.isOnHold && callContext.isCallActive) {
+      scheduleHoldCheckIn(callContext, ws);
+    }
+  }
+}
+
+/**
+ * Schedule the next hold check-in timer.
+ */
+function scheduleHoldCheckIn(callContext: CallContext, ws: WebSocket): void {
+  // Clear any existing timer
+  if (callContext.holdCheckInTimer) {
+    clearTimeout(callContext.holdCheckInTimer);
+  }
+
+  // Use per-call setting if provided, otherwise use config default
+  const intervalMs = callContext.holdCheckInIntervalMs || config.callControl.holdCheckInIntervalMs;
+  console.log(`[HOLD] ⏲️ Scheduling next check-in in ${intervalMs}ms`);
+
+  callContext.holdCheckInTimer = setTimeout(() => {
+    performHoldCheckIn(callContext, ws);
+  }, intervalMs);
+}
+
+/**
+ * Start hold mode for a call.
+ * Called when the LLM returns behavior="hold".
+ */
+function startHoldMode(callContext: CallContext, ws: WebSocket): void {
+  // If already on hold, just log and continue
+  if (callContext.isOnHold) {
+    console.log("[HOLD] Already on hold, continuing...");
+    return;
+  }
+
+  console.log("[HOLD] 📞 Entering hold mode");
+  callContext.isOnHold = true;
+  callContext.holdStartedAt = Date.now();
+  callContext.holdCheckInCount = 0;
+
+  // Schedule the first check-in
+  scheduleHoldCheckIn(callContext, ws);
 }
 
 /**
@@ -370,9 +533,27 @@ async function scheduleTtsResponse(
     // Handle "wait" or "noop" behavior - skip TTS entirely (no sound)
     if (behavior === "wait" || behavior === "noop") {
       console.log(`🤫 Behavior='${behavior}' - staying silent, no TTS triggered`);
+      // If we were on hold, exit hold mode since callee is now responding
+      if (callContext.isOnHold) {
+        cancelHoldMode(callContext);
+      }
       // Still clear transcript to avoid reprocessing
       callContext.lastUserTranscript = "";
       return;
+    }
+
+    // Handle "hold" behavior - enter hold mode with periodic check-ins
+    if (behavior === "hold") {
+      console.log(`⏳ Behavior='hold' - entering hold mode with periodic check-ins`);
+      startHoldMode(callContext, ws);
+      // Clear transcript to avoid reprocessing
+      callContext.lastUserTranscript = "";
+      return;
+    }
+
+    // If we reach here with a "speak" or "end" behavior, we're no longer on hold
+    if (callContext.isOnHold) {
+      cancelHoldMode(callContext);
     }
 
     // Handle "end" behavior - will hang up after TTS completes
@@ -663,6 +844,9 @@ function cleanupCallState(callContext: CallContext): void {
     clearTimeout(callContext.ttsDebounceTimer);
     callContext.ttsDebounceTimer = undefined;
   }
+
+  // Clear hold mode state and timer
+  cancelHoldMode(callContext);
 
   // Clear transcript logging timers and buffers
   if (callContext.callerFinalFlushTimer) {
@@ -1406,6 +1590,8 @@ wss.on("connection", async (ws) => {
           managedContext.userName = decoded.userName || null;
           managedContext.systemPrompt = decoded.systemPrompt || null;
           managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
+          managedContext.holdCheckInIntervalMs = decoded.holdCheckInIntervalMs || null;
+          managedContext.holdMaxCheckIns = decoded.holdMaxCheckIns || null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";
