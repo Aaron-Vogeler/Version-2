@@ -168,6 +168,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     bargeInCooldownMs: 300,
     callerUtteranceFlushMs: 300,
     hangupDelayMs: 2000,
+    holdCheckInIntervalMs: 30000,
+    holdMaxCheckIns: 5,
   });
   const [showCallControlSettings, setShowCallControlSettings] = useState(false);
 
@@ -390,6 +392,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           to_number: toNumber,
           custom_system_prompt: customSystemPrompt,
           rolling_summary_prompt: rollingSummaryPrompt,
+          hold_check_in_interval_ms: callControlSettings.holdCheckInIntervalMs,
+          hold_max_check_ins: callControlSettings.holdMaxCheckIns,
         }),
       });
 
@@ -459,6 +463,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       bargeInCooldownMs: 300,
       callerUtteranceFlushMs: 300,
       hangupDelayMs: 2000,
+      holdCheckInIntervalMs: 30000,
+      holdMaxCheckIns: 5,
     });
     if (models.length > 0) {
       setSelectedModel(models[0].id);
@@ -806,6 +812,35 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               />
               <p className="text-[10px] text-muted-foreground">Wait for TTS before hangup</p>
             </div>
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Hold Settings</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Hold Check-In Interval (ms)</Label>
+              <Input
+                type="number"
+                min="5000"
+                max="120000"
+                step="5000"
+                value={callControlSettings.holdCheckInIntervalMs}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, holdCheckInIntervalMs: parseInt(e.target.value) || 30000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Time between check-ins while on hold (default: 30s)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Max Hold Check-Ins</Label>
+              <Input
+                type="number"
+                min="1"
+                max="20"
+                step="1"
+                value={callControlSettings.holdMaxCheckIns}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, holdMaxCheckIns: parseInt(e.target.value) || 5 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Max check-ins before ending call (default: 5)</p>
+            </div>
           </div>
         )}
       </div>
@@ -1034,6 +1069,14 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           <div className="flex justify-between">
             <span className="text-muted-foreground">TTS Debounce:</span>
             <span className="font-mono">{callControlSettings.ttsDebounceMs}ms</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Hold Check-In:</span>
+            <span className="font-mono">{callControlSettings.holdCheckInIntervalMs / 1000}s</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Max Hold Check-Ins:</span>
+            <span className="font-mono">{callControlSettings.holdMaxCheckIns}</span>
           </div>
         </div>
       </div>

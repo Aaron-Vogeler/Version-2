@@ -74,6 +74,16 @@ export interface CallContext {
 
   // Flag to hang up after current TTS completes (triggered by "end" behavior or "Chow" signal)
   pendingHangupAfterTts?: boolean;
+
+  // Hold state tracking (triggered by "hold" behavior)
+  isOnHold?: boolean; // Whether the AI is currently waiting on hold
+  holdStartedAt?: number; // Timestamp when hold started (Date.now())
+  holdCheckInCount?: number; // Number of check-ins performed while on hold
+  holdCheckInTimer?: any; // Timer for next hold check-in (NodeJS.Timeout | ReturnType<typeof setTimeout>)
+
+  // Per-call hold settings (overrides config defaults if provided)
+  holdCheckInIntervalMs?: number; // Custom check-in interval for this call
+  holdMaxCheckIns?: number; // Custom max check-ins for this call
 }
 
 /**
@@ -217,8 +227,14 @@ export function clearContext(callId: string): void {
     if (context.ttsDebounceTimer) {
       clearTimeout(context.ttsDebounceTimer);
     }
+    // Clean up hold check-in timer
+    if (context.holdCheckInTimer) {
+      clearTimeout(context.holdCheckInTimer);
+    }
     // Reset TTS state
     context.ttsState = "idle";
+    // Reset hold state
+    context.isOnHold = false;
     // Close Deepgram if needed
     if (context.deepgramSocket) {
       try {

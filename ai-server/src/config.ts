@@ -94,6 +94,12 @@ const config = {
     callerUtteranceFlushMs: getEnvInt("CALLER_UTTERANCE_FLUSH_MS", 300),
     // Hangup delay after "Chow" - milliseconds to wait for TTS before hangup
     hangupDelayMs: getEnvInt("HANGUP_DELAY_MS", 2000),
+    // Hold check-in interval - milliseconds to wait before AI checks in while on hold
+    // Default: 30 seconds (30000ms). The AI will periodically say something like "Still here..." while waiting.
+    holdCheckInIntervalMs: getEnvInt("HOLD_CHECK_IN_INTERVAL_MS", 30000),
+    // Hold max check-ins - maximum number of times AI will check in before ending the call
+    // Default: 5 check-ins (2.5 minutes of hold time at 30s intervals). After this, AI ends call.
+    holdMaxCheckIns: getEnvInt("HOLD_MAX_CHECK_INS", 5),
   },
 
   // =============================================================================
