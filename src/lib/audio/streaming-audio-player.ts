@@ -127,6 +127,14 @@ export class StreamingAudioPlayer {
   private readonly SCHEDULE_AHEAD_MS = 1000; // Keep 1 second scheduled ahead
   private readonly MIN_BUFFER_MS = 200; // Minimum buffer to maintain
 
+  // Crossfade settings for smooth chunk transitions
+  // 10ms crossfade at 8kHz = 80 samples - prevents clicks/pops at boundaries
+  private readonly CROSSFADE_SAMPLES = 80;
+
+  // Store the tail of the last chunk for crossfading into the next chunk
+  private lastInboundTail: Float32Array | null = null;
+  private lastOutboundTail: Float32Array | null = null;
+
   // Stats
   private packetsReceived = 0;
 
@@ -287,7 +295,52 @@ export class StreamingAudioPlayer {
   }
 
   /**
-   * Schedule the next chunk of audio
+   * Apply crossfade from previous chunk's tail into current chunk's head
+   * This smooths transitions between chunks, especially during speaker changes
+   */
+  private applyCrossfade(
+    currentSamples: Float32Array,
+    previousTail: Float32Array | null
+  ): Float32Array {
+    // If no previous tail, just apply a gentle fade-in to the start
+    if (!previousTail || previousTail.length === 0) {
+      const fadeInSamples = Math.min(this.CROSSFADE_SAMPLES, currentSamples.length);
+      for (let i = 0; i < fadeInSamples; i++) {
+        const fadeIn = i / fadeInSamples;
+        currentSamples[i] *= fadeIn;
+      }
+      return currentSamples;
+    }
+
+    // We have a previous tail - crossfade it with the current chunk's head
+    const crossfadeLength = Math.min(
+      this.CROSSFADE_SAMPLES,
+      previousTail.length,
+      currentSamples.length
+    );
+
+    // Create a new buffer that includes the crossfaded region
+    // The crossfade blends the end of the previous chunk with the start of this chunk
+    for (let i = 0; i < crossfadeLength; i++) {
+      const fadeOut = 1 - (i / crossfadeLength); // Previous tail fades out
+      const fadeIn = i / crossfadeLength;         // Current chunk fades in
+      currentSamples[i] = (previousTail[i] * fadeOut) + (currentSamples[i] * fadeIn);
+    }
+
+    return currentSamples;
+  }
+
+  /**
+   * Extract the tail of a chunk for crossfading with the next chunk
+   */
+  private extractTail(samples: Float32Array): Float32Array {
+    const tailLength = Math.min(this.CROSSFADE_SAMPLES, samples.length);
+    const tailStart = samples.length - tailLength;
+    return samples.slice(tailStart);
+  }
+
+  /**
+   * Schedule the next chunk of audio with crossfading for smooth transitions
    */
   private scheduleNextChunk(): boolean {
     if (!this.audioContext || !this.gainNode) return false;
@@ -295,14 +348,38 @@ export class StreamingAudioPlayer {
     const chunkSamples = Math.floor((this.PLAYBACK_CHUNK_MS / 1000) * MULAW_SAMPLE_RATE);
 
     // Read from both buffers - read up to chunkSamples, may get less
-    const inboundSamples = this.inboundBuffer.readUpTo(chunkSamples);
-    const outboundSamples = this.outboundBuffer.readUpTo(chunkSamples);
+    let inboundSamples = this.inboundBuffer.readUpTo(chunkSamples);
+    let outboundSamples = this.outboundBuffer.readUpTo(chunkSamples);
 
     // Determine the chunk length (use the longer track)
     const actualLength = Math.max(inboundSamples.length, outboundSamples.length);
 
     // Need at least some data to play
     if (actualLength === 0) return false;
+
+    // Pad shorter track to match the longer one (fill with silence = 0)
+    // This ensures both tracks are synchronized
+    if (inboundSamples.length < actualLength) {
+      const padded = new Float32Array(actualLength);
+      padded.set(inboundSamples);
+      // Rest is already zeros (silence)
+      inboundSamples = padded;
+    }
+    if (outboundSamples.length < actualLength) {
+      const padded = new Float32Array(actualLength);
+      padded.set(outboundSamples);
+      // Rest is already zeros (silence)
+      outboundSamples = padded;
+    }
+
+    // Apply crossfading from previous chunk's tail to smooth transitions
+    // This prevents clicks/pops at chunk boundaries, especially during speaker changes
+    this.applyCrossfade(inboundSamples, this.lastInboundTail);
+    this.applyCrossfade(outboundSamples, this.lastOutboundTail);
+
+    // Store the tail of this chunk for crossfading into the next chunk
+    this.lastInboundTail = this.extractTail(inboundSamples);
+    this.lastOutboundTail = this.extractTail(outboundSamples);
 
     // Create a stereo AudioBuffer at native 8kHz sample rate
     // Browser handles resampling with high-quality algorithms
@@ -312,17 +389,13 @@ export class StreamingAudioPlayer {
       MULAW_SAMPLE_RATE
     );
 
-    // Fill left channel (inbound/caller) - zeros are silence by default
+    // Fill left channel (inbound/caller)
     const leftChannel = audioBuffer.getChannelData(0);
-    if (inboundSamples.length > 0) {
-      leftChannel.set(inboundSamples);
-    }
+    leftChannel.set(inboundSamples);
 
-    // Fill right channel (outbound/assistant) - zeros are silence by default
+    // Fill right channel (outbound/assistant)
     const rightChannel = audioBuffer.getChannelData(1);
-    if (outboundSamples.length > 0) {
-      rightChannel.set(outboundSamples);
-    }
+    rightChannel.set(outboundSamples);
 
     // Create source node
     const source = this.audioContext.createBufferSource();
@@ -373,6 +446,9 @@ export class StreamingAudioPlayer {
     this.outboundSamplesReceived = 0;
     this.nextPlayTime = 0;
     this.scheduledEndTime = 0;
+    // Clear crossfade tails for clean restart
+    this.lastInboundTail = null;
+    this.lastOutboundTail = null;
     this.setState('stopped');
     console.log('[StreamingPlayer] Stopped');
   }
