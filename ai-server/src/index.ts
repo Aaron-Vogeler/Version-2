@@ -1686,6 +1686,7 @@ wss.on("connection", async (ws) => {
           managedContext.userName = decoded.userName || null;
           managedContext.systemPrompt = decoded.systemPrompt || null;
           managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
+          managedContext.model = decoded.model || null;
           managedContext.holdCheckInIntervalMs = decoded.holdCheckInIntervalMs || null;
           managedContext.holdMaxCheckIns = decoded.holdMaxCheckIns || null;
           managedContext.initiatedAt = decoded.initiatedAt;

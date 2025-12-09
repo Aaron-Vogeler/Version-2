@@ -431,6 +431,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           rolling_summary_prompt: rollingSummaryPrompt,
           hold_check_in_interval_ms: callControlSettings.holdCheckInIntervalMs,
           hold_max_check_ins: callControlSettings.holdMaxCheckIns,
+          model: selectedModel,
         }),
       });
 

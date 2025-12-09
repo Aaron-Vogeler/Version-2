@@ -30,6 +30,7 @@ export interface CallContext {
   userName?: string;
   systemPrompt?: string; // Custom system prompt passed from frontend
   rollingSummaryPrompt?: string; // Custom rolling summary prompt template passed from frontend
+  model?: string; // Model to use for this call (overrides config default)
   initiatedAt?: string;
 
   // Rolling summary and turn tracking

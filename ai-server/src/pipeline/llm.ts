@@ -103,8 +103,10 @@ export async function generateRollingSummary(
     ];
 
     const startTime = Date.now();
+    // Use model from context if available, otherwise fall back to config
+    const modelToUse = context.model || config.groq.model;
     const response = await groq.chat.completions.create({
-      model: config.groq.model,
+      model: modelToUse,
       messages: summaryMessages,
       temperature: 0.2, // Lower temperature for consistency
       max_tokens: config_params.maxSummaryTokensHint,
@@ -117,7 +119,7 @@ export async function generateRollingSummary(
     insertLlmLog({
       call_id: callId,
       request_type: "summary",
-      model: config.groq.model,
+      model: modelToUse,
       temperature: 0.2,
       max_tokens: config_params.maxSummaryTokensHint,
       system_prompt: summarySystemContent,
@@ -217,8 +219,10 @@ export async function generateAssistantReply(
   }
 
   const startTime = Date.now();
+  // Use model from context if available, otherwise fall back to config
+  const modelToUse = (context?.callId && contextMgr.getContext(context.callId)?.model) || config.groq.model;
   const response = await groq.chat.completions.create({
-    model: config.groq.model,
+    model: modelToUse,
     messages,
   });
   const latencyMs = Date.now() - startTime;
@@ -230,7 +234,7 @@ export async function generateAssistantReply(
     insertLlmLog({
       call_id: context.callId,
       request_type: "chat",
-      model: config.groq.model,
+      model: modelToUse,
       system_prompt: systemPrompt,
       messages: messages,
       user_input: userText,
