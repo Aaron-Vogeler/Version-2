@@ -30,12 +30,25 @@ type ConnectionState = 'idle' | 'connecting' | 'listening' | 'error' | 'disconne
 // Audio element ID for SDK binding
 const REMOTE_AUDIO_ELEMENT_ID = 'telnyx-remote-audio';
 
+// WebRTC codec capability type (browser API, define locally for SSR compatibility)
+interface AudioCodecCapability {
+  mimeType: string;
+  clockRate?: number;
+  channels?: number;
+  sdpFmtpLine?: string;
+}
+
 /**
  * Get preferred audio codecs for high quality streaming
  * Prioritizes Opus (high quality, low latency) over legacy codecs
  */
-function getPreferredAudioCodecs(): RTCRtpCodecCapability[] {
+function getPreferredAudioCodecs(): AudioCodecCapability[] {
   try {
+    // RTCRtpReceiver is only available in browser
+    if (typeof window === 'undefined' || typeof RTCRtpReceiver === 'undefined') {
+      return [];
+    }
+
     const capabilities = RTCRtpReceiver.getCapabilities('audio');
     if (!capabilities?.codecs) return [];
 
