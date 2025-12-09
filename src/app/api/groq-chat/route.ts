@@ -23,6 +23,7 @@ const GROQ_MODELS = [
   { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', description: 'Latest large model' },
   { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'Mixture of experts model' },
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned' },
+  { id: 'gpt-oss-20b', name: 'GPT OSS 20B', description: 'GPT open-source 20B model' },
 ];
 
 // =============================================================================
