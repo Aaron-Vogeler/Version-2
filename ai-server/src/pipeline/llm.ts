@@ -128,6 +128,7 @@ export async function generateRollingSummary(
       cached_tokens: cachedTokens,
       cache_hit_rate: promptTokens > 0 ? ((cachedTokens / promptTokens) * 100).toFixed(1) + '%' : '0%',
       prompt_tokens_details: usage?.prompt_tokens_details,
+      full_usage_object: JSON.stringify(usage),
     });
 
     // Log the LLM interaction to database for live visibility
@@ -283,6 +284,7 @@ export async function generateAssistantReply(
       cached_tokens: chatCachedTokens,
       cache_hit_rate: chatPromptTokens > 0 ? ((chatCachedTokens / chatPromptTokens) * 100).toFixed(1) + '%' : '0%',
       prompt_tokens_details: chatUsage?.prompt_tokens_details,
+      full_usage_object: JSON.stringify(chatUsage),
     });
   }
 
