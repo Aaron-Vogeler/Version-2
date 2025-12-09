@@ -456,7 +456,7 @@ export async function insertLlmLog(
   try {
     // Map to call_llm_exchanges table columns
     // Note: response_text = assistant_response, duration_ms = latency_ms
-    const insertRecord = {
+    const insertRecord: Record<string, any> = {
       call_id: log.call_id,
       request_type: log.request_type || "chat",
       model: log.model,
@@ -471,10 +471,16 @@ export async function insertLlmLog(
       prompt_tokens: log.prompt_tokens,
       completion_tokens: log.completion_tokens,
       total_tokens: log.total_tokens,
-      cached_tokens: log.cached_tokens, // Groq prompt caching metric
       duration_ms: log.latency_ms, // Maps to existing column
       created_at: new Date().toISOString(),
     };
+
+    // Only include cached_tokens if > 0 (gracefully handles case where DB column doesn't exist yet)
+    // When cached_tokens is 0 (cache miss), omitting it from the insert prevents failures
+    // on databases that haven't run the migration yet
+    if (log.cached_tokens && log.cached_tokens > 0) {
+      insertRecord.cached_tokens = log.cached_tokens;
+    }
 
     const { error } = await supabase.from("call_llm_exchanges").insert(insertRecord);
 
