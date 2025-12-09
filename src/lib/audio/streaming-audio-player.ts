@@ -1,14 +1,14 @@
 /**
- * High-Quality Streaming Audio Player
- * ====================================
- * Mimics the recording playback approach by accumulating audio into
- * large continuous buffers before playback, minimizing chunk boundaries.
+ * AudioWorklet-based Streaming Audio Player
+ * ==========================================
+ * Uses AudioWorkletNode for glitch-free, continuous audio playback.
  *
- * Key design principles (matching recording quality):
- * 1. Accumulate audio into continuous buffers (like recording does)
- * 2. Play larger chunks (200ms+) to minimize boundary artifacts
- * 3. Sample-level track synchronization
- * 4. Native browser resampling from 8kHz
+ * Key improvements over the previous BufferSourceNode approach:
+ * 1. NO chunk boundaries - audio flows as a continuous stream
+ * 2. Sample-accurate timing on the audio rendering thread
+ * 3. Smooth resampling from 8kHz to system rate (44.1/48kHz)
+ * 4. Graceful underrun handling with fade to silence
+ * 5. Eliminates clicks/pops during speaker transitions
  */
 
 import { decodeMulawToFloat32, base64ToUint8Array, MULAW_SAMPLE_RATE } from './mulaw-decoder';
@@ -16,171 +16,128 @@ import { decodeMulawToFloat32, base64ToUint8Array, MULAW_SAMPLE_RATE } from './m
 export type PlayerState = 'stopped' | 'buffering' | 'playing';
 
 /**
- * Circular buffer for efficient continuous audio accumulation
+ * Message types for communication with AudioWorklet
  */
-class CircularAudioBuffer {
-  private buffer: Float32Array;
-  private writePos: number = 0;
-  private readPos: number = 0;
-  private availableSamples: number = 0;
-
-  constructor(maxSamples: number) {
-    this.buffer = new Float32Array(maxSamples);
-  }
-
-  /**
-   * Write samples to the buffer
-   */
-  write(samples: Float32Array): void {
-    for (let i = 0; i < samples.length; i++) {
-      this.buffer[this.writePos] = samples[i];
-      this.writePos = (this.writePos + 1) % this.buffer.length;
-
-      // If we're about to overwrite unread data, advance read position
-      if (this.availableSamples >= this.buffer.length) {
-        this.readPos = (this.readPos + 1) % this.buffer.length;
-      } else {
-        this.availableSamples++;
-      }
-    }
-  }
-
-  /**
-   * Read samples from the buffer
-   */
-  read(count: number): Float32Array | null {
-    if (this.availableSamples < count) {
-      return null;
-    }
-
-    const result = new Float32Array(count);
-    for (let i = 0; i < count; i++) {
-      result[i] = this.buffer[this.readPos];
-      this.readPos = (this.readPos + 1) % this.buffer.length;
-    }
-    this.availableSamples -= count;
-    return result;
-  }
-
-  /**
-   * Read up to count samples (may return less if not enough available)
-   */
-  readUpTo(count: number): Float32Array {
-    const toRead = Math.min(count, this.availableSamples);
-    if (toRead === 0) {
-      return new Float32Array(0);
-    }
-
-    const result = new Float32Array(toRead);
-    for (let i = 0; i < toRead; i++) {
-      result[i] = this.buffer[this.readPos];
-      this.readPos = (this.readPos + 1) % this.buffer.length;
-    }
-    this.availableSamples -= toRead;
-    return result;
-  }
-
-  /**
-   * Get number of available samples
-   */
-  available(): number {
-    return this.availableSamples;
-  }
-
-  /**
-   * Clear the buffer
-   */
-  clear(): void {
-    this.writePos = 0;
-    this.readPos = 0;
-    this.availableSamples = 0;
-  }
+interface WorkletAudioMessage {
+  type: 'audio';
+  track: 'inbound' | 'outbound' | 'left' | 'right';
+  samples: Float32Array;
 }
 
+interface WorkletControlMessage {
+  type: 'clear' | 'stats';
+}
+
+type WorkletMessage = WorkletAudioMessage | WorkletControlMessage;
+
 /**
- * High-quality streaming audio player using continuous buffer accumulation
+ * High-quality streaming audio player using AudioWorklet
  */
 export class StreamingAudioPlayer {
   private audioContext: AudioContext | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   private gainNode: GainNode | null = null;
   private state: PlayerState = 'stopped';
   private onStateChange?: (state: PlayerState) => void;
-
-  // Continuous circular buffers for each track (5 seconds max)
-  private readonly MAX_BUFFER_SAMPLES = MULAW_SAMPLE_RATE * 5;
-  private inboundBuffer: CircularAudioBuffer;
-  private outboundBuffer: CircularAudioBuffer;
-
-  // Track total samples received for synchronization
-  private inboundSamplesReceived: number = 0;
-  private outboundSamplesReceived: number = 0;
-
-  // Scheduling state
-  private nextPlayTime: number = 0;
-  private scheduledEndTime: number = 0;
-  private scheduleTimer: number | null = null;
-
-  // Playback settings - larger chunks = fewer boundaries = smoother audio
-  // Recording plays as one continuous stream, so we use very large chunks
-  private readonly JITTER_BUFFER_MS = 300; // Buffer 300ms before starting
-  private readonly PLAYBACK_CHUNK_MS = 500; // Play 500ms chunks (25x larger than before!)
-  private readonly SCHEDULE_AHEAD_MS = 1000; // Keep 1 second scheduled ahead
-  private readonly MIN_BUFFER_MS = 200; // Minimum buffer to maintain
+  private workletReady: boolean = false;
 
   // Stats
   private packetsReceived = 0;
+  private lastBufferStatus: { leftMs: number; rightMs: number } = { leftMs: 0, rightMs: 0 };
+
+  // Fallback flag - use old method if worklet fails to load
+  private useFallback: boolean = false;
+  private fallbackPlayer: FallbackAudioPlayer | null = null;
 
   constructor(onStateChange?: (state: PlayerState) => void) {
     this.onStateChange = onStateChange;
-    this.inboundBuffer = new CircularAudioBuffer(this.MAX_BUFFER_SAMPLES);
-    this.outboundBuffer = new CircularAudioBuffer(this.MAX_BUFFER_SAMPLES);
   }
 
   /**
-   * Initialize the audio context (must be called after user gesture)
+   * Initialize the audio context and worklet (must be called after user gesture)
    */
   async initialize(): Promise<void> {
     if (this.audioContext) return;
 
-    this.audioContext = new AudioContext();
+    try {
+      this.audioContext = new AudioContext();
 
-    // Create gain node for volume control
-    this.gainNode = this.audioContext.createGain();
-    this.gainNode.gain.value = 1.0;
-    this.gainNode.connect(this.audioContext.destination);
+      // Create gain node for volume control
+      this.gainNode = this.audioContext.createGain();
+      this.gainNode.gain.value = 1.0;
+      this.gainNode.connect(this.audioContext.destination);
 
-    // Resume context if suspended (browser autoplay policy)
-    if (this.audioContext.state === 'suspended') {
-      await this.audioContext.resume();
+      // Resume context if suspended (browser autoplay policy)
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+
+      // Load the AudioWorklet module
+      try {
+        await this.audioContext.audioWorklet.addModule('/audio-stream-processor.js');
+
+        // Create the worklet node
+        this.workletNode = new AudioWorkletNode(this.audioContext, 'audio-stream-processor', {
+          numberOfInputs: 0,
+          numberOfOutputs: 1,
+          outputChannelCount: [2], // Stereo output
+        });
+
+        // Connect worklet to gain node
+        this.workletNode.connect(this.gainNode);
+
+        // Handle messages from worklet
+        this.workletNode.port.onmessage = (event) => {
+          this.handleWorkletMessage(event.data);
+        };
+
+        console.log('[StreamingPlayer] AudioWorklet initialized, output sample rate:', this.audioContext.sampleRate);
+        this.setState('buffering');
+
+      } catch (workletError) {
+        console.warn('[StreamingPlayer] AudioWorklet failed to load, using fallback:', workletError);
+        this.useFallback = true;
+        this.fallbackPlayer = new FallbackAudioPlayer(this.audioContext, this.gainNode, (state) => {
+          this.setState(state);
+        });
+        this.setState('buffering');
+      }
+
+    } catch (error) {
+      console.error('[StreamingPlayer] Failed to initialize:', error);
+      throw error;
     }
-
-    console.log('[StreamingPlayer] Initialized, output sample rate:', this.audioContext.sampleRate);
-    this.setState('buffering');
-
-    // Start the scheduling loop
-    this.startScheduleLoop();
   }
 
   /**
-   * Start the scheduling loop (runs every 50ms)
+   * Handle messages from the AudioWorklet
    */
-  private startScheduleLoop(): void {
-    if (this.scheduleTimer !== null) return;
+  private handleWorkletMessage(data: any): void {
+    switch (data.type) {
+      case 'ready':
+        console.log('[StreamingPlayer] Worklet ready, system sample rate:', data.sampleRate);
+        this.workletReady = true;
+        break;
 
-    const scheduleLoop = () => {
-      this.scheduleAudio();
-      this.scheduleTimer = window.setTimeout(scheduleLoop, 50);
-    };
-    scheduleLoop();
-  }
+      case 'state':
+        if (data.state === 'playing') {
+          this.setState('playing');
+        } else if (data.state === 'buffering') {
+          this.setState('buffering');
+        }
+        break;
 
-  /**
-   * Stop the scheduling loop
-   */
-  private stopScheduleLoop(): void {
-    if (this.scheduleTimer !== null) {
-      clearTimeout(this.scheduleTimer);
-      this.scheduleTimer = null;
+      case 'buffer_status':
+        this.lastBufferStatus = { leftMs: data.leftMs, rightMs: data.rightMs };
+        // Log occasionally
+        if (this.packetsReceived % 500 === 0) {
+          console.log(`[StreamingPlayer] Buffer: L=${data.leftMs.toFixed(0)}ms R=${data.rightMs.toFixed(0)}ms, playing=${data.isPlaying}`);
+        }
+        break;
+
+      case 'stats':
+        console.log('[StreamingPlayer] Stats:', data);
+        break;
     }
   }
 
@@ -193,22 +150,28 @@ export class StreamingAudioPlayer {
     this.packetsReceived++;
 
     try {
+      // Decode μ-law to Float32
       const mulawData = base64ToUint8Array(mulawBase64);
       const pcmData = decodeMulawToFloat32(mulawData);
 
-      // Add to appropriate track buffer
-      if (track === 'inbound') {
-        this.inboundBuffer.write(pcmData);
-        this.inboundSamplesReceived += pcmData.length;
-      } else {
-        this.outboundBuffer.write(pcmData);
-        this.outboundSamplesReceived += pcmData.length;
+      if (this.useFallback && this.fallbackPlayer) {
+        // Use fallback player
+        this.fallbackPlayer.addAudio(track, pcmData);
+      } else if (this.workletNode && this.workletReady) {
+        // Send to AudioWorklet
+        const message: WorkletAudioMessage = {
+          type: 'audio',
+          track: track,
+          samples: pcmData,
+        };
+
+        // Transfer the Float32Array for efficiency (zero-copy)
+        this.workletNode.port.postMessage(message, [pcmData.buffer]);
       }
 
-      // Log occasionally
-      if (this.packetsReceived <= 3 || this.packetsReceived % 500 === 0) {
-        const bufferedMs = this.getBufferedMs();
-        console.log(`[StreamingPlayer] Packet #${this.packetsReceived}, track=${track}, buffered=${bufferedMs.toFixed(0)}ms`);
+      // Log first few packets
+      if (this.packetsReceived <= 3) {
+        console.log(`[StreamingPlayer] Packet #${this.packetsReceived}, track=${track}, samples=${pcmData.length}`);
       }
     } catch (error) {
       console.error('[StreamingPlayer] Error processing audio:', error);
@@ -216,135 +179,10 @@ export class StreamingAudioPlayer {
   }
 
   /**
-   * Get currently buffered audio in milliseconds
-   * Uses the maximum of both tracks since we can play silence on the other
+   * Get current buffer levels in milliseconds
    */
-  private getBufferedMs(): number {
-    const maxSamples = Math.max(
-      this.inboundBuffer.available(),
-      this.outboundBuffer.available()
-    );
-    return (maxSamples / MULAW_SAMPLE_RATE) * 1000;
-  }
-
-  /**
-   * Get the synchronized buffer amount (minimum of both tracks)
-   */
-  private getSyncedBufferedMs(): number {
-    const minSamples = Math.min(
-      this.inboundBuffer.available(),
-      this.outboundBuffer.available()
-    );
-    return (minSamples / MULAW_SAMPLE_RATE) * 1000;
-  }
-
-  /**
-   * Schedule buffered audio for playback
-   */
-  private scheduleAudio(): void {
-    if (!this.audioContext || !this.gainNode) return;
-
-    const currentTime = this.audioContext.currentTime;
-
-    // If we're not playing yet, wait for jitter buffer to fill
-    if (this.state === 'buffering') {
-      const bufferedMs = this.getBufferedMs();
-      if (bufferedMs >= this.JITTER_BUFFER_MS) {
-        console.log(`[StreamingPlayer] Jitter buffer full (${bufferedMs.toFixed(0)}ms), starting playback`);
-        this.setState('playing');
-        // Start playback slightly in the future
-        this.nextPlayTime = currentTime + 0.1;
-        this.scheduledEndTime = this.nextPlayTime;
-      } else {
-        return;
-      }
-    }
-
-    // Schedule more audio chunks while we need more scheduled ahead and have buffered data
-    let scheduledCount = 0;
-    const maxSchedulePerLoop = 5; // Prevent infinite loops
-
-    while (scheduledCount < maxSchedulePerLoop) {
-      const scheduledAheadMs = Math.max(0, (this.scheduledEndTime - currentTime) * 1000);
-      const bufferedMs = this.getBufferedMs();
-
-      // Stop if we have enough scheduled ahead or not enough buffered
-      if (scheduledAheadMs >= this.SCHEDULE_AHEAD_MS || bufferedMs < this.PLAYBACK_CHUNK_MS) {
-        break;
-      }
-
-      const scheduled = this.scheduleNextChunk();
-      if (!scheduled) break;
-      scheduledCount++;
-    }
-
-    // Check if we're running low on buffer and nothing scheduled
-    const finalBufferedMs = this.getBufferedMs();
-    if (this.state === 'playing' && finalBufferedMs < this.MIN_BUFFER_MS && this.scheduledEndTime <= currentTime) {
-      console.log('[StreamingPlayer] Buffer underrun, rebuffering...');
-      this.setState('buffering');
-    }
-  }
-
-  /**
-   * Schedule the next chunk of audio
-   */
-  private scheduleNextChunk(): boolean {
-    if (!this.audioContext || !this.gainNode) return false;
-
-    const chunkSamples = Math.floor((this.PLAYBACK_CHUNK_MS / 1000) * MULAW_SAMPLE_RATE);
-
-    // Read from both buffers - read up to chunkSamples, may get less
-    const inboundSamples = this.inboundBuffer.readUpTo(chunkSamples);
-    const outboundSamples = this.outboundBuffer.readUpTo(chunkSamples);
-
-    // Determine the chunk length (use the longer track)
-    const actualLength = Math.max(inboundSamples.length, outboundSamples.length);
-
-    // Need at least some data to play
-    if (actualLength === 0) return false;
-
-    // Create a stereo AudioBuffer at native 8kHz sample rate
-    // Browser handles resampling with high-quality algorithms
-    const audioBuffer = this.audioContext.createBuffer(
-      2, // stereo
-      actualLength,
-      MULAW_SAMPLE_RATE
-    );
-
-    // Fill left channel (inbound/caller) - zeros are silence by default
-    const leftChannel = audioBuffer.getChannelData(0);
-    if (inboundSamples.length > 0) {
-      leftChannel.set(inboundSamples);
-    }
-
-    // Fill right channel (outbound/assistant) - zeros are silence by default
-    const rightChannel = audioBuffer.getChannelData(1);
-    if (outboundSamples.length > 0) {
-      rightChannel.set(outboundSamples);
-    }
-
-    // Create source node
-    const source = this.audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.gainNode);
-
-    // Ensure we don't schedule in the past
-    const currentTime = this.audioContext.currentTime;
-    if (this.nextPlayTime < currentTime) {
-      // We've fallen behind, jump ahead with small buffer
-      this.nextPlayTime = currentTime + 0.02;
-    }
-
-    // Schedule playback at precise time
-    source.start(this.nextPlayTime);
-
-    // Update timing for next chunk
-    const chunkDuration = actualLength / MULAW_SAMPLE_RATE;
-    this.nextPlayTime += chunkDuration;
-    this.scheduledEndTime = this.nextPlayTime;
-
-    return true;
+  getBufferStatus(): { leftMs: number; rightMs: number } {
+    return this.lastBufferStatus;
   }
 
   /**
@@ -367,12 +205,14 @@ export class StreamingAudioPlayer {
    * Stop playback and clear buffers
    */
   stop(): void {
-    this.inboundBuffer.clear();
-    this.outboundBuffer.clear();
-    this.inboundSamplesReceived = 0;
-    this.outboundSamplesReceived = 0;
-    this.nextPlayTime = 0;
-    this.scheduledEndTime = 0;
+    if (this.workletNode) {
+      this.workletNode.port.postMessage({ type: 'clear' });
+    }
+    if (this.fallbackPlayer) {
+      this.fallbackPlayer.stop();
+    }
+    this.packetsReceived = 0;
+    this.lastBufferStatus = { leftMs: 0, rightMs: 0 };
     this.setState('stopped');
     console.log('[StreamingPlayer] Stopped');
   }
@@ -381,8 +221,16 @@ export class StreamingAudioPlayer {
    * Clean up resources
    */
   dispose(): void {
-    this.stopScheduleLoop();
     this.stop();
+
+    if (this.workletNode) {
+      this.workletNode.disconnect();
+      this.workletNode = null;
+    }
+    if (this.fallbackPlayer) {
+      this.fallbackPlayer.dispose();
+      this.fallbackPlayer = null;
+    }
     if (this.gainNode) {
       this.gainNode.disconnect();
       this.gainNode = null;
@@ -391,6 +239,8 @@ export class StreamingAudioPlayer {
       this.audioContext.close();
       this.audioContext = null;
     }
+
+    this.workletReady = false;
     console.log('[StreamingPlayer] Disposed');
   }
 
@@ -413,5 +263,257 @@ export class StreamingAudioPlayer {
       this.state = newState;
       this.onStateChange?.(newState);
     }
+  }
+
+  /**
+   * Request stats from worklet (for debugging)
+   */
+  requestStats(): void {
+    if (this.workletNode && this.workletReady) {
+      this.workletNode.port.postMessage({ type: 'stats' });
+    }
+  }
+}
+
+
+/**
+ * Fallback Audio Player
+ * =====================
+ * Uses the older scheduled BufferSourceNode approach as a fallback
+ * when AudioWorklet is not available (e.g., older browsers, security restrictions).
+ *
+ * This includes crossfade logic to minimize boundary artifacts.
+ */
+class FallbackAudioPlayer {
+  private audioContext: AudioContext;
+  private gainNode: GainNode;
+  private onStateChange: (state: PlayerState) => void;
+
+  // Circular buffers for accumulating audio
+  private inboundBuffer: Float32Array;
+  private outboundBuffer: Float32Array;
+  private inboundWritePos = 0;
+  private outboundWritePos = 0;
+  private inboundAvailable = 0;
+  private outboundAvailable = 0;
+
+  // Scheduling
+  private nextPlayTime = 0;
+  private scheduledEndTime = 0;
+  private scheduleTimer: number | null = null;
+  private state: PlayerState = 'buffering';
+
+  // Settings
+  private readonly MAX_BUFFER_SAMPLES = MULAW_SAMPLE_RATE * 5;
+  private readonly JITTER_BUFFER_MS = 300;
+  private readonly PLAYBACK_CHUNK_MS = 500;
+  private readonly SCHEDULE_AHEAD_MS = 1000;
+  private readonly CROSSFADE_SAMPLES = 64; // ~8ms at 8kHz
+
+  // For crossfade
+  private lastChunkEndLeft: Float32Array | null = null;
+  private lastChunkEndRight: Float32Array | null = null;
+
+  constructor(audioContext: AudioContext, gainNode: GainNode, onStateChange: (state: PlayerState) => void) {
+    this.audioContext = audioContext;
+    this.gainNode = gainNode;
+    this.onStateChange = onStateChange;
+
+    this.inboundBuffer = new Float32Array(this.MAX_BUFFER_SAMPLES);
+    this.outboundBuffer = new Float32Array(this.MAX_BUFFER_SAMPLES);
+
+    this.startScheduleLoop();
+  }
+
+  addAudio(track: 'inbound' | 'outbound', samples: Float32Array): void {
+    if (track === 'inbound') {
+      for (let i = 0; i < samples.length; i++) {
+        this.inboundBuffer[this.inboundWritePos] = samples[i];
+        this.inboundWritePos = (this.inboundWritePos + 1) % this.MAX_BUFFER_SAMPLES;
+        if (this.inboundAvailable < this.MAX_BUFFER_SAMPLES) {
+          this.inboundAvailable++;
+        }
+      }
+    } else {
+      for (let i = 0; i < samples.length; i++) {
+        this.outboundBuffer[this.outboundWritePos] = samples[i];
+        this.outboundWritePos = (this.outboundWritePos + 1) % this.MAX_BUFFER_SAMPLES;
+        if (this.outboundAvailable < this.MAX_BUFFER_SAMPLES) {
+          this.outboundAvailable++;
+        }
+      }
+    }
+  }
+
+  private startScheduleLoop(): void {
+    const loop = () => {
+      this.scheduleAudio();
+      this.scheduleTimer = window.setTimeout(loop, 50);
+    };
+    loop();
+  }
+
+  private getBufferedMs(): number {
+    return (Math.max(this.inboundAvailable, this.outboundAvailable) / MULAW_SAMPLE_RATE) * 1000;
+  }
+
+  private scheduleAudio(): void {
+    const currentTime = this.audioContext.currentTime;
+
+    if (this.state === 'buffering') {
+      if (this.getBufferedMs() >= this.JITTER_BUFFER_MS) {
+        this.state = 'playing';
+        this.onStateChange('playing');
+        this.nextPlayTime = currentTime + 0.1;
+        this.scheduledEndTime = this.nextPlayTime;
+      } else {
+        return;
+      }
+    }
+
+    let scheduledCount = 0;
+    while (scheduledCount < 5) {
+      const scheduledAheadMs = Math.max(0, (this.scheduledEndTime - currentTime) * 1000);
+      if (scheduledAheadMs >= this.SCHEDULE_AHEAD_MS || this.getBufferedMs() < this.PLAYBACK_CHUNK_MS) {
+        break;
+      }
+      if (!this.scheduleNextChunk()) break;
+      scheduledCount++;
+    }
+
+    if (this.state === 'playing' && this.getBufferedMs() < 100 && this.scheduledEndTime <= currentTime) {
+      this.state = 'buffering';
+      this.onStateChange('buffering');
+    }
+  }
+
+  private scheduleNextChunk(): boolean {
+    const chunkSamples = Math.floor((this.PLAYBACK_CHUNK_MS / 1000) * MULAW_SAMPLE_RATE);
+
+    // Read from buffers
+    const leftSamples = this.readFromBuffer('inbound', chunkSamples);
+    const rightSamples = this.readFromBuffer('outbound', chunkSamples);
+
+    const actualLength = Math.max(leftSamples.length, rightSamples.length);
+    if (actualLength === 0) return false;
+
+    // Apply crossfade with previous chunk
+    if (this.lastChunkEndLeft && leftSamples.length > 0) {
+      this.applyCrossfade(this.lastChunkEndLeft, leftSamples);
+    }
+    if (this.lastChunkEndRight && rightSamples.length > 0) {
+      this.applyCrossfade(this.lastChunkEndRight, rightSamples);
+    }
+
+    // Store end of this chunk for next crossfade
+    if (leftSamples.length >= this.CROSSFADE_SAMPLES) {
+      this.lastChunkEndLeft = leftSamples.slice(-this.CROSSFADE_SAMPLES);
+    }
+    if (rightSamples.length >= this.CROSSFADE_SAMPLES) {
+      this.lastChunkEndRight = rightSamples.slice(-this.CROSSFADE_SAMPLES);
+    }
+
+    // Apply fade envelope to prevent clicks
+    this.applyFadeEnvelope(leftSamples);
+    this.applyFadeEnvelope(rightSamples);
+
+    // Create stereo AudioBuffer
+    const audioBuffer = this.audioContext.createBuffer(2, actualLength, MULAW_SAMPLE_RATE);
+
+    const leftChannel = audioBuffer.getChannelData(0);
+    if (leftSamples.length > 0) {
+      leftChannel.set(leftSamples);
+    }
+
+    const rightChannel = audioBuffer.getChannelData(1);
+    if (rightSamples.length > 0) {
+      rightChannel.set(rightSamples);
+    }
+
+    // Create and schedule source
+    const source = this.audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.gainNode);
+
+    const currentTime = this.audioContext.currentTime;
+    if (this.nextPlayTime < currentTime) {
+      this.nextPlayTime = currentTime + 0.02;
+    }
+
+    source.start(this.nextPlayTime);
+
+    const chunkDuration = actualLength / MULAW_SAMPLE_RATE;
+    this.nextPlayTime += chunkDuration;
+    this.scheduledEndTime = this.nextPlayTime;
+
+    return true;
+  }
+
+  private readFromBuffer(track: 'inbound' | 'outbound', count: number): Float32Array {
+    const buffer = track === 'inbound' ? this.inboundBuffer : this.outboundBuffer;
+    const available = track === 'inbound' ? this.inboundAvailable : this.outboundAvailable;
+    const writePos = track === 'inbound' ? this.inboundWritePos : this.outboundWritePos;
+
+    const toRead = Math.min(count, available);
+    if (toRead === 0) return new Float32Array(0);
+
+    const result = new Float32Array(toRead);
+    let readPos = (writePos - available + this.MAX_BUFFER_SAMPLES) % this.MAX_BUFFER_SAMPLES;
+
+    for (let i = 0; i < toRead; i++) {
+      result[i] = buffer[readPos];
+      readPos = (readPos + 1) % this.MAX_BUFFER_SAMPLES;
+    }
+
+    if (track === 'inbound') {
+      this.inboundAvailable -= toRead;
+    } else {
+      this.outboundAvailable -= toRead;
+    }
+
+    return result;
+  }
+
+  private applyCrossfade(prevEnd: Float32Array, current: Float32Array): void {
+    const fadeLength = Math.min(this.CROSSFADE_SAMPLES, prevEnd.length, current.length);
+    for (let i = 0; i < fadeLength; i++) {
+      const fadeOut = 1 - (i / fadeLength);
+      const fadeIn = i / fadeLength;
+      current[i] = prevEnd[i] * fadeOut + current[i] * fadeIn;
+    }
+  }
+
+  private applyFadeEnvelope(samples: Float32Array): void {
+    const fadeLength = Math.min(32, samples.length / 4); // ~4ms fade
+
+    // Fade in
+    for (let i = 0; i < fadeLength; i++) {
+      samples[i] *= i / fadeLength;
+    }
+
+    // Fade out
+    for (let i = 0; i < fadeLength; i++) {
+      samples[samples.length - 1 - i] *= i / fadeLength;
+    }
+  }
+
+  stop(): void {
+    this.inboundAvailable = 0;
+    this.outboundAvailable = 0;
+    this.inboundWritePos = 0;
+    this.outboundWritePos = 0;
+    this.nextPlayTime = 0;
+    this.scheduledEndTime = 0;
+    this.lastChunkEndLeft = null;
+    this.lastChunkEndRight = null;
+    this.state = 'buffering';
+  }
+
+  dispose(): void {
+    if (this.scheduleTimer !== null) {
+      clearTimeout(this.scheduleTimer);
+      this.scheduleTimer = null;
+    }
+    this.stop();
   }
 }
