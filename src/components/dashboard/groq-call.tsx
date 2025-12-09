@@ -1888,7 +1888,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         <div className="mt-6">
           <ListenInBrowser
             callId={activeCall.id}
-            isCallOngoing={isCallActive}
+            isCallOngoing={!!isCallActive}
           />
         </div>
       )}
