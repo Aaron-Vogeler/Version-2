@@ -88,9 +88,10 @@ const SILENCE_THRESHOLD = 1200;
 const HYSTERESIS_PACKETS = 3;
 
 // Discontinuity threshold - if sample jumps by more than this, smooth it
-// Speech naturally has large sample-to-sample variations (500-3000 is normal)
-// Only catch truly extreme discontinuities that indicate packet boundary issues
-const DISCONTINUITY_THRESHOLD = 4000;
+// μ-law decoded speech can have sample jumps of 10,000-15,000+ normally
+// Only catch near-full-scale discontinuities (e.g., packet loss, encoder glitches)
+// Full scale is ~64,000 peak-to-peak, so 25,000 is ~40% of full scale
+const DISCONTINUITY_THRESHOLD = 25000;
 
 // Fade duration in samples (at 8kHz)
 // 8 samples = 1ms, 16 samples = 2ms, 32 samples = 4ms
