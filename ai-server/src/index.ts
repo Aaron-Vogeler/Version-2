@@ -1109,6 +1109,59 @@ app.post("/webhooks/telnyx", async (req, res) => {
 
   console.log(`📞 Telnyx webhook event: ${eventType} (callControlId: ${callControlId || 'N/A'})`);
 
+  // Check if this is a listener call (from Listen in Browser feature)
+  const isListenerCall = clientStateData.isListener === true;
+  const targetCallId = clientStateData.target_call_id;
+
+  // Handle listener call - answer and bridge to target call
+  if (isListenerCall && eventType === "call.initiated" && callControlId && targetCallId) {
+    console.log(`🎧 Listener call detected! Target: ${targetCallId}`);
+
+    try {
+      // Answer the listener call
+      console.log(`🎧 Answering listener call: ${callControlId}`);
+      await axios.post(
+        `https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${config.telnyx.apiKey}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      console.log(`✅ Listener call answered: ${callControlId}`);
+
+      // Bridge the listener to the target call
+      // Using "parkAfterUnbridge: true" so listener doesn't affect target call when they disconnect
+      console.log(`🔗 Bridging listener to target call: ${targetCallId}`);
+      await axios.post(
+        `https://api.telnyx.com/v2/calls/${callControlId}/actions/bridge`,
+        {
+          call_control_id: targetCallId,
+          // Listener in "whisper" mode - can hear but not be heard by the callee
+          // Actually, for monitoring we want to hear both sides
+          park_after_unbridge: "self", // Park listener after target hangs up
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${config.telnyx.apiKey}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      console.log(`✅ Listener bridged to target call: ${targetCallId}`);
+    } catch (error) {
+      console.error(`❌ Failed to handle listener call:`, error instanceof Error ? error.message : error);
+      if (axios.isAxiosError(error) && error.response) {
+        console.error(`📋 Telnyx API Error:`, error.response.data);
+      }
+    }
+
+    // Don't process listener calls further - return early
+    return res.status(200).json({ status: "listener_handled" });
+  }
+
   // Handle call.initiated - create call record if it doesn't exist
   if (eventType === "call.initiated" || eventType === "call.ringing") {
     if (callControlId && isSupabaseConfigured() && userId) {
