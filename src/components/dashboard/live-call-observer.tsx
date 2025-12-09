@@ -187,14 +187,12 @@ export function LiveCallObserver({
       };
 
       ws.onmessage = (event) => {
-        console.log('[Observer DEBUG] WebSocket onmessage fired, data length:', event.data?.length);
         try {
           const msg = JSON.parse(event.data);
-          console.log('[Observer DEBUG] Parsed message event:', msg.event);
 
           switch (msg.event) {
             case 'connected':
-              console.log('[Observer DEBUG] Received connection info:', msg);
+              console.log('[Observer] Connected to call:', msg);
               setCallInfo({
                 goal: msg.goal,
                 assistantName: msg.assistantName,
@@ -202,14 +200,16 @@ export function LiveCallObserver({
               break;
 
             case 'audio':
-              // Add audio to player (don't log every packet - too noisy)
-              if (audioPlayerRef.current && isListening) {
-                audioPlayerRef.current.addAudio(msg.track, msg.payload);
+              // Log first few audio packets for debugging
+              if (!audioPlayerRef.current) {
+                console.error('[Observer] No audio player!');
+                return;
               }
+              audioPlayerRef.current.addAudio(msg.track, msg.payload);
               break;
 
             case 'transcript':
-              console.log('[Observer DEBUG] Transcript received:', msg.speaker, msg.text?.substring(0, 50));
+              console.log('[Observer] Transcript:', msg.speaker, msg.text?.substring(0, 50));
               // Add transcript entry
               setTranscripts((prev) => {
                 const newEntry: TranscriptEntry = {
@@ -232,22 +232,20 @@ export function LiveCallObserver({
               break;
 
             case 'call_state':
-              console.log('[Observer DEBUG] Call state changed:', msg.state, msg.details);
+              console.log('[Observer] Call state:', msg.state);
               if (msg.state === 'ended') {
                 disconnect();
               }
               break;
 
             case 'pong':
-              console.log('[Observer DEBUG] Pong received');
               break;
 
             default:
-              console.log('[Observer DEBUG] Unknown event:', msg.event, msg);
+              console.log('[Observer] Unknown event:', msg.event);
           }
         } catch (error) {
-          console.error('[Observer DEBUG] Error parsing message:', error);
-          console.error('[Observer DEBUG] Raw message:', event.data?.substring?.(0, 200));
+          console.error('[Observer] Error parsing message:', error);
         }
       };
 

@@ -154,6 +154,7 @@ export class MulawAudioPlayer {
   private readonly minBufferMs = 60; // Buffer 60ms before starting playback
   private onStateChange?: (state: 'playing' | 'stopped' | 'buffering') => void;
   private gainNode: GainNode | null = null;
+  private audioPacketCount = 0;
 
   constructor(onStateChange?: (state: 'playing' | 'stopped' | 'buffering') => void) {
     this.onStateChange = onStateChange;
@@ -173,12 +174,20 @@ export class MulawAudioPlayer {
     this.gainNode.connect(this.audioContext.destination);
 
     console.log('[MulawPlayer] Audio context initialized, sample rate:', MULAW_SAMPLE_RATE);
+    console.log('[MulawPlayer] AudioContext state:', this.audioContext.state);
   }
 
   /**
    * Add audio chunk - both tracks go to the same buffer (mixed output)
    */
   addAudio(track: 'inbound' | 'outbound', mulawBase64: string): void {
+    this.audioPacketCount++;
+
+    // Log first few packets and then every 100
+    if (this.audioPacketCount <= 5 || this.audioPacketCount % 100 === 0) {
+      console.log(`[MulawPlayer] Audio packet #${this.audioPacketCount}, track: ${track}, base64 length: ${mulawBase64?.length}`);
+    }
+
     try {
       const mulawData = base64ToUint8Array(mulawBase64);
       const pcmData = decodeMulawToFloat32(mulawData);
@@ -188,6 +197,7 @@ export class MulawAudioPlayer {
 
       // Start playback if we have enough buffer
       if (!this.isPlaying && this.getBufferedMs() >= this.minBufferMs) {
+        console.log(`[MulawPlayer] Buffer ready (${this.getBufferedMs()}ms), starting playback`);
         this.startPlayback();
       }
     } catch (error) {
