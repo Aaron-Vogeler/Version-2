@@ -119,10 +119,15 @@ export async function generateRollingSummary(
     console.log(`[${callId}] Groq summary usage response:`, JSON.stringify(response.usage, null, 2));
 
     // Extract prompt caching metrics from Groq response (if available)
-    // Groq returns cached_tokens in usage.prompt_tokens_details.cached_tokens
-    const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+    // Groq Responses API uses: input_tokens_details.cached_tokens
+    // OpenAI Chat Completions uses: prompt_tokens_details.cached_tokens
+    const summaryUsage = response.usage as any;
+    const cachedTokens =
+      summaryUsage?.input_tokens_details?.cached_tokens ??   // Groq Responses API format
+      summaryUsage?.prompt_tokens_details?.cached_tokens ??  // OpenAI format
+      0;
 
-    console.log(`[${callId}] Extracted summary cachedTokens: ${cachedTokens}`);
+    console.log(`[${callId}] Extracted summary cachedTokens: ${cachedTokens} (input_details: ${JSON.stringify(summaryUsage?.input_tokens_details)}, prompt_details: ${JSON.stringify(summaryUsage?.prompt_tokens_details)})`);
 
     // Log the LLM interaction to database for live visibility
     insertLlmLog({
@@ -271,10 +276,16 @@ export async function generateAssistantReply(
   console.log(`[${context?.callId || 'no-call'}] Groq usage response:`, JSON.stringify(response.usage, null, 2));
 
   // Extract prompt caching metrics from Groq response (if available)
-  // Groq returns cached_tokens in usage.prompt_tokens_details.cached_tokens
-  const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+  // Groq Responses API uses: input_tokens_details.cached_tokens
+  // OpenAI Chat Completions uses: prompt_tokens_details.cached_tokens
+  // Check both locations for compatibility
+  const usage = response.usage as any;
+  const cachedTokens =
+    usage?.input_tokens_details?.cached_tokens ??   // Groq Responses API format
+    usage?.prompt_tokens_details?.cached_tokens ??  // OpenAI format
+    0;
 
-  console.log(`[${context?.callId || 'no-call'}] Extracted cachedTokens: ${cachedTokens}`);
+  console.log(`[${context?.callId || 'no-call'}] Extracted cachedTokens: ${cachedTokens} (input_details: ${JSON.stringify(usage?.input_tokens_details)}, prompt_details: ${JSON.stringify(usage?.prompt_tokens_details)})`);
 
   // Log the LLM interaction to database for live visibility
   if (context?.callId) {
