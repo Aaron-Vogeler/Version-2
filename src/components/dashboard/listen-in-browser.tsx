@@ -362,9 +362,11 @@ export function ListenInBrowser({ callId, isCallOngoing }: ListenInBrowserProps)
 
       // Create client state with target_call_id for the Cloudflare Worker
       // CRITICAL: This exact format is required by the backend to route the call
+      // NOTE: Don't include user_id - it would cause Supabase UUID validation error
+      // The backend skips logging when userId is not present (see index.ts line ~1114)
       const clientState = {
         target_call_id: callId,
-        user_id: 'admin_listener', // Helps backend identify us
+        isListener: true, // Mark as listener call for backend identification
       };
 
       addDebug(`📋 Client state object: ${JSON.stringify(clientState, null, 2)}`);
