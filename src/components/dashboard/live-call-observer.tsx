@@ -125,7 +125,8 @@ export function LiveCallObserver({
           baseUrl = 'ws://localhost:3001';
         } else {
           // Production - use the Fly.io server
-          baseUrl = process.env.NEXT_PUBLIC_AI_SERVER_WS_URL || 'wss://delegator-ai-server.fly.dev';
+          // Note: The actual Fly.io hostname is version-2-cr4fsa.fly.dev
+          baseUrl = process.env.NEXT_PUBLIC_AI_SERVER_WS_URL || 'wss://version-2-cr4fsa.fly.dev';
         }
       }
     }
