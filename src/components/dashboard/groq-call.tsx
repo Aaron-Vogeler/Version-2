@@ -54,6 +54,7 @@ import {
   Clock,
   MessageSquare,
   RefreshCw,
+  Volume2,
 } from 'lucide-react';
 
 // Model type from API
@@ -117,6 +118,25 @@ Available variable keys:
 
 The call goal will be automatically appended at the bottom:
 CALL GOAL (YOUR ONLY MISSION): "your goal here"`;
+
+// Audio sounds that can be played during calls
+const CALL_AUDIO_SOUNDS = [
+  {
+    id: 'standard-fart',
+    name: 'Standard Fart',
+    url: 'https://www.myinstants.com/media/sounds/dry-fart.mp3',
+  },
+  {
+    id: 'fart-song',
+    name: 'Fart Song',
+    url: 'https://www.myinstants.com/media/sounds/jerry-farts-united-clean-loop-original-3_48-hd-by-jtf-entertainment_chzyMf5.mp3',
+  },
+  {
+    id: 'quick-fart',
+    name: 'Quick Fart',
+    url: 'https://www.myinstants.com/media/sounds/dry-fart.mp3',
+  },
+];
 
 interface GroqCallProps {
   customAssistantName?: string;
@@ -192,6 +212,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
 
   // Expanded panel states
   const [expandedPanel, setExpandedPanel] = useState<'settings' | 'call' | 'context' | 'logs' | null>(null);
+
+  // Audio playback state
+  const [showAudioPopup, setShowAudioPopup] = useState(false);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
   // Update names when props change
   useEffect(() => {
@@ -494,6 +518,15 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     }
     // Reload defaults
     loadModels();
+  };
+
+  // Play audio during call
+  const handlePlayAudio = (soundId: string, url: string) => {
+    setPlayingAudioId(soundId);
+    const audio = new Audio(url);
+    audio.onended = () => setPlayingAudioId(null);
+    audio.onerror = () => setPlayingAudioId(null);
+    audio.play().catch(() => setPlayingAudioId(null));
   };
 
   // Helper functions for LLM logs
@@ -1523,6 +1556,14 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 <Brain className="h-4 w-4 mr-2" />
                 {showLlmLogs ? 'Hide' : 'Show'} LLM Logs
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAudioPopup(true)}
+              >
+                <Volume2 className="h-4 w-4 mr-2" />
+                Play Audio
+              </Button>
             </>
           )}
           {expandedPanel && (
@@ -1696,6 +1737,36 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Audio Playback Popup */}
+      <Dialog open={showAudioPopup} onOpenChange={setShowAudioPopup}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Volume2 className="h-5 w-5" />
+              Play Audio
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3 py-4">
+            {CALL_AUDIO_SOUNDS.map((sound) => (
+              <Button
+                key={sound.id}
+                variant={playingAudioId === sound.id ? 'default' : 'outline'}
+                className="w-full h-12 text-lg justify-start gap-3"
+                onClick={() => handlePlayAudio(sound.id, sound.url)}
+                disabled={playingAudioId !== null && playingAudioId !== sound.id}
+              >
+                {playingAudioId === sound.id ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                ) : (
+                  <Volume2 className="h-4 w-4" />
+                )}
+                {sound.name}
+              </Button>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
