@@ -200,7 +200,8 @@ export function broadcastCallState(
 function parseObservePath(url: string | undefined): string | null {
   if (!url) return null;
   const match = url.match(/^\/observe\/([^/?]+)/);
-  return match ? match[1] : null;
+  // Decode URL-encoded callControlId (e.g., v3%3A... -> v3:...)
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 /**
