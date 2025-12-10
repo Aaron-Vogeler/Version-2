@@ -70,7 +70,7 @@ const config = {
     sipConnectionId: requireEnv("TELNYX_SIP_CONNECTION_ID"),
     fromNumber: getEnv("TELNYX_FROM_NUMBER") || process.env.NEXT_PUBLIC_MONITOR_NUMBER || requireEnv("TELNYX_FROM_NUMBER"),
     streamUrl: getEnv("TELNYX_STREAM_URL", "wss://version-2-cr4fsa.fly.dev"),
-    ttsVoiceId: getEnv("TELNYX_TTS_VOICE_ID", "Telnyx.KokoroTTS.bm_george"),
+    ttsVoiceId: getEnv("TELNYX_TTS_VOICE_ID", "Telnyx.NaturalHD.marlu"),
   },
 
   // Supabase config for call logging
