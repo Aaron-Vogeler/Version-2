@@ -78,17 +78,28 @@ function decodeMulaw(mulawByte: number): number {
 
 // μ-law silence value
 const MULAW_SILENCE = 0xff;
-const SILENCE_THRESHOLD = 500; // PCM amplitude below this is considered silence
+
+// Silence threshold - PCM amplitude below this is considered silence
+// Must be high enough that quiet speech (unvoiced consonants) doesn't trigger
+// Typical speech RMS is 500-3000, peaks can be 2000-15000+
+// Setting to 3000 to only detect true silence, not quiet speech moments
+const SILENCE_THRESHOLD = 3000;
+
+// Hysteresis: require multiple consecutive packets to confirm state change
+// At 50 packets/sec, 8 packets = 160ms of consistent state required
+// This prevents brief quiet moments from triggering transitions
+const HYSTERESIS_PACKETS = 8;
 
 // Discontinuity threshold - if sample jumps by more than this, smooth it
-// At 8kHz telephony audio, typical speech transitions are gradual
-// A jump of 200+ between adjacent samples is usually a discontinuity/click
-const DISCONTINUITY_THRESHOLD = 200;
+// μ-law decoded speech can have sample jumps of 10,000-15,000+ normally
+// Only catch near-full-scale discontinuities (e.g., packet loss, encoder glitches)
+// Full scale is ~64,000 peak-to-peak, so 25,000 is ~40% of full scale
+const DISCONTINUITY_THRESHOLD = 25000;
 
 // Fade duration in samples (at 8kHz)
 // 8 samples = 1ms, 16 samples = 2ms, 32 samples = 4ms
-const FADE_SAMPLES = 8; // 1ms fade for discontinuities - very short to preserve audio quality
-const SILENCE_FADE_SAMPLES = 16; // 2ms fade for silence transitions
+const FADE_SAMPLES = 16; // 2ms fade for discontinuities
+const SILENCE_FADE_SAMPLES = 32; // 4ms fade for silence transitions (longer for smoother transitions)
 
 /**
  * Track state for audio smoothing
@@ -96,6 +107,9 @@ const SILENCE_FADE_SAMPLES = 16; // 2ms fade for silence transitions
 interface TrackState {
   lastPcmValue: number;
   wasInSilence: boolean;
+  confirmedSilence: boolean; // Actual state after hysteresis
+  consecutiveSilentPackets: number; // Hysteresis counter for silence
+  consecutiveAudioPackets: number; // Hysteresis counter for audio
   fadeInRemaining: number;
   fadeOutRemaining: number;
   packetCount: number;
@@ -121,6 +135,9 @@ export class AudioSmoother {
       this.tracks.set(trackId, {
         lastPcmValue: 0,
         wasInSilence: true,
+        confirmedSilence: true,
+        consecutiveSilentPackets: HYSTERESIS_PACKETS, // Start confirmed silent
+        consecutiveAudioPackets: 0,
         fadeInRemaining: 0,
         fadeOutRemaining: 0,
         packetCount: 0,
@@ -159,6 +176,29 @@ export class AudioSmoother {
     const rms = Math.sqrt(sumSquares / pcmSamples.length);
     const isCurrentlySilent = peakAmplitude < SILENCE_THRESHOLD;
 
+    // Update hysteresis counters
+    if (isCurrentlySilent) {
+      state.consecutiveSilentPackets++;
+      state.consecutiveAudioPackets = 0;
+    } else {
+      state.consecutiveAudioPackets++;
+      state.consecutiveSilentPackets = 0;
+    }
+
+    // Apply hysteresis: only confirm state change after consecutive packets
+    let transitioningToAudio = false;
+    let transitioningToSilence = false;
+
+    if (state.confirmedSilence && state.consecutiveAudioPackets >= HYSTERESIS_PACKETS) {
+      // Confirmed transition from silence to audio
+      transitioningToAudio = true;
+      state.confirmedSilence = false;
+    } else if (!state.confirmedSilence && state.consecutiveSilentPackets >= HYSTERESIS_PACKETS) {
+      // Confirmed transition from audio to silence
+      transitioningToSilence = true;
+      state.confirmedSilence = true;
+    }
+
     // Check for discontinuity at packet boundary (large jump from last packet's end to this packet's start)
     const boundaryJump = Math.abs(firstSample - state.lastPcmValue);
     const hasDiscontinuity = boundaryJump > DISCONTINUITY_THRESHOLD && state.packetCount > 1;
@@ -168,13 +208,11 @@ export class AudioSmoother {
     if (this.debugEnabled && now - state.lastLogTime > 5000) {
       console.log(`[AudioSmoother] Track ${trackId}: packet #${state.packetCount}, ` +
         `first=${firstSample}, last=${lastSample}, peak=${peakAmplitude}, rms=${rms.toFixed(0)}, ` +
-        `silent=${isCurrentlySilent}, wasSilent=${state.wasInSilence}, boundaryJump=${boundaryJump}`);
+        `silent=${isCurrentlySilent}, confirmedSilent=${state.confirmedSilence}, ` +
+        `silentCount=${state.consecutiveSilentPackets}, audioCount=${state.consecutiveAudioPackets}, ` +
+        `boundaryJump=${boundaryJump}`);
       state.lastLogTime = now;
     }
-
-    // Detect transitions
-    const transitioningToAudio = state.wasInSilence && !isCurrentlySilent;
-    const transitioningToSilence = !state.wasInSilence && isCurrentlySilent;
 
     // Determine if we need to smooth the packet boundary
     let smoothBoundary = false;
@@ -211,33 +249,24 @@ export class AudioSmoother {
     }
 
     // Check if we should apply fade-out at end of this packet
-    // (if transitioning to silence or if the tail is going quiet)
-    if (transitioningToSilence || (!isCurrentlySilent && state.packetCount > 1)) {
-      const tailSamples = Math.min(8, pcmSamples.length);
-      let tailPeak = 0;
-      for (let i = pcmSamples.length - tailSamples; i < pcmSamples.length; i++) {
-        tailPeak = Math.max(tailPeak, Math.abs(pcmSamples[i]));
+    // Only apply on confirmed transition to silence (after hysteresis)
+    if (transitioningToSilence) {
+      // Apply gentle fade-out to last few samples
+      const fadeOutLen = SILENCE_FADE_SAMPLES;
+      const fadeOutStart = pcmSamples.length - fadeOutLen;
+      for (let i = Math.max(0, fadeOutStart); i < pcmSamples.length; i++) {
+        const fadePosition = i - Math.max(0, fadeOutStart);
+        const fadeFactor = 1 - (fadePosition / fadeOutLen);
+        pcmSamples[i] = Math.round(pcmSamples[i] * fadeFactor);
       }
-      const tailGoingQuiet = tailPeak < SILENCE_THRESHOLD && peakAmplitude > SILENCE_THRESHOLD;
-
-      if (tailGoingQuiet || transitioningToSilence) {
-        // Apply gentle fade-out to last few samples
-        const fadeOutLen = SILENCE_FADE_SAMPLES;
-        const fadeOutStart = pcmSamples.length - fadeOutLen;
-        for (let i = Math.max(0, fadeOutStart); i < pcmSamples.length; i++) {
-          const fadePosition = i - Math.max(0, fadeOutStart);
-          const fadeFactor = 1 - (fadePosition / fadeOutLen);
-          pcmSamples[i] = Math.round(pcmSamples[i] * fadeFactor);
-        }
-        if (this.debugEnabled && transitioningToSilence) {
-          console.log(`[AudioSmoother] Track ${trackId}: AUDIO→SILENCE fade-out at packet #${state.packetCount}`);
-        }
+      if (this.debugEnabled) {
+        console.log(`[AudioSmoother] Track ${trackId}: AUDIO→SILENCE fade-out at packet #${state.packetCount}`);
       }
     }
 
     // Update state
     state.lastPcmValue = pcmSamples[pcmSamples.length - 1];
-    state.wasInSilence = isCurrentlySilent;
+    state.wasInSilence = state.confirmedSilence;
 
     // Re-encode to μ-law
     const smoothedBuffer = Buffer.alloc(audioData.length);
