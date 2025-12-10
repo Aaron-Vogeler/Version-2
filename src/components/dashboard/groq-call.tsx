@@ -143,6 +143,13 @@ const CALL_AUDIO_SOUNDS = [
 
 // Groq settings interface for saved configuration
 interface SavedGroqSettings {
+  // Call details
+  toNumber?: string;
+  goal?: string;
+  additionalContext?: string;
+  assistantName?: string;
+  userName?: string;
+  // LLM parameters
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -274,6 +281,13 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   useEffect(() => {
     if (groqSettings) {
       console.log('[GroqCall] Loading saved settings:', groqSettings);
+      // Call details
+      if (groqSettings.toNumber !== undefined) setToNumber(groqSettings.toNumber);
+      if (groqSettings.goal !== undefined) setGoal(groqSettings.goal);
+      if (groqSettings.additionalContext !== undefined) setAdditionalContext(groqSettings.additionalContext);
+      if (groqSettings.assistantName !== undefined) setAssistantName(groqSettings.assistantName);
+      if (groqSettings.userName !== undefined) setUserName(groqSettings.userName);
+      // LLM parameters
       if (groqSettings.model) setSelectedModel(groqSettings.model);
       if (groqSettings.temperature !== undefined) setTemperature(groqSettings.temperature);
       if (groqSettings.maxTokens !== undefined) setMaxTokens(groqSettings.maxTokens);
@@ -604,6 +618,13 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     setSettingsSaveStatus('idle');
 
     const settingsToSave: SavedGroqSettings = {
+      // Call details
+      toNumber,
+      goal,
+      additionalContext,
+      assistantName,
+      userName,
+      // LLM parameters
       model: selectedModel,
       temperature,
       maxTokens,

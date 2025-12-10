@@ -13,6 +13,13 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 // Define the shape of Groq settings
 interface GroqSettings {
+  // Call details
+  toNumber?: string;
+  goal?: string;
+  additionalContext?: string;
+  assistantName?: string;
+  userName?: string;
+  // LLM parameters
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -68,6 +75,50 @@ export default async function handler(
 
     // Sanitize and validate settings
     const sanitizedSettings: GroqSettings = {};
+
+    // === Call Details ===
+
+    // Phone Number (string, max 20 chars, E.164 format)
+    if (groqSettings.toNumber !== undefined) {
+      if (typeof groqSettings.toNumber !== 'string') {
+        return res.status(400).json({ error: 'Invalid phone number format' });
+      }
+      sanitizedSettings.toNumber = groqSettings.toNumber.substring(0, 20);
+    }
+
+    // Goal (string, max 500 chars)
+    if (groqSettings.goal !== undefined) {
+      if (typeof groqSettings.goal !== 'string') {
+        return res.status(400).json({ error: 'Invalid goal format' });
+      }
+      sanitizedSettings.goal = groqSettings.goal.substring(0, 500);
+    }
+
+    // Additional Context (string, max 1000 chars)
+    if (groqSettings.additionalContext !== undefined) {
+      if (typeof groqSettings.additionalContext !== 'string') {
+        return res.status(400).json({ error: 'Invalid additional context format' });
+      }
+      sanitizedSettings.additionalContext = groqSettings.additionalContext.substring(0, 1000);
+    }
+
+    // Assistant Name (string, max 100 chars)
+    if (groqSettings.assistantName !== undefined) {
+      if (typeof groqSettings.assistantName !== 'string') {
+        return res.status(400).json({ error: 'Invalid assistant name format' });
+      }
+      sanitizedSettings.assistantName = groqSettings.assistantName.substring(0, 100);
+    }
+
+    // User Name (string, max 100 chars)
+    if (groqSettings.userName !== undefined) {
+      if (typeof groqSettings.userName !== 'string') {
+        return res.status(400).json({ error: 'Invalid user name format' });
+      }
+      sanitizedSettings.userName = groqSettings.userName.substring(0, 100);
+    }
+
+    // === LLM Parameters ===
 
     // Model (string, max 100 chars)
     if (groqSettings.model !== undefined) {
