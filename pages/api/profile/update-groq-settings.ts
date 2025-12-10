@@ -67,9 +67,11 @@ export default async function handler(
 
   try {
     const groqSettings: GroqSettings = req.body;
+    console.log('[update-groq-settings] Received settings:', JSON.stringify(groqSettings, null, 2));
 
     // Validate input is an object
     if (!groqSettings || typeof groqSettings !== 'object') {
+      console.log('[update-groq-settings] Invalid settings format');
       return res.status(400).json({ error: 'Invalid settings format' });
     }
 
@@ -291,24 +293,35 @@ export default async function handler(
     }
 
     const userId = (session.user as any).id;
+    console.log('[update-groq-settings] User ID:', userId);
+    console.log('[update-groq-settings] Sanitized settings:', JSON.stringify(sanitizedSettings, null, 2));
 
     // Create Supabase client with service role key for admin access
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Update the profile with groq_settings
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .update({
         groq_settings: sanitizedSettings,
         updated_at: new Date().toISOString()
       })
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .select();
+
+    console.log('[update-groq-settings] Supabase response - data:', data, 'error:', error);
 
     if (error) {
-      console.error('Error updating groq settings:', error);
-      return res.status(500).json({ error: 'Failed to save settings' });
+      console.error('[update-groq-settings] Error updating groq settings:', error);
+      return res.status(500).json({ error: 'Failed to save settings', details: error.message });
     }
 
+    if (!data || data.length === 0) {
+      console.error('[update-groq-settings] No rows updated - user profile may not exist');
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+
+    console.log('[update-groq-settings] Successfully saved settings');
     return res.status(200).json({
       success: true,
       groq_settings: sanitizedSettings

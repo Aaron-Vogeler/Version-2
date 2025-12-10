@@ -638,6 +638,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       ivrSettings,
     };
 
+    console.log('[GroqCall] Saving settings:', settingsToSave);
+
     try {
       const response = await fetch('/api/profile/update-groq-settings', {
         method: 'POST',
@@ -645,8 +647,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         body: JSON.stringify(settingsToSave),
       });
 
+      const data = await response.json();
+      console.log('[GroqCall] Save response:', response.status, data);
+
       if (!response.ok) {
-        const data = await response.json();
         throw new Error(data.error || 'Failed to save settings');
       }
 
