@@ -1583,6 +1583,15 @@ wss.on("connection", async (ws) => {
           console.log(`[TRANSCRIPT] Barge-in partial ignored (waiting for final): "${userText}"`);
         } else {
           console.log(`[TRANSCRIPT] Interim transcript (not queuing for LLM): "${userText}"`);
+
+          // IMPORTANT: Reset the debounce timer if we're receiving interim transcripts
+          // This prevents the AI from responding while the caller is still mid-sentence
+          // Only reset if AI is not currently speaking (avoid interfering during barge-in scenarios)
+          if (callContext.ttsState === "idle" && callContext.ttsDebounceTimer) {
+            clearTimeout(callContext.ttsDebounceTimer);
+            callContext.ttsDebounceTimer = undefined;
+            console.log(`[DEBOUNCE] ⏸️ Timer cleared - caller still speaking (interim detected)`);
+          }
         }
         return;
       }
