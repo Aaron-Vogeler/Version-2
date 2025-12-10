@@ -92,6 +92,11 @@ export interface CallContext {
   holdCheckInIntervalMs?: number; // Custom check-in interval for this call
   holdMaxCheckIns?: number; // Custom max check-ins for this call
 
+  // Per-call timing settings (overrides config defaults if provided)
+  ttsDebounceMs?: number; // Custom TTS debounce (silence before AI responds) for this call
+  bargeInCooldownMs?: number; // Custom barge-in cooldown for this call
+  callerUtteranceFlushMs?: number; // Custom utterance flush time for this call
+
   // IVR/Phone Tree Navigation State
   isIvrMode?: boolean; // Whether we're currently interacting with an automated system
   ivrConfidence?: number; // Confidence level (0-1) that we're in IVR mode

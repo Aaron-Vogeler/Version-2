@@ -29,7 +29,7 @@ export default async function handler(
 
   try {
     // Validate request body
-    const { goal, to_number, custom_system_prompt, rolling_summary_prompt, hold_check_in_interval_ms, hold_max_check_ins, model, temperature, max_tokens, top_p, reasoning, stream, json_mode } = req.body;
+    const { goal, to_number, custom_system_prompt, rolling_summary_prompt, tts_debounce_ms, barge_in_cooldown_ms, caller_utterance_flush_ms, hold_check_in_interval_ms, hold_max_check_ins, model, temperature, max_tokens, top_p, reasoning, stream, json_mode } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
@@ -86,6 +86,10 @@ export default async function handler(
         userName: firstName,
         systemPrompt: custom_system_prompt,
         rollingSummaryPrompt: rolling_summary_prompt,
+        // Call control settings
+        ttsDebounceMs: tts_debounce_ms,
+        bargeInCooldownMs: barge_in_cooldown_ms,
+        callerUtteranceFlushMs: caller_utterance_flush_ms,
         holdCheckInIntervalMs: hold_check_in_interval_ms,
         holdMaxCheckIns: hold_max_check_ins,
         model: model,

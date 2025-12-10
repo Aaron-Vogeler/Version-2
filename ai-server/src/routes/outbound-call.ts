@@ -13,6 +13,10 @@ interface OutboundCallRequest {
   userName?: string;
   systemPrompt?: string;
   rollingSummaryPrompt?: string;
+  // Call control settings
+  ttsDebounceMs?: number;
+  bargeInCooldownMs?: number;
+  callerUtteranceFlushMs?: number;
   holdCheckInIntervalMs?: number;
   holdMaxCheckIns?: number;
   model?: string;
@@ -39,7 +43,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, holdCheckInIntervalMs, holdMaxCheckIns, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
+    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -57,7 +61,7 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName + systemPrompt + rollingSummaryPrompt + hold settings + model + LLM params) in base64
+    // Encode client state (goal + userId + assistantName + userName + systemPrompt + rollingSummaryPrompt + call control settings + model + LLM params) in base64
     const clientStatePayload = JSON.stringify({
       goal,
       userId,
@@ -65,6 +69,10 @@ router.post("/", async (req: Request, res: Response) => {
       userName: userName || null,
       systemPrompt: systemPrompt,
       rollingSummaryPrompt: rollingSummaryPrompt || null,
+      // Call control settings
+      ttsDebounceMs: ttsDebounceMs || null,
+      bargeInCooldownMs: bargeInCooldownMs || null,
+      callerUtteranceFlushMs: callerUtteranceFlushMs || null,
       holdCheckInIntervalMs: holdCheckInIntervalMs || null,
       holdMaxCheckIns: holdMaxCheckIns || null,
       model: model || null,
