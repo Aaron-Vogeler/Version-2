@@ -22,36 +22,39 @@ export default async function handler(
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // Fetch custom_assistant_name and first_name from profile
+  // Fetch custom_assistant_name, first_name, and groq_settings from profile
   const userId = (session.user as any).id;
   let customAssistantName = null;
   let firstName = null;
+  let groqSettings = null;
 
   if (userId && supabaseUrl && supabaseServiceKey) {
     try {
       const supabase = createClient(supabaseUrl, supabaseServiceKey);
       const { data, error } = await supabase
         .from('profiles')
-        .select('custom_assistant_name, first_name')
+        .select('custom_assistant_name, first_name, groq_settings')
         .eq('user_id', userId)
         .single();
 
       if (!error && data) {
         customAssistantName = data.custom_assistant_name;
         firstName = data.first_name;
+        groqSettings = data.groq_settings;
       }
     } catch (error) {
       console.error('Error fetching profile data:', error);
     }
   }
 
-  // Return session info with custom_assistant_name and first_name
+  // Return session info with custom_assistant_name, first_name, and groq_settings
   return res.status(200).json({
     ok: true,
     user: {
       ...session.user,
       custom_assistant_name: customAssistantName,
       first_name: firstName,
+      groq_settings: groqSettings,
     },
   });
 }
