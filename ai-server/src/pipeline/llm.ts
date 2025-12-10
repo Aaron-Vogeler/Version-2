@@ -48,6 +48,14 @@ function buildSystemPrompt(context?: CallContext): string {
   prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
   prompt = prompt.replace(/Aaron/g, userName);
 
+  // Inject additional context if provided (right above the goal)
+  if (context?.additionalContext) {
+    prompt += `
+
+ADDITIONAL CONTEXT:
+${context.additionalContext}`;
+  }
+
   // Inject goal at the bottom in simple format
   if (context?.goal) {
     prompt += `

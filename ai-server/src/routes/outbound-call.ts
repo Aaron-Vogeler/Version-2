@@ -7,6 +7,7 @@ const router = Router();
 
 interface OutboundCallRequest {
   goal: string;
+  additionalContext?: string;
   toNumber: string;
   userId: string;
   assistantName?: string;
@@ -43,7 +44,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
+    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -61,9 +62,10 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName + systemPrompt + rollingSummaryPrompt + call control settings + model + LLM params) in base64
+    // Encode client state (goal + userId + assistantName + userName + systemPrompt + additionalContext + rollingSummaryPrompt + call control settings + model + LLM params) in base64
     const clientStatePayload = JSON.stringify({
       goal,
+      additionalContext: additionalContext || null,
       userId,
       assistantName: assistantName || null,
       userName: userName || null,

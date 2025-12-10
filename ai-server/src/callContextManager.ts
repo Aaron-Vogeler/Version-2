@@ -26,6 +26,7 @@ export interface CallContext {
   streamId?: string;
   userId?: string;
   goal?: string;
+  additionalContext?: string; // Additional context to inject into system prompt (above goal)
   assistantName?: string;
   userName?: string;
   systemPrompt?: string; // Custom system prompt passed from frontend
@@ -69,6 +70,10 @@ export interface CallContext {
   lastCallerUtterance?: string; // Last flushed caller utterance (for deduplication)
   assistantFinalBuf?: string[]; // Buffer of final assistant utterances (if outbound STT enabled)
   assistantFinalFlushTimer?: any; // Timer for flushing buffered assistant utterance (NodeJS.Timeout | ReturnType<typeof setTimeout>)
+
+  // Accumulated turn text - collects ALL utterances from callee until AI responds
+  // This ensures the full callee turn is sent to the LLM, not just the last segment
+  accumulatedTurnText?: string[];
 
   // Custom recording buffers for self-hosted dual-channel recording
   recordingBuffers?: {
@@ -148,6 +153,7 @@ export function getOrCreateContext(
       callerFinalBuf: [],
       lastCallerUtterance: "",
       assistantFinalBuf: [],
+      accumulatedTurnText: [], // Accumulates all callee utterances until AI responds
       // IVR state initialization
       isIvrMode: false,
       ivrConfidence: 0,
@@ -160,6 +166,8 @@ export function getOrCreateContext(
 
 /**
  * Append a new turn to the CallContext.
+ * If the last turn is from the same speaker (caller), UPDATE it instead of adding new.
+ * This prevents duplicate turns when multiple speech segments arrive before AI responds.
  * Automatically trims old turns if the window exceeds maxTurnsInWindow.
  */
 export function appendTurn(
@@ -168,6 +176,17 @@ export function appendTurn(
   config: ContextConfig = defaultConfig
 ): void {
   const context = getOrCreateContext(callId, config);
+
+  // Check if the last turn is from the same speaker - if so, UPDATE instead of APPEND
+  // This handles the case where multiple speech_final events fire before AI responds
+  const lastTurn = context.turns[context.turns.length - 1];
+  if (lastTurn && lastTurn.speaker === turn.speaker && turn.speaker === "caller") {
+    // Update the existing turn with the new (accumulated) text
+    console.log(`[CONTEXT] Updating last ${turn.speaker} turn instead of appending (${lastTurn.text.length} -> ${turn.text.length} chars)`);
+    lastTurn.text = turn.text;
+    lastTurn.timestamp = turn.timestamp;
+    return; // Don't add a new turn, just updated existing
+  }
 
   // Add the new turn
   context.turns.push(turn);
