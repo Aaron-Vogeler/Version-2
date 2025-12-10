@@ -1806,6 +1806,7 @@ wss.on("connection", async (ws) => {
           managedContext.callControlId = callControlId;
           managedContext.streamId = streamId;
           managedContext.goal = decoded.goal;
+          managedContext.additionalContext = decoded.additionalContext || null;
           managedContext.userId = decoded.userId;
           managedContext.assistantName = decoded.assistantName || null;
           managedContext.userName = decoded.userName || null;

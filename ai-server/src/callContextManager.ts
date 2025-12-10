@@ -26,6 +26,7 @@ export interface CallContext {
   streamId?: string;
   userId?: string;
   goal?: string;
+  additionalContext?: string; // Additional context to inject into system prompt (above goal)
   assistantName?: string;
   userName?: string;
   systemPrompt?: string; // Custom system prompt passed from frontend
