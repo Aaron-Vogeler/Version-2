@@ -261,23 +261,25 @@ export function shouldUseIvrTiming(callContext: CallContext): boolean {
 }
 
 /**
- * Get the appropriate debounce time based on IVR mode
+ * Get the appropriate debounce time based on IVR mode and per-call settings
  */
 export function getDebounceMs(callContext: CallContext): number {
   if (shouldUseIvrTiming(callContext)) {
     return config.ivr.debounceMs;
   }
-  return config.callControl.ttsDebounceMs;
+  // Use per-call setting if provided, otherwise fall back to config default
+  return callContext.ttsDebounceMs ?? config.callControl.ttsDebounceMs;
 }
 
 /**
- * Get the appropriate utterance flush time based on IVR mode
+ * Get the appropriate utterance flush time based on IVR mode and per-call settings
  */
 export function getUtteranceFlushMs(callContext: CallContext): number {
   if (shouldUseIvrTiming(callContext)) {
     return config.ivr.utteranceFlushMs;
   }
-  return config.callControl.callerUtteranceFlushMs;
+  // Use per-call setting if provided, otherwise fall back to config default
+  return callContext.callerUtteranceFlushMs ?? config.callControl.callerUtteranceFlushMs;
 }
 
 /**

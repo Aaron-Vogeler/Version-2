@@ -446,9 +446,12 @@ function queueUserTranscript(
   }
 
   // Use IVR-optimized timing if in IVR mode (faster response to automated systems)
+  // Otherwise use per-call ttsDebounceMs if set, or config default
   const debounceMs = ivrUtils.getDebounceMs(callContext);
   if (callContext.isIvrMode) {
     console.log(`[IVR] ⚡ Using fast debounce: ${debounceMs}ms (IVR mode)`);
+  } else {
+    console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (per-call: ${callContext.ttsDebounceMs ?? 'default'})`);
   }
 
   // Schedule a new TTS response timer (uses configurable debounce)
@@ -1517,8 +1520,9 @@ wss.on("connection", async (ws) => {
         } else if (!callContext.bargeInCooldownUntil || now >= callContext.bargeInCooldownUntil) {
           console.log(`[BARGE-IN] 🛑 Words detected while AI speaking: "${userText}" (callControlId: ${callContext.callControlId})`);
 
-          // Set cooldown to prevent multiple rapid stops (uses configurable cooldown)
-          callContext.bargeInCooldownUntil = now + config.callControl.bargeInCooldownMs;
+          // Set cooldown to prevent multiple rapid stops (uses per-call setting if provided, otherwise config default)
+          const cooldownMs = callContext.bargeInCooldownMs ?? config.callControl.bargeInCooldownMs;
+          callContext.bargeInCooldownUntil = now + cooldownMs;
 
           // Mark as stopping
           callContext.ttsState = "stopping";
@@ -1720,6 +1724,10 @@ wss.on("connection", async (ws) => {
           managedContext.reasoning = decoded.reasoning || null;
           managedContext.stream = decoded.stream || null;
           managedContext.jsonMode = decoded.jsonMode || null;
+          // Call control settings
+          managedContext.ttsDebounceMs = decoded.ttsDebounceMs || null;
+          managedContext.bargeInCooldownMs = decoded.bargeInCooldownMs || null;
+          managedContext.callerUtteranceFlushMs = decoded.callerUtteranceFlushMs || null;
           managedContext.holdCheckInIntervalMs = decoded.holdCheckInIntervalMs || null;
           managedContext.holdMaxCheckIns = decoded.holdMaxCheckIns || null;
           managedContext.initiatedAt = decoded.initiatedAt;
@@ -1748,6 +1756,10 @@ wss.on("connection", async (ws) => {
             goal: callContext.goal,
             userId: callContext.userId,
             customRecordingEnabled: isCustomRecordingEnabled(),
+            // Call control settings (per-call overrides)
+            ttsDebounceMs: callContext.ttsDebounceMs,
+            bargeInCooldownMs: callContext.bargeInCooldownMs,
+            callerUtteranceFlushMs: callContext.callerUtteranceFlushMs,
           });
 
           // Register this machine as the handler for this call (for multi-instance observer routing)

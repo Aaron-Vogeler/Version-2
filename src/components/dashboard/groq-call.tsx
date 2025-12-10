@@ -501,6 +501,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           to_number: toNumber,
           custom_system_prompt: customSystemPrompt,
           rolling_summary_prompt: rollingSummaryPrompt,
+          // Call control settings
+          tts_debounce_ms: callControlSettings.ttsDebounceMs,
+          barge_in_cooldown_ms: callControlSettings.bargeInCooldownMs,
+          caller_utterance_flush_ms: callControlSettings.callerUtteranceFlushMs,
           hold_check_in_interval_ms: callControlSettings.holdCheckInIntervalMs,
           hold_max_check_ins: callControlSettings.holdMaxCheckIns,
           model: selectedModel,
