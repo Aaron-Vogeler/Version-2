@@ -52,6 +52,7 @@ export default function DashboardPage() {
   const [savingAssistantName, setSavingAssistantName] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [savingFirstName, setSavingFirstName] = useState(false);
+  const [groqSettings, setGroqSettings] = useState<any>(null);
 
   // Initial load on mount
   useEffect(() => {
@@ -92,6 +93,10 @@ export default function DashboardPage() {
       // Set first name from user profile
       if (data.user.first_name) {
         setFirstName(data.user.first_name);
+      }
+      // Set groq settings from user profile
+      if (data.user.groq_settings) {
+        setGroqSettings(data.user.groq_settings);
       }
     } else {
       // Not authenticated, redirect to login page
@@ -419,6 +424,11 @@ export default function DashboardPage() {
             <GroqCall
               customAssistantName={customAssistantName || 'Ferguson'}
               firstName={firstName || 'Aaron'}
+              groqSettings={groqSettings}
+              onSettingsSaved={() => {
+                // Optionally refresh settings from server
+                checkAuth();
+              }}
             />
           </TabsContent>
 

@@ -141,14 +141,49 @@ const CALL_AUDIO_SOUNDS = [
   },
 ];
 
+// Groq settings interface for saved configuration
+interface SavedGroqSettings {
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  reasoning?: 'low' | 'medium' | 'high';
+  stream?: boolean;
+  jsonMode?: boolean;
+  customSystemPrompt?: string;
+  rollingSummaryPrompt?: string;
+  callControlSettings?: {
+    ttsDebounceMs?: number;
+    bargeInCooldownMs?: number;
+    callerUtteranceFlushMs?: number;
+    hangupDelayMs?: number;
+    holdCheckInIntervalMs?: number;
+    holdMaxCheckIns?: number;
+  };
+  ivrSettings?: {
+    debounceMs?: number;
+    utteranceFlushMs?: number;
+    dtmfMinPauseMs?: number;
+    dtmfDurationMs?: number;
+    autoDetectThreshold?: number;
+    responseTimeoutMs?: number;
+    maxDtmfRetries?: number;
+    disableBargeInGracePeriod?: boolean;
+  };
+}
+
 interface GroqCallProps {
   customAssistantName?: string;
   firstName?: string;
+  groqSettings?: SavedGroqSettings | null;
+  onSettingsSaved?: () => void;
 }
 
-export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron' }: GroqCallProps) {
+export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron', groqSettings, onSettingsSaved }: GroqCallProps) {
   // Call state
   const [toNumber, setToNumber] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSaveStatus, setSettingsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
@@ -234,6 +269,34 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   useEffect(() => {
     setUserName(firstName);
   }, [firstName]);
+
+  // Load saved settings when groqSettings prop is available
+  useEffect(() => {
+    if (groqSettings) {
+      console.log('[GroqCall] Loading saved settings:', groqSettings);
+      if (groqSettings.model) setSelectedModel(groqSettings.model);
+      if (groqSettings.temperature !== undefined) setTemperature(groqSettings.temperature);
+      if (groqSettings.maxTokens !== undefined) setMaxTokens(groqSettings.maxTokens);
+      if (groqSettings.topP !== undefined) setTopP(groqSettings.topP);
+      if (groqSettings.reasoning) setReasoning(groqSettings.reasoning);
+      if (groqSettings.stream !== undefined) setStream(groqSettings.stream);
+      if (groqSettings.jsonMode !== undefined) setJsonMode(groqSettings.jsonMode);
+      if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
+      if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
+      if (groqSettings.callControlSettings) {
+        setCallControlSettings(prev => ({
+          ...prev,
+          ...groqSettings.callControlSettings,
+        }));
+      }
+      if (groqSettings.ivrSettings) {
+        setIvrSettings(prev => ({
+          ...prev,
+          ...groqSettings.ivrSettings,
+        }));
+      }
+    }
+  }, [groqSettings]);
 
   // Load available models and defaults on mount
   useEffect(() => {
@@ -534,6 +597,56 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     }
     // Reload defaults
     loadModels();
+  };
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    setSettingsSaveStatus('idle');
+
+    const settingsToSave: SavedGroqSettings = {
+      model: selectedModel,
+      temperature,
+      maxTokens,
+      topP,
+      reasoning,
+      stream,
+      jsonMode,
+      customSystemPrompt,
+      rollingSummaryPrompt,
+      callControlSettings,
+      ivrSettings,
+    };
+
+    try {
+      const response = await fetch('/api/profile/update-groq-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settingsToSave),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to save settings');
+      }
+
+      setSettingsSaveStatus('success');
+      console.log('[GroqCall] Settings saved successfully');
+
+      // Notify parent component
+      if (onSettingsSaved) {
+        onSettingsSaved();
+      }
+
+      // Clear success status after 3 seconds
+      setTimeout(() => setSettingsSaveStatus('idle'), 3000);
+    } catch (error: any) {
+      console.error('[GroqCall] Error saving settings:', error);
+      setSettingsSaveStatus('error');
+      // Clear error status after 5 seconds
+      setTimeout(() => setSettingsSaveStatus('idle'), 5000);
+    } finally {
+      setSavingSettings(false);
+    }
   };
 
   // Play audio into the active call via Telnyx API
@@ -1115,16 +1228,57 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         )}
       </div>
 
-      {/* Reset Button */}
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleResetSettings}
-        className="w-full"
-      >
-        <RotateCcw className="h-4 w-4 mr-2" />
-        Reset All Settings
-      </Button>
+      {/* Save & Reset Buttons */}
+      <div className="flex gap-2">
+        <Button
+          variant="default"
+          size="sm"
+          onClick={handleSaveSettings}
+          disabled={savingSettings}
+          className="flex-1"
+        >
+          {savingSettings ? (
+            <>
+              <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              Saving...
+            </>
+          ) : settingsSaveStatus === 'success' ? (
+            <>
+              <Check className="h-4 w-4 mr-2" />
+              Saved!
+            </>
+          ) : settingsSaveStatus === 'error' ? (
+            <>
+              <AlertCircle className="h-4 w-4 mr-2" />
+              Error
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              Save Settings
+            </>
+          )}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleResetSettings}
+          className="flex-1"
+        >
+          <RotateCcw className="h-4 w-4 mr-2" />
+          Reset
+        </Button>
+      </div>
+      {settingsSaveStatus === 'success' && (
+        <p className="text-xs text-green-600 dark:text-green-400 text-center">
+          Settings saved successfully!
+        </p>
+      )}
+      {settingsSaveStatus === 'error' && (
+        <p className="text-xs text-red-600 dark:text-red-400 text-center">
+          Failed to save settings. Please try again.
+        </p>
+      )}
     </div>
   );
 
