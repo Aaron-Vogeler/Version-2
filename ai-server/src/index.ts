@@ -432,8 +432,19 @@ function queueUserTranscript(
   transcript: string,
   ws: WebSocket
 ): void {
-  // Update the transcript and timestamp
-  callContext.lastUserTranscript = transcript;
+  // Initialize accumulated turn text if needed
+  if (!callContext.accumulatedTurnText) {
+    callContext.accumulatedTurnText = [];
+  }
+
+  // ACCUMULATE utterances instead of replacing
+  // This ensures the full callee turn is captured across multiple speech_final events
+  callContext.accumulatedTurnText.push(transcript);
+  console.log(`[TRANSCRIPT] Accumulated turn text (${callContext.accumulatedTurnText.length} segments): "${callContext.accumulatedTurnText.join(' | ')}"`);
+
+  // Update lastUserTranscript with the FULL accumulated turn
+  const fullTurnText = callContext.accumulatedTurnText.join(" ");
+  callContext.lastUserTranscript = fullTurnText;
   callContext.lastTranscriptAt = Date.now();
 
   // Increment turn sequence (invalidates in-flight work from previous turns)
@@ -783,6 +794,13 @@ async function sendTtsResponse(
     callContext.speakWasInterrupted = false; // Reset interruption flag
     callContext.currentSpeakText = aiText; // Store text for logging on completion
     console.log(`[TTS] Setting ttsState='speaking' (callControlId: ${callContext.callControlId})`);
+
+    // CLEAR accumulated turn text - AI is responding, so next callee speech starts a new turn
+    // This ensures we don't carry over old segments from the previous turn
+    if (callContext.accumulatedTurnText && callContext.accumulatedTurnText.length > 0) {
+      console.log(`[TRANSCRIPT] Clearing accumulated turn text (${callContext.accumulatedTurnText.length} segments) - AI is responding`);
+      callContext.accumulatedTurnText = [];
+    }
 
     // Sync TTS state to Redis for multi-instance support
     await sharedState.markTtsSpeaking(callContext.callControlId, aiText);
@@ -1552,6 +1570,8 @@ wss.on("connection", async (ws) => {
           // Clear any accumulated partial transcript buffer - start fresh
           callContext.callerFinalBuf = [];
           callContext.lastUserTranscript = "";
+          // Also clear accumulated turn text - barge-in starts a fresh turn
+          callContext.accumulatedTurnText = [];
 
           // Increment turn sequence to invalidate any in-flight LLM/TTS work
           callContext.turnSeq = (callContext.turnSeq || 0) + 1;
@@ -1613,8 +1633,8 @@ wss.on("connection", async (ws) => {
       const isSpeechFinal = speechFinal === true;
 
       if (isSpeechFinal) {
-        // speech_final flag indicates end of utterance
-        console.log("[TRANSCRIPT] speech_final detected, flushing utterance");
+        // speech_final flag indicates end of one utterance segment
+        console.log("[TRANSCRIPT] speech_final detected, flushing utterance to Supabase");
 
         // Clear any pending flush timer
         if (callContext.callerFinalFlushTimer) {
@@ -1625,14 +1645,52 @@ wss.on("connection", async (ws) => {
         // Get the full accumulated utterance before flushing
         const fullUtterance = [...(callContext.callerFinalBuf || [])].join(" ").trim();
 
-        // Flush the buffer to Supabase (for transcript logging)
+        // Flush the buffer to Supabase (for transcript logging - each segment gets logged)
         flushCallerUtterance(callContext);
 
-        // NOW queue the complete utterance for LLM response
+        // ACCUMULATE for LLM - don't send yet, wait for debounce
+        // This collects ALL segments until silence is detected
         if (fullUtterance) {
-          console.log(`[TRANSCRIPT] Queuing complete utterance for LLM: "${fullUtterance}"`);
-          queueUserTranscript(callContext, fullUtterance, ws);
+          if (!callContext.accumulatedTurnText) {
+            callContext.accumulatedTurnText = [];
+          }
+          callContext.accumulatedTurnText.push(fullUtterance);
+          console.log(`[TRANSCRIPT] Accumulated turn segment #${callContext.accumulatedTurnText.length}: "${fullUtterance}"`);
         }
+
+        // Set debounce timer - only send to LLM after silence
+        // Clear any existing TTS debounce timer first
+        if (callContext.ttsDebounceTimer) {
+          clearTimeout(callContext.ttsDebounceTimer);
+        }
+
+        // Use IVR-optimized timing if in IVR mode
+        const debounceMs = ivrUtils.getDebounceMs(callContext);
+        if (callContext.isIvrMode) {
+          console.log(`[IVR] ⚡ Using fast debounce: ${debounceMs}ms (IVR mode)`);
+        } else {
+          console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (per-call: ${callContext.ttsDebounceMs ?? 'default'})`);
+        }
+
+        // Increment turn sequence (invalidates in-flight work from previous turns)
+        callContext.turnSeq = (callContext.turnSeq || 0) + 1;
+        const currentSeq = callContext.turnSeq;
+        callContext.lastTranscriptAt = Date.now();
+
+        // Capture context for closure
+        const ctx = callContext;
+        const wsRef = ws;
+
+        // Schedule LLM processing after debounce - this is when we send ALL accumulated text
+        callContext.ttsDebounceTimer = setTimeout(() => {
+          // Join ALL accumulated segments into one complete turn
+          const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
+          if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
+            console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+            ctx.lastUserTranscript = completeTurn;
+            scheduleTtsResponse(ctx, wsRef, currentSeq);
+          }
+        }, debounceMs);
       } else {
         // No speech_final flag: use fallback timer to detect utterance boundary
         // If no new final chunks arrive within configurable timeout, consider utterance complete
@@ -1658,10 +1716,37 @@ wss.on("connection", async (ws) => {
             flushCallerUtterance(ctx);
             ctx.callerFinalFlushTimer = undefined;
 
-            // NOW queue the complete utterance for LLM response
-            if (fullUtterance && wsRef.readyState === WebSocket.OPEN) {
-              console.log(`[TRANSCRIPT] Queuing complete utterance for LLM (silence timeout): "${fullUtterance}"`);
-              queueUserTranscript(ctx, fullUtterance, wsRef);
+            // ACCUMULATE for LLM - add this segment to the turn
+            if (fullUtterance) {
+              if (!ctx.accumulatedTurnText) {
+                ctx.accumulatedTurnText = [];
+              }
+              ctx.accumulatedTurnText.push(fullUtterance);
+              console.log(`[TRANSCRIPT] Accumulated turn segment #${ctx.accumulatedTurnText.length} (flush timer): "${fullUtterance}"`);
+
+              // Clear any existing TTS debounce timer
+              if (ctx.ttsDebounceTimer) {
+                clearTimeout(ctx.ttsDebounceTimer);
+              }
+
+              // Use IVR-optimized timing if in IVR mode
+              const debounceMs = ivrUtils.getDebounceMs(ctx);
+              console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (flush timer path)`);
+
+              // Increment turn sequence
+              ctx.turnSeq = (ctx.turnSeq || 0) + 1;
+              const currentSeq = ctx.turnSeq;
+              ctx.lastTranscriptAt = Date.now();
+
+              // Schedule LLM processing after debounce
+              ctx.ttsDebounceTimer = setTimeout(() => {
+                const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
+                if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
+                  console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+                  ctx.lastUserTranscript = completeTurn;
+                  scheduleTtsResponse(ctx, wsRef, currentSeq);
+                }
+              }, debounceMs);
             }
           }
         }, flushMs);
