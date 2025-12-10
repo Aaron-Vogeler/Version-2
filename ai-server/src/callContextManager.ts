@@ -31,6 +31,7 @@ export interface CallContext {
   userName?: string;
   systemPrompt?: string; // Custom system prompt passed from frontend
   rollingSummaryPrompt?: string; // Custom rolling summary prompt template passed from frontend
+  voiceId?: string; // Custom Telnyx TTS voice ID (overrides config default)
   model?: string; // Model to use for this call (overrides config default)
   temperature?: number; // Temperature for LLM calls (overrides default)
   maxTokens?: number; // Max tokens for LLM calls (overrides default)

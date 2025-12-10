@@ -22,6 +22,7 @@ interface GroqSettings {
   jsonMode?: boolean;
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
+  voiceId?: string;  // Custom Telnyx TTS voice ID
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
@@ -136,6 +137,14 @@ export default async function handler(
         return res.status(400).json({ error: 'Invalid rolling summary prompt format' });
       }
       sanitizedSettings.rollingSummaryPrompt = groqSettings.rollingSummaryPrompt.substring(0, 5000);
+    }
+
+    // Voice ID (string, max 200 chars)
+    if (groqSettings.voiceId !== undefined) {
+      if (typeof groqSettings.voiceId !== 'string') {
+        return res.status(400).json({ error: 'Invalid voice ID format' });
+      }
+      sanitizedSettings.voiceId = groqSettings.voiceId.substring(0, 200);
     }
 
     // Call Control Settings

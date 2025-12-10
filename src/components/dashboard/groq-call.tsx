@@ -152,6 +152,7 @@ interface SavedGroqSettings {
   jsonMode?: boolean;
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
+  voiceId?: string;  // Custom Telnyx TTS voice ID
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
@@ -211,6 +212,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [customSystemPrompt, setCustomSystemPrompt] = useState('');
   // Rolling summary prompt for context management
   const [rollingSummaryPrompt, setRollingSummaryPrompt] = useState('');
+  // Custom Telnyx TTS voice ID
+  const [voiceId, setVoiceId] = useState('');
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [topP, setTopP] = useState(1);
@@ -283,6 +286,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       if (groqSettings.jsonMode !== undefined) setJsonMode(groqSettings.jsonMode);
       if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
       if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
+      if (groqSettings.voiceId !== undefined) setVoiceId(groqSettings.voiceId);
       if (groqSettings.callControlSettings) {
         setCallControlSettings(prev => ({
           ...prev,
@@ -501,6 +505,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           to_number: toNumber,
           custom_system_prompt: customSystemPrompt,
           rolling_summary_prompt: rollingSummaryPrompt,
+          voice_id: voiceId || undefined,  // Custom Telnyx TTS voice ID
           // Call control settings
           tts_debounce_ms: callControlSettings.ttsDebounceMs,
           barge_in_cooldown_ms: callControlSettings.bargeInCooldownMs,
@@ -575,6 +580,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     setUserName(firstName);
     setCustomSystemPrompt('');
     setRollingSummaryPrompt('');
+    setVoiceId('');
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
@@ -617,6 +623,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       jsonMode,
       customSystemPrompt,
       rollingSummaryPrompt,
+      voiceId,
       callControlSettings,
       ivrSettings,
     };
@@ -1019,6 +1026,27 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           />
           <p className="text-xs text-muted-foreground">
             Optional: Used to condense conversation history. Leave empty to use default.
+          </p>
+        </div>
+      </div>
+
+      {/* Voice ID */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="space-y-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Volume2 className="h-4 w-4" />
+            Telnyx Voice ID
+          </Label>
+          <Input
+            value={voiceId}
+            onChange={(e) => setVoiceId(e.target.value)}
+            placeholder="e.g., Telnyx.KokoroTTS.bm_george"
+            className="text-xs font-mono"
+          />
+          <p className="text-xs text-muted-foreground">
+            Optional: Custom Telnyx TTS voice ID. Leave empty to use server default.
+            <br />
+            Examples: <code className="bg-muted px-1 rounded">Telnyx.KokoroTTS.bm_george</code>, <code className="bg-muted px-1 rounded">Telnyx.KokoroTTS.af_bella</code>
           </p>
         </div>
       </div>

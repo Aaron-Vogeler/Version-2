@@ -805,7 +805,7 @@ async function sendTtsResponse(
     // Sync TTS state to Redis for multi-instance support
     await sharedState.markTtsSpeaking(callContext.callControlId, aiText);
 
-    await synthesizeSpeech(aiText, callContext.callControlId);
+    await synthesizeSpeech(aiText, callContext.callControlId, callContext.voiceId || undefined);
 
     // Log what TTS will actually speak (only logged after successful TTS API call)
     console.log("🤖 AI (speaking):", aiText);
@@ -1812,6 +1812,7 @@ wss.on("connection", async (ws) => {
           managedContext.userName = decoded.userName || null;
           managedContext.systemPrompt = decoded.systemPrompt || null;
           managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
+          managedContext.voiceId = decoded.voiceId || null;  // Custom Telnyx TTS voice ID
           managedContext.model = decoded.model || null;
           managedContext.temperature = decoded.temperature || null;
           managedContext.maxTokens = decoded.maxTokens || null;

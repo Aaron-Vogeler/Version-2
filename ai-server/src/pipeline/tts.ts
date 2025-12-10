@@ -90,15 +90,18 @@ export async function stopSpeaking(callControlId: string): Promise<void> {
  *
  * @param aiText - The text to synthesize and speak
  * @param callControlId - The Telnyx call control ID
+ * @param voiceId - Optional custom Telnyx TTS voice ID (defaults to config.telnyx.ttsVoiceId)
  */
 export async function synthesizeSpeech(
   aiText: string,
-  callControlId: string
+  callControlId: string,
+  voiceId?: string
 ): Promise<void> {
   const startTime = Date.now();
+  const effectiveVoiceId = voiceId || config.telnyx.ttsVoiceId;
   console.log("[TTS] 🎤 ========== TTS SYNTHESIS START ==========");
   console.log(`[TTS] 📝 Text to synthesize (callControlId: ${callControlId}):`, aiText);
-  console.log("[TTS] 🗣️ TTS Voice:", config.telnyx.ttsVoiceId);
+  console.log("[TTS] 🗣️ TTS Voice:", effectiveVoiceId, voiceId ? "(custom)" : "(default)");
   console.log("[TTS] 📤 Calling Telnyx Speak API...");
 
   try {
@@ -109,7 +112,7 @@ export async function synthesizeSpeech(
       `https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`,
       {
         payload: aiText,
-        voice: config.telnyx.ttsVoiceId,
+        voice: effectiveVoiceId,
       },
       {
         headers: {
