@@ -65,6 +65,11 @@ const config = {
     model: getEnv("GROQ_MODEL", "llama-3.1-8b-instant"),
   },
 
+  deepinfra: {
+    apiKey: getEnv("DEEPINFRA_API_KEY"),
+    model: getEnv("DEEPINFRA_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+  },
+
   telnyx: {
     apiKey: requireEnv("TELNYX_API_KEY"),
     sipConnectionId: requireEnv("TELNYX_SIP_CONNECTION_ID"),

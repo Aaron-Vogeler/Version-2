@@ -11,20 +11,28 @@ import { authOptions } from '@/../pages/api/auth/[...nextauth]';
 
 // Groq API configuration
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY;
 const DEFAULT_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const DEEPINFRA_API_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
 
-// Available Groq models for selection
-const GROQ_MODELS = [
-  { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', description: 'Fast, efficient model for quick responses' },
-  { id: 'llama-3.1-70b-versatile', name: 'Llama 3.1 70B Versatile', description: 'Larger model with better reasoning' },
-  { id: 'llama-3.2-1b-preview', name: 'Llama 3.2 1B Preview', description: 'Smallest, fastest model' },
-  { id: 'llama-3.2-3b-preview', name: 'Llama 3.2 3B Preview', description: 'Small but capable model' },
-  { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', description: 'Latest large model' },
-  { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'Mixture of experts model' },
-  { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned' },
-  { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', description: 'GPT open-source 20B model' },
+// Available models for selection (Groq + DeepInfra)
+const AVAILABLE_MODELS = [
+  // Groq models
+  { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', description: 'Fast, efficient model for quick responses', provider: 'groq' },
+  { id: 'llama-3.1-70b-versatile', name: 'Llama 3.1 70B Versatile', description: 'Larger model with better reasoning', provider: 'groq' },
+  { id: 'llama-3.2-1b-preview', name: 'Llama 3.2 1B Preview', description: 'Smallest, fastest model', provider: 'groq' },
+  { id: 'llama-3.2-3b-preview', name: 'Llama 3.2 3B Preview', description: 'Small but capable model', provider: 'groq' },
+  { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', description: 'Latest large model', provider: 'groq' },
+  { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'Mixture of experts model', provider: 'groq' },
+  { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned', provider: 'groq' },
+  { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', description: 'GPT open-source 20B model', provider: 'groq' },
+  // DeepInfra models
+  { id: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo', name: 'Llama 3.1 8B Instruct Turbo (DeepInfra)', description: 'Fast Llama 3.1 8B via DeepInfra', provider: 'deepinfra' },
 ];
+
+// Legacy alias for backwards compatibility
+const GROQ_MODELS = AVAILABLE_MODELS;
 
 // =============================================================================
 // VARIABLE KEYS (use these placeholders in prompts)
@@ -194,21 +202,51 @@ function formatTurnsForSummary(turns: Turn[]): string {
 }
 
 /**
- * Call Groq API
+ * Determine which provider to use based on model ID
+ * DeepInfra models contain "/" (e.g., "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
  */
-async function callGroqAPI(
+function getProviderForModel(model: string): 'groq' | 'deepinfra' {
+  // Check for DeepInfra model patterns (contains "/" and not openai/)
+  if (model.includes('/') && !model.startsWith('openai/')) {
+    return 'deepinfra';
+  }
+  return 'groq';
+}
+
+/**
+ * Call LLM API (Groq or DeepInfra based on model)
+ */
+async function callLLMAPI(
   messages: ChatMessage[],
   model: string,
   temperature: number,
   max_tokens: number,
   top_p: number
-): Promise<{ response: GroqResponse; latency_ms: number }> {
+): Promise<{ response: GroqResponse; latency_ms: number; provider: string }> {
   const startTime = Date.now();
+  const provider = getProviderForModel(model);
 
-  const groqResponse = await fetch(GROQ_API_URL, {
+  let apiUrl: string;
+  let apiKey: string | undefined;
+
+  if (provider === 'deepinfra') {
+    apiUrl = DEEPINFRA_API_URL;
+    apiKey = DEEPINFRA_API_KEY;
+    if (!apiKey) {
+      throw new Error('DeepInfra API key not configured');
+    }
+  } else {
+    apiUrl = GROQ_API_URL;
+    apiKey = GROQ_API_KEY;
+    if (!apiKey) {
+      throw new Error('Groq API key not configured');
+    }
+  }
+
+  const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -222,13 +260,25 @@ async function callGroqAPI(
 
   const endTime = Date.now();
 
-  if (!groqResponse.ok) {
-    const errorData = await groqResponse.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `Groq API error: ${groqResponse.status}`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || `${provider} API error: ${response.status}`);
   }
 
-  const data: GroqResponse = await groqResponse.json();
-  return { response: data, latency_ms: endTime - startTime };
+  const data: GroqResponse = await response.json();
+  return { response: data, latency_ms: endTime - startTime, provider };
+}
+
+// Legacy alias for backwards compatibility
+async function callGroqAPI(
+  messages: ChatMessage[],
+  model: string,
+  temperature: number,
+  max_tokens: number,
+  top_p: number
+): Promise<{ response: GroqResponse; latency_ms: number }> {
+  const result = await callLLMAPI(messages, model, temperature, max_tokens, top_p);
+  return { response: result.response, latency_ms: result.latency_ms };
 }
 
 export async function POST(req: NextRequest) {
@@ -239,13 +289,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Validate API key
-    if (!GROQ_API_KEY) {
-      return NextResponse.json(
-        { error: 'Groq API key not configured' },
-        { status: 500 }
-      );
-    }
+    // API key validation is handled in callLLMAPI based on the selected model
 
     // Parse request body
     const body: GroqChatRequest = await req.json();

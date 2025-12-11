@@ -9,6 +9,52 @@ const groq = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
+// Create DeepInfra client (only if API key is configured)
+const deepinfra = config.deepinfra.apiKey
+  ? new OpenAI({
+      apiKey: config.deepinfra.apiKey,
+      baseURL: "https://api.deepinfra.com/v1/openai",
+    })
+  : null;
+
+/**
+ * Determine which LLM provider to use based on model name.
+ * DeepInfra models typically contain a "/" (e.g., "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
+ * or start with "deepinfra:" prefix.
+ */
+function getProviderForModel(model: string): { client: OpenAI; provider: string } {
+  // Check for explicit deepinfra prefix
+  if (model.startsWith("deepinfra:")) {
+    if (!deepinfra) {
+      console.warn("[LLM] DeepInfra model requested but DEEPINFRA_API_KEY not configured, falling back to Groq");
+      return { client: groq, provider: "groq" };
+    }
+    return { client: deepinfra, provider: "deepinfra" };
+  }
+
+  // Check for DeepInfra model patterns (contains "/" and looks like a HuggingFace model ID)
+  if (model.includes("/") && !model.startsWith("openai/")) {
+    if (!deepinfra) {
+      console.warn("[LLM] DeepInfra model requested but DEEPINFRA_API_KEY not configured, falling back to Groq");
+      return { client: groq, provider: "groq" };
+    }
+    return { client: deepinfra, provider: "deepinfra" };
+  }
+
+  // Default to Groq
+  return { client: groq, provider: "groq" };
+}
+
+/**
+ * Get the actual model ID (strip provider prefix if present)
+ */
+function getModelId(model: string): string {
+  if (model.startsWith("deepinfra:")) {
+    return model.substring("deepinfra:".length);
+  }
+  return model;
+}
+
 /**
  * Re-export CallContext from the context manager for backward compatibility.
  */
@@ -113,8 +159,11 @@ export async function generateRollingSummary(
     const startTime = Date.now();
     // Use model from context if available, otherwise fall back to config
     const modelToUse = context.model || config.groq.model;
-    const response = await groq.chat.completions.create({
-      model: modelToUse,
+    const { client, provider } = getProviderForModel(modelToUse);
+    const actualModelId = getModelId(modelToUse);
+    console.log(`[${callId}] Using ${provider} with model ${actualModelId} for summary`);
+    const response = await client.chat.completions.create({
+      model: actualModelId,
       messages: summaryMessages,
       temperature: 0.2, // Lower temperature for consistency
       max_tokens: config_params.maxSummaryTokensHint,
@@ -236,9 +285,14 @@ export async function generateAssistantReply(
   const reasoningToUse = callContext?.reasoning || 'medium';
   const jsonModeToUse = callContext?.jsonMode || false;
 
+  // Select the right provider based on model
+  const { client, provider } = getProviderForModel(modelToUse);
+  const actualModelId = getModelId(modelToUse);
+  console.log(`[LLM] Using ${provider} with model ${actualModelId} for chat`);
+
   // Build API request parameters
   const apiParams: any = {
-    model: modelToUse,
+    model: actualModelId,
     messages,
     temperature: temperatureToUse,
     max_tokens: maxTokensToUse,
@@ -255,7 +309,7 @@ export async function generateAssistantReply(
     apiParams.response_format = { type: 'json_object' };
   }
 
-  const response = await groq.chat.completions.create(apiParams);
+  const response = await client.chat.completions.create(apiParams);
   const latencyMs = Date.now() - startTime;
 
   const assistantResponse = response.choices[0]?.message?.content || "";
