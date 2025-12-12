@@ -110,6 +110,11 @@ export interface CallContext {
   ivrNavigationHistory?: string[]; // History of DTMF inputs sent during this call
   lastDtmfSentAt?: number; // Timestamp of last DTMF sent (for pacing)
   humanDetectedAt?: number; // Timestamp when human was detected (exits IVR mode)
+
+  // LLM-based party type detection (human vs IVR/robotic)
+  detectedPartyType?: "human" | "robotic"; // Result of LLM party detection
+  partyDetectionComplete?: boolean; // Whether initial party detection has been done
+  partyDetectionTimestamp?: number; // When party detection occurred
 }
 
 /**
@@ -159,6 +164,9 @@ export function getOrCreateContext(
       ivrConfidence: 0,
       ivrMenuOptions: [],
       ivrNavigationHistory: [],
+      // Party detection initialization
+      partyDetectionComplete: false,
+      detectedPartyType: undefined,
     });
   }
   return callContextStore.get(callId)!;
@@ -285,6 +293,9 @@ export function clearContext(callId: string): void {
     context.ivrConfidence = 0;
     context.ivrMenuOptions = [];
     context.ivrNavigationHistory = [];
+    // Reset party detection state
+    context.partyDetectionComplete = false;
+    context.detectedPartyType = undefined;
     // Close Deepgram if needed
     if (context.deepgramSocket) {
       try {

@@ -191,6 +191,87 @@ export async function maybeUpdateSummaryForCall(
  * @param context - Call context with goal, call ID, and other metadata
  * @returns The AI-generated response, or an empty string if no response
  */
+/**
+ * Detect if the caller is an IVR/robotic system or a human.
+ * Used at the start of calls to adjust call control settings appropriately.
+ * @param transcriptText - The transcript text to analyze
+ * @param callId - Optional call ID for logging
+ * @returns true if it sounds like an IVR/AI system, false if it sounds like a human
+ */
+export async function detectPartyType(
+  transcriptText: string,
+  callId?: string
+): Promise<boolean> {
+  const systemPrompt = `You are analyzing phone call transcripts to determine if the speaker is an automated IVR/AI system or a human.
+
+IVR/AI indicators:
+- Menu prompts like "Press 1 for...", "For sales, press..."
+- Recorded greetings: "Thank you for calling...", "Your call is important to us"
+- Hold messages: "Please hold", "Your estimated wait time is..."
+- Robotic/scripted speech patterns
+- Standard automated responses
+
+Human indicators:
+- Natural conversational patterns
+- Personal introductions: "Hi, this is John", "How can I help you?"
+- Conversational filler words and natural pauses
+- Responsive dialogue, questions about the caller's needs
+- Informal or varied speech patterns
+
+Respond with ONLY "True" if this sounds like an IVR/AI/robotic system, or "False" if this sounds like a human. No other text.`;
+
+  const messages: Array<{ role: "system" | "user"; content: string }> = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: `Analyze this transcript:\n"${transcriptText}"\n\nIs this an IVR/AI system? Respond only with True or False.` },
+  ];
+
+  try {
+    const startTime = Date.now();
+    const response = await groq.chat.completions.create({
+      model: config.groq.model, // Use fast model for quick detection
+      messages,
+      temperature: 0.1, // Low temperature for consistent responses
+      max_tokens: 10, // We only need "True" or "False"
+    });
+    const latencyMs = Date.now() - startTime;
+
+    const result = response.choices[0]?.message?.content?.trim().toLowerCase() || "";
+    const isRobotic = result === "true" || result.startsWith("true");
+
+    console.log(`[PARTY-DETECT] 🔍 Detection result: ${isRobotic ? "ROBOTIC/IVR" : "HUMAN"} (response: "${result}", latency: ${latencyMs}ms)`);
+
+    // Log the LLM interaction for debugging
+    if (callId) {
+      insertLlmLog({
+        call_id: callId,
+        request_type: "party_detection",
+        model: config.groq.model,
+        temperature: 0.1,
+        max_tokens: 10,
+        system_prompt: systemPrompt,
+        messages: messages,
+        user_input: transcriptText,
+        assistant_response: result,
+        prompt_tokens: response.usage?.prompt_tokens,
+        completion_tokens: response.usage?.completion_tokens,
+        total_tokens: response.usage?.total_tokens,
+        latency_ms: latencyMs,
+      }).catch((err) => {
+        console.error(`[${callId}] Failed to log party detection:`, err);
+      });
+    }
+
+    return isRobotic;
+  } catch (error) {
+    console.error(
+      `[PARTY-DETECT] ❌ Detection failed, defaulting to human:`,
+      error instanceof Error ? error.message : error
+    );
+    // Default to human on error (more conservative - use normal timing)
+    return false;
+  }
+}
+
 export async function generateAssistantReply(
   userText: string,
   context?: CallContext
