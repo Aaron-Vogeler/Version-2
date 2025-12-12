@@ -1661,9 +1661,17 @@ wss.on("connection", async (ws) => {
           callContext.accumulatedTurnText.push(fullUtterance);
           console.log(`[TRANSCRIPT] Accumulated turn segment #${callContext.accumulatedTurnText.length}: "${fullUtterance}"`);
 
-          // PARTY DETECTION: On the first transcript segment, detect if we're talking to a human or IVR
-          if (!callContext.partyDetectionComplete && callContext.accumulatedTurnText.length === 1) {
-            console.log(`[PARTY-DETECT] 🎯 First transcript segment received, triggering party detection...`);
+          // PARTY DETECTION: On the first transcript segment OR after transfer, detect if we're talking to a human or IVR
+          const shouldDetectParty = !callContext.partyDetectionComplete && (
+            callContext.accumulatedTurnText.length === 1 || // First segment of call
+            callContext.pendingPartyRedetection // Re-detection after transfer
+          );
+
+          if (shouldDetectParty) {
+            const reason = callContext.pendingPartyRedetection ? "re-detection after transfer" : "first transcript segment";
+            console.log(`[PARTY-DETECT] 🎯 Triggering party detection (${reason})...`);
+            // Clear the pending flag
+            callContext.pendingPartyRedetection = false;
             // Run detection asynchronously (don't block the response flow)
             const ctx = callContext;
             detectPartyType(fullUtterance, ctx.callId).then((isRobotic) => {
@@ -1677,6 +1685,12 @@ wss.on("connection", async (ws) => {
                 ctx.isIvrMode = true;
                 ctx.ivrConfidence = 1.0; // High confidence from LLM detection
                 console.log(`[PARTY-DETECT] 🤖 IVR mode enabled based on LLM detection`);
+              } else {
+                // Human detected - exit IVR mode
+                ctx.isIvrMode = false;
+                ctx.ivrConfidence = 0;
+                ctx.humanDetectedAt = Date.now();
+                console.log(`[PARTY-DETECT] 👤 Human detected - IVR mode disabled`);
               }
             }).catch((err) => {
               console.error(`[PARTY-DETECT] ❌ Detection failed:`, err);
@@ -1755,9 +1769,17 @@ wss.on("connection", async (ws) => {
               ctx.accumulatedTurnText.push(fullUtterance);
               console.log(`[TRANSCRIPT] Accumulated turn segment #${ctx.accumulatedTurnText.length} (flush timer): "${fullUtterance}"`);
 
-              // PARTY DETECTION: On the first transcript segment, detect if we're talking to a human or IVR
-              if (!ctx.partyDetectionComplete && ctx.accumulatedTurnText.length === 1) {
-                console.log(`[PARTY-DETECT] 🎯 First transcript segment received (flush timer path), triggering party detection...`);
+              // PARTY DETECTION: On the first transcript segment OR after transfer, detect if we're talking to a human or IVR
+              const shouldDetectParty = !ctx.partyDetectionComplete && (
+                ctx.accumulatedTurnText.length === 1 || // First segment of call
+                ctx.pendingPartyRedetection // Re-detection after transfer
+              );
+
+              if (shouldDetectParty) {
+                const reason = ctx.pendingPartyRedetection ? "re-detection after transfer" : "first transcript segment";
+                console.log(`[PARTY-DETECT] 🎯 Triggering party detection - flush timer path (${reason})...`);
+                // Clear the pending flag
+                ctx.pendingPartyRedetection = false;
                 // Run detection asynchronously (don't block the response flow)
                 detectPartyType(fullUtterance, ctx.callId).then((isRobotic) => {
                   ctx.partyDetectionComplete = true;
@@ -1770,6 +1792,12 @@ wss.on("connection", async (ws) => {
                     ctx.isIvrMode = true;
                     ctx.ivrConfidence = 1.0; // High confidence from LLM detection
                     console.log(`[PARTY-DETECT] 🤖 IVR mode enabled based on LLM detection`);
+                  } else {
+                    // Human detected - exit IVR mode
+                    ctx.isIvrMode = false;
+                    ctx.ivrConfidence = 0;
+                    ctx.humanDetectedAt = Date.now();
+                    console.log(`[PARTY-DETECT] 👤 Human detected - IVR mode disabled`);
                   }
                 }).catch((err) => {
                   console.error(`[PARTY-DETECT] ❌ Detection failed:`, err);

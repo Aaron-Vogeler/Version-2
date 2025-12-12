@@ -125,6 +125,7 @@ export interface CallContext {
   detectedPartyType?: "human" | "robotic"; // Result of LLM party detection
   partyDetectionComplete?: boolean; // Whether initial party detection has been done
   partyDetectionTimestamp?: number; // When party detection occurred
+  pendingPartyRedetection?: boolean; // Flag to trigger re-detection on next transcript (e.g., after transfer)
 }
 
 /**

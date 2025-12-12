@@ -222,6 +222,34 @@ export function updateIvrState(callContext: CallContext, analysis: IvrAnalysis):
   // Use per-call threshold if provided, otherwise fall back to config default
   const threshold = callContext.ivrAutoDetectThreshold ?? config.ivr.autoDetectThreshold;
 
+  // TRANSFER DETECTION: If IVR announces a transfer, reset party detection
+  // so the system will re-evaluate when someone new answers
+  if (analysis.isTransfer && callContext.detectedPartyType === "robotic") {
+    console.log(`[IVR] 📞 Transfer detected! Resetting party detection for re-evaluation after transfer...`);
+    callContext.partyDetectionComplete = false;
+    callContext.detectedPartyType = undefined;
+    callContext.partyDetectionTimestamp = undefined;
+    callContext.pendingPartyRedetection = true; // Flag to trigger LLM re-detection on next transcript
+    // Keep isIvrMode true until we confirm the new party
+  }
+
+  // HUMAN DETECTION: Check for strong human indicators regardless of current mode
+  const hasHumanIndicators = analysis.matchedPatterns.some(p => p.startsWith("human:"));
+  if (hasHumanIndicators && analysis.confidence < threshold) {
+    // Human detected - update state even if we were in robotic mode
+    if (callContext.isIvrMode || callContext.detectedPartyType === "robotic") {
+      console.log(`[IVR] 👤 Human detected! Exiting IVR mode (confidence: ${(analysis.confidence * 100).toFixed(1)}%, patterns: ${analysis.matchedPatterns.filter(p => p.startsWith("human:")).join(", ")})`);
+      callContext.isIvrMode = false;
+      callContext.humanDetectedAt = Date.now();
+      callContext.ivrConfidence = 0;
+      // Update LLM detection state as well
+      callContext.detectedPartyType = "human";
+      callContext.partyDetectionComplete = true;
+      callContext.partyDetectionTimestamp = Date.now();
+    }
+    return; // Don't process IVR patterns if human was detected
+  }
+
   // Update IVR mode based on confidence
   if (analysis.confidence >= threshold) {
     if (!callContext.isIvrMode) {
@@ -242,15 +270,8 @@ export function updateIvrState(callContext: CallContext, analysis: IvrAnalysis):
       console.log(`[IVR] 📋 Detected menu options: ${analysis.menuOptions.join(" | ")}`);
     }
   } else if (callContext.isIvrMode && analysis.confidence < threshold * 0.5) {
-    // Exit IVR mode if confidence drops significantly
-    // Look for strong human indicators
-    const hasHumanIndicators = analysis.matchedPatterns.some(p => p.startsWith("human:"));
-    if (hasHumanIndicators) {
-      console.log(`[IVR] 👤 Exiting IVR mode - human detected (confidence: ${(analysis.confidence * 100).toFixed(1)}%)`);
-      callContext.isIvrMode = false;
-      callContext.humanDetectedAt = Date.now();
-      callContext.ivrConfidence = 0;
-    }
+    // Exit IVR mode if confidence drops significantly below threshold
+    console.log(`[IVR] 📉 IVR confidence dropped below ${(threshold * 0.5 * 100).toFixed(0)}% - watching for human...`);
   }
 }
 
@@ -259,12 +280,35 @@ export function updateIvrState(callContext: CallContext, analysis: IvrAnalysis):
  * Returns true if:
  * - Pattern-based IVR detection is active with high confidence, OR
  * - LLM-based party detection determined this is a robotic/IVR system
+ *
+ * Returns false if:
+ * - Human was detected more recently than the last IVR/robotic detection
+ * - Party detection was reset (awaiting re-evaluation after transfer)
  */
 export function shouldUseIvrTiming(callContext: CallContext): boolean {
-  // Check LLM-based party detection first (most authoritative)
+  // If human was detected, don't use IVR timing
+  // This takes precedence over any prior robotic detection
+  if (callContext.humanDetectedAt) {
+    // Check if human was detected after the last party detection
+    const partyDetectionTime = callContext.partyDetectionTimestamp || 0;
+    if (callContext.humanDetectedAt > partyDetectionTime) {
+      return false;
+    }
+  }
+
+  // If party detection was reset (e.g., after transfer), don't use IVR timing
+  // until we re-confirm the party type
+  if (!callContext.partyDetectionComplete && callContext.detectedPartyType === undefined) {
+    // Check pattern-based IVR mode as fallback during re-detection period
+    const threshold = callContext.ivrAutoDetectThreshold ?? config.ivr.autoDetectThreshold;
+    return callContext.isIvrMode === true && (callContext.ivrConfidence || 0) >= threshold;
+  }
+
+  // Check LLM-based party detection
   if (callContext.partyDetectionComplete && callContext.detectedPartyType === "robotic") {
     return true;
   }
+
   // Fall back to pattern-based detection
   // Use per-call threshold if provided, otherwise fall back to config default
   const threshold = callContext.ivrAutoDetectThreshold ?? config.ivr.autoDetectThreshold;
