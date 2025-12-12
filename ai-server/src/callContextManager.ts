@@ -125,6 +125,68 @@ export interface CallContext {
   detectedPartyType?: "human" | "robotic"; // Result of LLM party detection
   partyDetectionComplete?: boolean; // Whether initial party detection has been done
   partyDetectionTimestamp?: number; // When party detection occurred
+
+  // Per-call party detection settings (overrides config defaults)
+  partyDetectionEnabled?: boolean; // Enable auto party detection
+  partyDetectionTemperature?: number; // LLM temperature for detection
+  partyDetectionMaxTokens?: number; // Max tokens for detection
+  partyDetectionSystemPrompt?: string; // Custom detection system prompt
+  partyDetectionMinTranscriptLength?: number; // Min chars before detection
+
+  // Per-call context management settings (overrides config defaults)
+  maxTurnsInWindow?: number; // Recent turns to keep
+  summaryUpdateIntervalTurns?: number; // Turns before updating summary
+  maxSummaryTokensHint?: number; // Token limit for summaries
+
+  // Per-call audio processing settings (overrides config defaults)
+  audioSilenceThreshold?: number; // PCM amplitude for silence
+  audioHysteresisPackets?: number; // Packets to confirm state change
+  audioDiscontinuityThreshold?: number; // Sample jump to trigger smoothing
+  audioFadeSamples?: number; // Fade length for discontinuities
+  audioSilenceFadeSamples?: number; // Fade length for silence transitions
+
+  // Per-call speech estimation settings (overrides config defaults)
+  speechWordsPerSecond?: number; // Speaking rate for barge-in
+  speechMinMeaningfulDuration?: number; // Min duration for meaningful speech
+
+  // Per-call transcript settings (overrides config defaults)
+  deepgramEndpointing?: number; // End-of-speech detection ms
+  transcriptAppendSegments?: boolean; // Append vs replace segments
+  deepgramVadEvents?: boolean; // Enable VAD events from Deepgram
+  deepgramInterimResults?: boolean; // Enable interim results from Deepgram
+
+  // Per-call audio normalization settings (overrides config defaults)
+  audioNormTargetPeak?: number; // Target peak as % of full scale
+  audioNormMinThreshold?: number; // Min peak threshold before normalizing
+  audioNormMaxGain?: number; // Max gain multiplier
+  audioSoftClipThreshold?: number; // Soft clipping threshold PCM value
+  audioSoftClipFactor?: number; // Soft clip compression factor
+  audioPreMulawMinPeak?: number; // Min peak for pre-mulaw boost
+  audioPreMulawTargetPeak?: number; // Target peak for pre-mulaw boost
+
+  // Per-call downsampling filter settings (overrides config defaults)
+  downsampleCutoffHz?: number; // FIR filter cutoff frequency
+  downsampleNumTaps?: number; // FIR filter taps count
+
+  // Per-call barge-in grace period (overrides config default)
+  bargeInGracePeriodMs?: number; // Delay before enabling barge-in
+
+  // Per-call hangup delay (overrides config default)
+  hangupDelayMs?: number; // Wait for TTS before hangup
+
+  // Per-call TTS/Voice settings (overrides config defaults)
+  ttsVoiceId?: string; // Telnyx TTS voice
+
+  // Per-call STT/Deepgram settings (overrides config defaults)
+  deepgramModel?: string; // Deepgram model
+
+  // Per-call recording settings (overrides config defaults)
+  customRecordingEnabled?: boolean; // Enable self-hosted recording
+  customRecordingMaxBytes?: number; // Max recording buffer size
+
+  // Per-call rolling summary settings (overrides config defaults)
+  rollingSummarySystemMessage?: string; // System message for summary generation
+  rollingSummaryTemperature?: number; // Temperature for summary generation
 }
 
 /**

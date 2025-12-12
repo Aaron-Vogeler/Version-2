@@ -138,6 +138,99 @@ const config = {
   },
 
   // =============================================================================
+  // PARTY DETECTION SETTINGS (Human vs IVR/Robotic)
+  // =============================================================================
+  partyDetection: {
+    // Enable automatic party detection at call start
+    enabled: getEnv("PARTY_DETECTION_ENABLED", "true") === "true",
+    // Temperature for party detection LLM call (low for consistency)
+    temperature: parseFloat(getEnv("PARTY_DETECTION_TEMPERATURE", "0.1")),
+    // Max tokens for party detection (only needs True/False)
+    maxTokens: getEnvInt("PARTY_DETECTION_MAX_TOKENS", 10),
+    // System prompt for party detection (can be customized)
+    systemPrompt: getEnv("PARTY_DETECTION_SYSTEM_PROMPT", ""),
+    // Minimum transcript length before attempting detection
+    minTranscriptLength: getEnvInt("PARTY_DETECTION_MIN_TRANSCRIPT_LENGTH", 20),
+  },
+
+  // =============================================================================
+  // AUDIO PROCESSING SETTINGS
+  // =============================================================================
+  audio: {
+    // PCM amplitude threshold for silence detection (0-32768)
+    silenceThreshold: getEnvInt("AUDIO_SILENCE_THRESHOLD", 3000),
+    // Consecutive packets required to confirm state change (at 50 packets/sec)
+    hysteresisPackets: getEnvInt("AUDIO_HYSTERESIS_PACKETS", 8),
+    // Sample jump threshold to trigger smoothing (~40% of full scale)
+    discontinuityThreshold: getEnvInt("AUDIO_DISCONTINUITY_THRESHOLD", 25000),
+    // Fade length for discontinuities in samples (at 8kHz, 16 = 2ms)
+    fadeSamples: getEnvInt("AUDIO_FADE_SAMPLES", 16),
+    // Fade length for silence transitions in samples (at 8kHz, 32 = 4ms)
+    silenceFadeSamples: getEnvInt("AUDIO_SILENCE_FADE_SAMPLES", 32),
+    // Enable audio smoother debug logging
+    debugSmoother: getEnv("DEBUG_AUDIO_SMOOTHER", "false") === "true",
+  },
+
+  // =============================================================================
+  // SPEECH ESTIMATION SETTINGS
+  // =============================================================================
+  speech: {
+    // Average speaking rate in words per second (for barge-in estimation)
+    wordsPerSecond: parseFloat(getEnv("SPEECH_WORDS_PER_SECOND", "2.5")),
+    // Minimum duration in seconds to consider speech meaningful
+    minMeaningfulDuration: parseFloat(getEnv("SPEECH_MIN_MEANINGFUL_DURATION", "0.5")),
+  },
+
+  // =============================================================================
+  // TRANSCRIPT SETTINGS
+  // =============================================================================
+  transcript: {
+    // Deepgram endpointing - milliseconds before end-of-speech detection
+    deepgramEndpointing: getEnvInt("DEEPGRAM_ENDPOINTING", 100),
+    // Whether to append/accumulate transcript segments vs replace
+    appendSegments: getEnv("TRANSCRIPT_APPEND_SEGMENTS", "true") === "true",
+    // Enable VAD (Voice Activity Detection) events from Deepgram
+    // Triggers SpeechStarted events for detecting when caller begins speaking
+    vadEvents: getEnv("DEEPGRAM_VAD_EVENTS", "true") === "true",
+    // Enable interim results from Deepgram
+    // Provides partial transcriptions before speech is final (useful for faster barge-in)
+    interimResults: getEnv("DEEPGRAM_INTERIM_RESULTS", "true") === "true",
+  },
+
+  // =============================================================================
+  // AUDIO NORMALIZATION SETTINGS
+  // =============================================================================
+  audioNormalization: {
+    // Target peak as percentage of full scale (0.0-1.0) for normalization
+    // Higher values make audio louder but may cause clipping. Default: 0.85 (85%)
+    targetPeakPercent: parseFloat(getEnv("AUDIO_NORM_TARGET_PEAK", "0.85")),
+    // Minimum peak threshold before normalization kicks in (as % of target)
+    // Audio below this level will be boosted. Default: 0.82 (82% of target = ~70% overall)
+    minPeakThreshold: parseFloat(getEnv("AUDIO_NORM_MIN_THRESHOLD", "0.82")),
+    // Maximum gain multiplier to prevent over-amplification of quiet audio
+    maxGain: parseFloat(getEnv("AUDIO_NORM_MAX_GAIN", "3.0")),
+    // Soft clipping threshold (absolute PCM value) - values above this get compressed
+    softClipThreshold: getEnvInt("AUDIO_SOFT_CLIP_THRESHOLD", 28000),
+    // Soft clipping compression factor - how much to compress excess above threshold
+    softClipFactor: parseFloat(getEnv("AUDIO_SOFT_CLIP_FACTOR", "0.3")),
+    // Minimum acceptable peak for pre-mulaw boost (below this, audio gets boosted)
+    preMulawMinPeak: getEnvInt("AUDIO_PREMULAW_MIN_PEAK", 6500),
+    // Target peak for pre-mulaw boost (what to boost quiet audio to)
+    preMulawTargetPeak: getEnvInt("AUDIO_PREMULAW_TARGET_PEAK", 16000),
+  },
+
+  // =============================================================================
+  // DOWNSAMPLING FILTER SETTINGS
+  // =============================================================================
+  downsampleFilter: {
+    // FIR low-pass filter cutoff frequency in Hz (standard telephony: 3400 Hz)
+    // Must be below Nyquist frequency (4000 Hz for 8kHz output) to prevent aliasing
+    cutoffHz: getEnvInt("DOWNSAMPLE_CUTOFF_HZ", 3400),
+    // Number of FIR filter taps (must be odd, higher = better quality but slower)
+    numTaps: getEnvInt("DOWNSAMPLE_NUM_TAPS", 63),
+  },
+
+  // =============================================================================
   // LLM CONFIG
   // =============================================================================
   llm: {
@@ -172,6 +265,8 @@ Be concise and focus on what's most important to continue this call effectively.
       "ROLLING_SUMMARY_SYSTEM_MESSAGE",
       "You are a concise call summary generator. Create summaries that preserve the most important context for continuing phone conversations."
     ),
+    // Temperature for rolling summary generation (lower = more consistent)
+    rollingSummaryTemperature: parseFloat(getEnv("ROLLING_SUMMARY_TEMPERATURE", "0.2")),
   },
 
   // Call rate limiting

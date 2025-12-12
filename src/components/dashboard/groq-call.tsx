@@ -57,6 +57,8 @@ import {
   Volume2,
   Headphones,
   Radio,
+  Mic,
+  Save,
 } from 'lucide-react';
 import { LiveCallObserver } from './live-call-observer';
 
@@ -143,6 +145,7 @@ const CALL_AUDIO_SOUNDS = [
 
 // Groq settings interface for saved configuration
 interface SavedGroqSettings {
+  // LLM Parameters
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -152,14 +155,19 @@ interface SavedGroqSettings {
   jsonMode?: boolean;
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
+
+  // Call Control Settings (TTS & Response Timing)
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
+    bargeInGracePeriodMs?: number;
     callerUtteranceFlushMs?: number;
     hangupDelayMs?: number;
     holdCheckInIntervalMs?: number;
     holdMaxCheckIns?: number;
   };
+
+  // IVR/Phone Tree Settings
   ivrSettings?: {
     debounceMs?: number;
     utteranceFlushMs?: number;
@@ -169,6 +177,84 @@ interface SavedGroqSettings {
     responseTimeoutMs?: number;
     maxDtmfRetries?: number;
     disableBargeInGracePeriod?: boolean;
+  };
+
+  // Context Management Settings
+  contextSettings?: {
+    maxTurnsInWindow?: number;
+    summaryUpdateIntervalTurns?: number;
+    maxSummaryTokensHint?: number;
+  };
+
+  // Party Detection Settings (Human vs IVR)
+  partyDetectionSettings?: {
+    enabled?: boolean;
+    temperature?: number;
+    maxTokens?: number;
+    systemPrompt?: string;
+    minTranscriptLength?: number;
+  };
+
+  // Audio Processing Settings
+  audioSettings?: {
+    silenceThreshold?: number;
+    hysteresisPackets?: number;
+    discontinuityThreshold?: number;
+    fadeSamples?: number;
+    silenceFadeSamples?: number;
+  };
+
+  // Speech Estimation Settings
+  speechSettings?: {
+    wordsPerSecond?: number;
+    minMeaningfulDuration?: number;
+  };
+
+  // Transcript Settings
+  transcriptSettings?: {
+    deepgramEndpointing?: number;
+    appendSegments?: boolean;
+    vadEvents?: boolean;
+    interimResults?: boolean;
+  };
+
+  // Audio Normalization Settings
+  audioNormSettings?: {
+    targetPeakPercent?: number;
+    minPeakThreshold?: number;
+    maxGain?: number;
+    softClipThreshold?: number;
+    softClipFactor?: number;
+    preMulawMinPeak?: number;
+    preMulawTargetPeak?: number;
+  };
+
+  // Downsampling Filter Settings
+  downsampleSettings?: {
+    cutoffHz?: number;
+    numTaps?: number;
+  };
+
+  // TTS/Voice Settings
+  voiceSettings?: {
+    ttsVoiceId?: string;
+  };
+
+  // STT/Deepgram Settings
+  sttSettings?: {
+    deepgramModel?: string;
+  };
+
+  // Recording Settings
+  recordingSettings?: {
+    customRecordingEnabled?: boolean;
+    customRecordingMaxBytes?: number;
+  };
+
+  // Rolling Summary Settings
+  summarySettings?: {
+    rollingSummarySystemMessage?: string;
+    rollingSummaryTemperature?: number;
   };
 }
 
@@ -227,6 +313,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [callControlSettings, setCallControlSettings] = useState({
     ttsDebounceMs: 500,
     bargeInCooldownMs: 300,
+    bargeInGracePeriodMs: 800,
     callerUtteranceFlushMs: 300,
     hangupDelayMs: 2000,
     holdCheckInIntervalMs: 30000,
@@ -246,6 +333,95 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     disableBargeInGracePeriod: true,
   });
   const [showIvrSettings, setShowIvrSettings] = useState(false);
+
+  // Context Management settings
+  const [contextSettings, setContextSettings] = useState({
+    maxTurnsInWindow: 12,
+    summaryUpdateIntervalTurns: 6,
+    maxSummaryTokensHint: 300,
+  });
+  const [showContextSettings, setShowContextSettings] = useState(false);
+
+  // Party Detection settings (Human vs IVR)
+  const [partyDetectionSettings, setPartyDetectionSettings] = useState({
+    enabled: true,
+    temperature: 0.1,
+    maxTokens: 10,
+    systemPrompt: '',
+    minTranscriptLength: 20,
+  });
+  const [showPartyDetectionSettings, setShowPartyDetectionSettings] = useState(false);
+
+  // Audio Processing settings
+  const [audioSettings, setAudioSettings] = useState({
+    silenceThreshold: 3000,
+    hysteresisPackets: 8,
+    discontinuityThreshold: 25000,
+    fadeSamples: 16,
+    silenceFadeSamples: 32,
+  });
+  const [showAudioSettings, setShowAudioSettings] = useState(false);
+
+  // Speech Estimation settings
+  const [speechSettings, setSpeechSettings] = useState({
+    wordsPerSecond: 2.5,
+    minMeaningfulDuration: 0.5,
+  });
+  const [showSpeechSettings, setShowSpeechSettings] = useState(false);
+
+  // Transcript settings
+  const [transcriptSettings, setTranscriptSettings] = useState({
+    deepgramEndpointing: 100,
+    appendSegments: true,
+    vadEvents: true,
+    interimResults: true,
+  });
+  const [showTranscriptSettings, setShowTranscriptSettings] = useState(false);
+
+  // Audio Normalization settings
+  const [audioNormSettings, setAudioNormSettings] = useState({
+    targetPeakPercent: 0.85,
+    minPeakThreshold: 0.82,
+    maxGain: 3.0,
+    softClipThreshold: 28000,
+    softClipFactor: 0.3,
+    preMulawMinPeak: 6500,
+    preMulawTargetPeak: 16000,
+  });
+  const [showAudioNormSettings, setShowAudioNormSettings] = useState(false);
+
+  // Downsampling Filter settings
+  const [downsampleSettings, setDownsampleSettings] = useState({
+    cutoffHz: 3400,
+    numTaps: 63,
+  });
+  const [showDownsampleSettings, setShowDownsampleSettings] = useState(false);
+
+  // TTS/Voice settings
+  const [voiceSettings, setVoiceSettings] = useState({
+    ttsVoiceId: 'Telnyx.KokoroTTS.bm_george',
+  });
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+
+  // STT/Deepgram settings
+  const [sttSettings, setSttSettings] = useState({
+    deepgramModel: 'nova-2',
+  });
+  const [showSttSettings, setShowSttSettings] = useState(false);
+
+  // Recording settings
+  const [recordingSettings, setRecordingSettings] = useState({
+    customRecordingEnabled: true,
+    customRecordingMaxBytes: 50000000, // 50MB
+  });
+  const [showRecordingSettings, setShowRecordingSettings] = useState(false);
+
+  // Rolling Summary settings
+  const [summarySettings, setSummarySettings] = useState({
+    rollingSummarySystemMessage: '',
+    rollingSummaryTemperature: 0.2,
+  });
+  const [showSummarySettings, setShowSummarySettings] = useState(false);
 
   // UI state
   const [copiedPrompt, setCopiedPrompt] = useState(false);
@@ -274,6 +450,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   useEffect(() => {
     if (groqSettings) {
       console.log('[GroqCall] Loading saved settings:', groqSettings);
+      // LLM parameters
       if (groqSettings.model) setSelectedModel(groqSettings.model);
       if (groqSettings.temperature !== undefined) setTemperature(groqSettings.temperature);
       if (groqSettings.maxTokens !== undefined) setMaxTokens(groqSettings.maxTokens);
@@ -283,16 +460,95 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       if (groqSettings.jsonMode !== undefined) setJsonMode(groqSettings.jsonMode);
       if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
       if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
+      // Call control settings
       if (groqSettings.callControlSettings) {
         setCallControlSettings(prev => ({
           ...prev,
           ...groqSettings.callControlSettings,
         }));
       }
+      // IVR settings
       if (groqSettings.ivrSettings) {
         setIvrSettings(prev => ({
           ...prev,
           ...groqSettings.ivrSettings,
+        }));
+      }
+      // Context settings
+      if (groqSettings.contextSettings) {
+        setContextSettings(prev => ({
+          ...prev,
+          ...groqSettings.contextSettings,
+        }));
+      }
+      // Party detection settings
+      if (groqSettings.partyDetectionSettings) {
+        setPartyDetectionSettings(prev => ({
+          ...prev,
+          ...groqSettings.partyDetectionSettings,
+        }));
+      }
+      // Audio settings
+      if (groqSettings.audioSettings) {
+        setAudioSettings(prev => ({
+          ...prev,
+          ...groqSettings.audioSettings,
+        }));
+      }
+      // Speech settings
+      if (groqSettings.speechSettings) {
+        setSpeechSettings(prev => ({
+          ...prev,
+          ...groqSettings.speechSettings,
+        }));
+      }
+      // Transcript settings
+      if (groqSettings.transcriptSettings) {
+        setTranscriptSettings(prev => ({
+          ...prev,
+          ...groqSettings.transcriptSettings,
+        }));
+      }
+      // Audio normalization settings
+      if (groqSettings.audioNormSettings) {
+        setAudioNormSettings(prev => ({
+          ...prev,
+          ...groqSettings.audioNormSettings,
+        }));
+      }
+      // Downsampling filter settings
+      if (groqSettings.downsampleSettings) {
+        setDownsampleSettings(prev => ({
+          ...prev,
+          ...groqSettings.downsampleSettings,
+        }));
+      }
+      // Voice settings
+      if (groqSettings.voiceSettings) {
+        setVoiceSettings(prev => ({
+          ...prev,
+          ...groqSettings.voiceSettings,
+        }));
+      }
+      // STT settings
+      if (groqSettings.sttSettings) {
+        setSttSettings(prev => ({
+          ...prev,
+          ...groqSettings.sttSettings,
+        }));
+      }
+      // Recording settings
+      if (groqSettings.recordingSettings) {
+        setRecordingSettings(prev => ({
+          ...prev,
+          ...groqSettings.recordingSettings,
+        }));
+      }
+      // Summary settings
+      if (groqSettings.summarySettings) {
+        setSummarySettings(prev => ({
+          ...prev,
+          ...groqSettings.summarySettings,
         }));
       }
     }
@@ -496,17 +752,24 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          // Basic call info
           goal,
           context: additionalContext,
           to_number: toNumber,
           custom_system_prompt: customSystemPrompt,
           rolling_summary_prompt: rollingSummaryPrompt,
-          // Call control settings
+
+          // Call control settings (TTS & Response Timing)
           tts_debounce_ms: callControlSettings.ttsDebounceMs,
           barge_in_cooldown_ms: callControlSettings.bargeInCooldownMs,
+          barge_in_grace_period_ms: callControlSettings.bargeInGracePeriodMs,
           caller_utterance_flush_ms: callControlSettings.callerUtteranceFlushMs,
+          hangup_delay_ms: callControlSettings.hangupDelayMs,
+
+          // Hold settings
           hold_check_in_interval_ms: callControlSettings.holdCheckInIntervalMs,
           hold_max_check_ins: callControlSettings.holdMaxCheckIns,
+
           // IVR/Phone Tree settings
           ivr_debounce_ms: ivrSettings.debounceMs,
           ivr_utterance_flush_ms: ivrSettings.utteranceFlushMs,
@@ -516,6 +779,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           ivr_response_timeout_ms: ivrSettings.responseTimeoutMs,
           ivr_max_dtmf_retries: ivrSettings.maxDtmfRetries,
           ivr_disable_barge_in_grace_period: ivrSettings.disableBargeInGracePeriod,
+
+          // LLM parameters
           model: selectedModel,
           temperature: temperature,
           max_tokens: maxTokens,
@@ -523,6 +788,62 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           reasoning: reasoning,
           stream: stream,
           json_mode: jsonMode,
+
+          // Context management settings
+          max_turns_in_window: contextSettings.maxTurnsInWindow,
+          summary_update_interval_turns: contextSettings.summaryUpdateIntervalTurns,
+          max_summary_tokens_hint: contextSettings.maxSummaryTokensHint,
+
+          // Party detection settings
+          party_detection_enabled: partyDetectionSettings.enabled,
+          party_detection_temperature: partyDetectionSettings.temperature,
+          party_detection_max_tokens: partyDetectionSettings.maxTokens,
+          party_detection_system_prompt: partyDetectionSettings.systemPrompt,
+          party_detection_min_transcript_length: partyDetectionSettings.minTranscriptLength,
+
+          // Audio processing settings
+          audio_silence_threshold: audioSettings.silenceThreshold,
+          audio_hysteresis_packets: audioSettings.hysteresisPackets,
+          audio_discontinuity_threshold: audioSettings.discontinuityThreshold,
+          audio_fade_samples: audioSettings.fadeSamples,
+          audio_silence_fade_samples: audioSettings.silenceFadeSamples,
+
+          // Speech estimation settings
+          speech_words_per_second: speechSettings.wordsPerSecond,
+          speech_min_meaningful_duration: speechSettings.minMeaningfulDuration,
+
+          // Transcript settings
+          deepgram_endpointing: transcriptSettings.deepgramEndpointing,
+          transcript_append_segments: transcriptSettings.appendSegments,
+          deepgram_vad_events: transcriptSettings.vadEvents,
+          deepgram_interim_results: transcriptSettings.interimResults,
+
+          // Audio normalization settings
+          audio_norm_target_peak: audioNormSettings.targetPeakPercent,
+          audio_norm_min_threshold: audioNormSettings.minPeakThreshold,
+          audio_norm_max_gain: audioNormSettings.maxGain,
+          audio_soft_clip_threshold: audioNormSettings.softClipThreshold,
+          audio_soft_clip_factor: audioNormSettings.softClipFactor,
+          audio_pre_mulaw_min_peak: audioNormSettings.preMulawMinPeak,
+          audio_pre_mulaw_target_peak: audioNormSettings.preMulawTargetPeak,
+
+          // Downsampling filter settings
+          downsample_cutoff_hz: downsampleSettings.cutoffHz,
+          downsample_num_taps: downsampleSettings.numTaps,
+
+          // TTS/Voice settings
+          tts_voice_id: voiceSettings.ttsVoiceId,
+
+          // STT/Deepgram settings
+          deepgram_model: sttSettings.deepgramModel,
+
+          // Recording settings
+          custom_recording_enabled: recordingSettings.customRecordingEnabled,
+          custom_recording_max_bytes: recordingSettings.customRecordingMaxBytes,
+
+          // Rolling summary settings
+          rolling_summary_system_message: summarySettings.rollingSummarySystemMessage,
+          rolling_summary_temperature: summarySettings.rollingSummaryTemperature,
         }),
       });
 
@@ -578,23 +899,34 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   };
 
   const handleResetSettings = () => {
+    // Basic settings
     setGoal('');
     setAdditionalContext('');
     setAssistantName(customAssistantName);
     setUserName(firstName);
     setCustomSystemPrompt('');
     setRollingSummaryPrompt('');
+
+    // LLM parameters
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
+    setReasoning('medium');
+    setStream(false);
+    setJsonMode(false);
+
+    // Call control settings
     setCallControlSettings({
       ttsDebounceMs: 500,
       bargeInCooldownMs: 300,
+      bargeInGracePeriodMs: 800,
       callerUtteranceFlushMs: 300,
       hangupDelayMs: 2000,
       holdCheckInIntervalMs: 30000,
       holdMaxCheckIns: 5,
     });
+
+    // IVR settings
     setIvrSettings({
       debounceMs: 150,
       utteranceFlushMs: 200,
@@ -605,6 +937,85 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       maxDtmfRetries: 2,
       disableBargeInGracePeriod: true,
     });
+
+    // Context settings
+    setContextSettings({
+      maxTurnsInWindow: 12,
+      summaryUpdateIntervalTurns: 6,
+      maxSummaryTokensHint: 300,
+    });
+
+    // Party detection settings
+    setPartyDetectionSettings({
+      enabled: true,
+      temperature: 0.1,
+      maxTokens: 10,
+      systemPrompt: '',
+      minTranscriptLength: 20,
+    });
+
+    // Audio settings
+    setAudioSettings({
+      silenceThreshold: 3000,
+      hysteresisPackets: 8,
+      discontinuityThreshold: 25000,
+      fadeSamples: 16,
+      silenceFadeSamples: 32,
+    });
+
+    // Speech settings
+    setSpeechSettings({
+      wordsPerSecond: 2.5,
+      minMeaningfulDuration: 0.5,
+    });
+
+    // Transcript settings
+    setTranscriptSettings({
+      deepgramEndpointing: 100,
+      appendSegments: true,
+      vadEvents: true,
+      interimResults: true,
+    });
+
+    // Audio normalization settings
+    setAudioNormSettings({
+      targetPeakPercent: 0.85,
+      minPeakThreshold: 0.82,
+      maxGain: 3.0,
+      softClipThreshold: 28000,
+      softClipFactor: 0.3,
+      preMulawMinPeak: 6500,
+      preMulawTargetPeak: 16000,
+    });
+
+    // Downsampling filter settings
+    setDownsampleSettings({
+      cutoffHz: 3400,
+      numTaps: 63,
+    });
+
+    // Voice settings
+    setVoiceSettings({
+      ttsVoiceId: 'Telnyx.KokoroTTS.bm_george',
+    });
+
+    // STT settings
+    setSttSettings({
+      deepgramModel: 'nova-2',
+    });
+
+    // Recording settings
+    setRecordingSettings({
+      customRecordingEnabled: true,
+      customRecordingMaxBytes: 50000000,
+    });
+
+    // Summary settings
+    setSummarySettings({
+      rollingSummarySystemMessage: '',
+      rollingSummaryTemperature: 0.2,
+    });
+
     if (models.length > 0) {
       setSelectedModel(models[0].id);
     }
@@ -617,6 +1028,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     setSettingsSaveStatus('idle');
 
     const settingsToSave: SavedGroqSettings = {
+      // LLM parameters
       model: selectedModel,
       temperature,
       maxTokens,
@@ -626,8 +1038,32 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       jsonMode,
       customSystemPrompt,
       rollingSummaryPrompt,
+      // Call control settings
       callControlSettings,
+      // IVR settings
       ivrSettings,
+      // Context settings
+      contextSettings,
+      // Party detection settings
+      partyDetectionSettings,
+      // Audio settings
+      audioSettings,
+      // Speech settings
+      speechSettings,
+      // Transcript settings
+      transcriptSettings,
+      // Audio normalization settings
+      audioNormSettings,
+      // Downsampling filter settings
+      downsampleSettings,
+      // Voice settings
+      voiceSettings,
+      // STT settings
+      sttSettings,
+      // Recording settings
+      recordingSettings,
+      // Summary settings
+      summarySettings,
     };
 
     try {
@@ -1077,6 +1513,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               <p className="text-[10px] text-muted-foreground">Time between stop commands</p>
             </div>
             <div className="space-y-1">
+              <Label className="text-xs">Barge-In Grace Period (ms)</Label>
+              <Input
+                type="number"
+                min="0"
+                max="2000"
+                step="100"
+                value={callControlSettings.bargeInGracePeriodMs}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, bargeInGracePeriodMs: parseInt(e.target.value) || 800 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Delay before enabling barge-in (prevents echo)</p>
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Utterance Flush (ms)</Label>
               <Input
                 type="number"
@@ -1237,6 +1686,709 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               />
             </div>
             <p className="text-[10px] text-muted-foreground">IVRs don&apos;t have echo issues, so grace period can be disabled</p>
+          </div>
+        )}
+      </div>
+
+      {/* Context Management Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            Context Management
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowContextSettings(!showContextSettings)}
+            className="h-6 text-xs"
+          >
+            {showContextSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Controls how conversation history is managed and summarized
+        </p>
+        {showContextSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Max Turns In Window</Label>
+              <Input
+                type="number"
+                min="4"
+                max="50"
+                step="2"
+                value={contextSettings.maxTurnsInWindow}
+                onChange={(e) => setContextSettings(prev => ({ ...prev, maxTurnsInWindow: parseInt(e.target.value) || 12 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Recent conversation turns to keep (default: 12)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Summary Update Interval (turns)</Label>
+              <Input
+                type="number"
+                min="2"
+                max="20"
+                step="1"
+                value={contextSettings.summaryUpdateIntervalTurns}
+                onChange={(e) => setContextSettings(prev => ({ ...prev, summaryUpdateIntervalTurns: parseInt(e.target.value) || 6 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Turns before generating new summary (default: 6)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Max Summary Tokens</Label>
+              <Input
+                type="number"
+                min="100"
+                max="1000"
+                step="50"
+                value={contextSettings.maxSummaryTokensHint}
+                onChange={(e) => setContextSettings(prev => ({ ...prev, maxSummaryTokensHint: parseInt(e.target.value) || 300 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Approximate max tokens for rolling summary (default: 300)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Party Detection Settings (Human vs IVR) */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <User className="h-4 w-4" />
+            Human vs IVR Detection
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowPartyDetectionSettings(!showPartyDetectionSettings)}
+            className="h-6 text-xs"
+          >
+            {showPartyDetectionSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          LLM-based detection to differentiate humans from automated systems
+        </p>
+        {showPartyDetectionSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Enable Party Detection</Label>
+              <input
+                type="checkbox"
+                checked={partyDetectionSettings.enabled}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, enabled: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Auto-detect if callee is human or IVR at call start</p>
+            <div className="space-y-1">
+              <Label className="text-xs">Detection Temperature</Label>
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                value={partyDetectionSettings.temperature}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, temperature: parseFloat(e.target.value) || 0.1 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Lower = more consistent (default: 0.1)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Detection Max Tokens</Label>
+              <Input
+                type="number"
+                min="5"
+                max="50"
+                step="5"
+                value={partyDetectionSettings.maxTokens}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, maxTokens: parseInt(e.target.value) || 10 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Only needs True/False response (default: 10)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Min Transcript Length (chars)</Label>
+              <Input
+                type="number"
+                min="10"
+                max="100"
+                step="5"
+                value={partyDetectionSettings.minTranscriptLength}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, minTranscriptLength: parseInt(e.target.value) || 20 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Wait for this many characters before detection (default: 20)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Custom Detection Prompt</Label>
+              <Textarea
+                value={partyDetectionSettings.systemPrompt}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, systemPrompt: e.target.value }))}
+                placeholder="Leave empty for default prompt..."
+                className="min-h-[60px] resize-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground">Custom system prompt for party detection (optional)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Audio Processing Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Volume2 className="h-4 w-4" />
+            Audio Processing
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAudioSettings(!showAudioSettings)}
+            className="h-6 text-xs"
+          >
+            {showAudioSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Audio smoothing and silence detection parameters
+        </p>
+        {showAudioSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Silence Threshold (0-32768)</Label>
+              <Input
+                type="number"
+                min="500"
+                max="10000"
+                step="500"
+                value={audioSettings.silenceThreshold}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, silenceThreshold: parseInt(e.target.value) || 3000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">PCM amplitude below this = silence (default: 3000)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Hysteresis Packets</Label>
+              <Input
+                type="number"
+                min="2"
+                max="20"
+                step="1"
+                value={audioSettings.hysteresisPackets}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, hysteresisPackets: parseInt(e.target.value) || 8 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Consecutive packets to confirm state change (default: 8 = 160ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Discontinuity Threshold</Label>
+              <Input
+                type="number"
+                min="5000"
+                max="50000"
+                step="5000"
+                value={audioSettings.discontinuityThreshold}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, discontinuityThreshold: parseInt(e.target.value) || 25000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Sample jump to trigger smoothing (default: 25000)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Fade Samples</Label>
+              <Input
+                type="number"
+                min="4"
+                max="64"
+                step="4"
+                value={audioSettings.fadeSamples}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, fadeSamples: parseInt(e.target.value) || 16 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Fade length for discontinuities (default: 16 = 2ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Silence Fade Samples</Label>
+              <Input
+                type="number"
+                min="8"
+                max="128"
+                step="8"
+                value={audioSettings.silenceFadeSamples}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, silenceFadeSamples: parseInt(e.target.value) || 32 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Fade length for silence transitions (default: 32 = 4ms)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Speech Estimation Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <MessageSquare className="h-4 w-4" />
+            Speech Estimation
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSpeechSettings(!showSpeechSettings)}
+            className="h-6 text-xs"
+          >
+            {showSpeechSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Settings for estimating spoken content during barge-in
+        </p>
+        {showSpeechSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Words Per Second</Label>
+              <Input
+                type="number"
+                min="1.0"
+                max="5.0"
+                step="0.5"
+                value={speechSettings.wordsPerSecond}
+                onChange={(e) => setSpeechSettings(prev => ({ ...prev, wordsPerSecond: parseFloat(e.target.value) || 2.5 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Average speaking rate for barge-in estimation (default: 2.5)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Min Meaningful Duration (sec)</Label>
+              <Input
+                type="number"
+                min="0.1"
+                max="2.0"
+                step="0.1"
+                value={speechSettings.minMeaningfulDuration}
+                onChange={(e) => setSpeechSettings(prev => ({ ...prev, minMeaningfulDuration: parseFloat(e.target.value) || 0.5 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Minimum duration to consider speech meaningful (default: 0.5s)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Transcript Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Transcript Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowTranscriptSettings(!showTranscriptSettings)}
+            className="h-6 text-xs"
+          >
+            {showTranscriptSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Deepgram STT and transcript handling configuration
+        </p>
+        {showTranscriptSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Deepgram Endpointing (ms)</Label>
+              <Input
+                type="number"
+                min="50"
+                max="500"
+                step="25"
+                value={transcriptSettings.deepgramEndpointing}
+                onChange={(e) => setTranscriptSettings(prev => ({ ...prev, deepgramEndpointing: parseInt(e.target.value) || 100 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">End-of-speech detection time (default: 100ms)</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Append Transcript Segments</Label>
+              <input
+                type="checkbox"
+                checked={transcriptSettings.appendSegments}
+                onChange={(e) => setTranscriptSettings(prev => ({ ...prev, appendSegments: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Accumulate segments vs replace (default: append)</p>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">VAD Events</Label>
+              <input
+                type="checkbox"
+                checked={transcriptSettings.vadEvents}
+                onChange={(e) => setTranscriptSettings(prev => ({ ...prev, vadEvents: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Enable Voice Activity Detection events (default: on)</p>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Interim Results</Label>
+              <input
+                type="checkbox"
+                checked={transcriptSettings.interimResults}
+                onChange={(e) => setTranscriptSettings(prev => ({ ...prev, interimResults: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Enable interim transcriptions for faster barge-in (default: on)</p>
+          </div>
+        )}
+      </div>
+
+      {/* Audio Normalization Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Volume2 className="h-4 w-4" />
+            Audio Normalization
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAudioNormSettings(!showAudioNormSettings)}
+            className="h-6 text-xs"
+          >
+            {showAudioNormSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          TTS audio normalization and soft clipping parameters
+        </p>
+        {showAudioNormSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Target Peak (%)</Label>
+              <Input
+                type="number"
+                min="0.5"
+                max="1.0"
+                step="0.05"
+                value={audioNormSettings.targetPeakPercent}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, targetPeakPercent: parseFloat(e.target.value) || 0.85 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Target peak as % of full scale (default: 0.85 = 85%)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Min Peak Threshold</Label>
+              <Input
+                type="number"
+                min="0.5"
+                max="1.0"
+                step="0.05"
+                value={audioNormSettings.minPeakThreshold}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, minPeakThreshold: parseFloat(e.target.value) || 0.82 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Min threshold before normalizing (default: 0.82)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Max Gain</Label>
+              <Input
+                type="number"
+                min="1.0"
+                max="10.0"
+                step="0.5"
+                value={audioNormSettings.maxGain}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, maxGain: parseFloat(e.target.value) || 3.0 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Max gain multiplier (default: 3.0x)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Soft Clip Threshold</Label>
+              <Input
+                type="number"
+                min="20000"
+                max="32767"
+                step="1000"
+                value={audioNormSettings.softClipThreshold}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, softClipThreshold: parseInt(e.target.value) || 28000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">PCM value above which soft clipping starts (default: 28000)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Soft Clip Factor</Label>
+              <Input
+                type="number"
+                min="0.1"
+                max="1.0"
+                step="0.1"
+                value={audioNormSettings.softClipFactor}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, softClipFactor: parseFloat(e.target.value) || 0.3 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Compression factor for soft clipping (default: 0.3)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Pre-Mulaw Min Peak</Label>
+              <Input
+                type="number"
+                min="1000"
+                max="16000"
+                step="500"
+                value={audioNormSettings.preMulawMinPeak}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, preMulawMinPeak: parseInt(e.target.value) || 6500 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Below this peak, apply pre-mulaw boost (default: 6500)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Pre-Mulaw Target Peak</Label>
+              <Input
+                type="number"
+                min="8000"
+                max="32767"
+                step="1000"
+                value={audioNormSettings.preMulawTargetPeak}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, preMulawTargetPeak: parseInt(e.target.value) || 16000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Target peak when boosting quiet audio (default: 16000)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Downsampling Filter Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Radio className="h-4 w-4" />
+            Downsampling Filter
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowDownsampleSettings(!showDownsampleSettings)}
+            className="h-6 text-xs"
+          >
+            {showDownsampleSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          FIR low-pass filter for 24kHz to 8kHz downsampling
+        </p>
+        {showDownsampleSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Cutoff Frequency (Hz)</Label>
+              <Input
+                type="number"
+                min="2000"
+                max="3900"
+                step="100"
+                value={downsampleSettings.cutoffHz}
+                onChange={(e) => setDownsampleSettings(prev => ({ ...prev, cutoffHz: parseInt(e.target.value) || 3400 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">FIR filter cutoff (default: 3400 Hz, telephony standard)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Filter Taps</Label>
+              <Input
+                type="number"
+                min="15"
+                max="127"
+                step="2"
+                value={downsampleSettings.numTaps}
+                onChange={(e) => setDownsampleSettings(prev => ({ ...prev, numTaps: parseInt(e.target.value) || 63 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Number of FIR taps (odd values only, default: 63)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* TTS/Voice Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Volume2 className="h-4 w-4" />
+            Voice/TTS Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+            className="h-6 text-xs"
+          >
+            {showVoiceSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Text-to-speech voice configuration
+        </p>
+        {showVoiceSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">TTS Voice ID</Label>
+              <select
+                value={voiceSettings.ttsVoiceId}
+                onChange={(e) => setVoiceSettings(prev => ({ ...prev, ttsVoiceId: e.target.value }))}
+                className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
+              >
+                <option value="Telnyx.KokoroTTS.bm_george">George (Male, Neutral)</option>
+                <option value="Telnyx.KokoroTTS.af_nicole">Nicole (Female, US)</option>
+                <option value="Telnyx.KokoroTTS.af_sarah">Sarah (Female, US)</option>
+                <option value="Telnyx.KokoroTTS.am_adam">Adam (Male, US)</option>
+                <option value="Telnyx.KokoroTTS.am_michael">Michael (Male, US)</option>
+                <option value="Telnyx.KokoroTTS.bf_emma">Emma (Female, UK)</option>
+                <option value="Telnyx.KokoroTTS.bm_daniel">Daniel (Male, UK)</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground">Telnyx Kokoro TTS voice (default: George)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* STT/Deepgram Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Mic className="h-4 w-4" />
+            Speech-to-Text Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSttSettings(!showSttSettings)}
+            className="h-6 text-xs"
+          >
+            {showSttSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Deepgram speech recognition configuration
+        </p>
+        {showSttSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Deepgram Model</Label>
+              <select
+                value={sttSettings.deepgramModel}
+                onChange={(e) => setSttSettings(prev => ({ ...prev, deepgramModel: e.target.value }))}
+                className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
+              >
+                <option value="nova-2">Nova-2 (Best accuracy, recommended)</option>
+                <option value="nova-2-phonecall">Nova-2 Phonecall (Optimized for calls)</option>
+                <option value="nova-2-general">Nova-2 General</option>
+                <option value="nova">Nova (Previous gen)</option>
+                <option value="enhanced">Enhanced (Older model)</option>
+                <option value="base">Base (Fastest, lower accuracy)</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground">Deepgram STT model (default: nova-2)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Recording Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Save className="h-4 w-4" />
+            Recording Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowRecordingSettings(!showRecordingSettings)}
+            className="h-6 text-xs"
+          >
+            {showRecordingSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Call recording configuration
+        </p>
+        {showRecordingSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Enable Custom Recording</Label>
+              <input
+                type="checkbox"
+                checked={recordingSettings.customRecordingEnabled}
+                onChange={(e) => setRecordingSettings(prev => ({ ...prev, customRecordingEnabled: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Use self-hosted dual-channel recording (default: enabled)</p>
+            <div className="space-y-1">
+              <Label className="text-xs">Max Recording Size (MB)</Label>
+              <Input
+                type="number"
+                min="10"
+                max="200"
+                step="10"
+                value={Math.round(recordingSettings.customRecordingMaxBytes / 1000000)}
+                onChange={(e) => setRecordingSettings(prev => ({ ...prev, customRecordingMaxBytes: (parseInt(e.target.value) || 50) * 1000000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Max recording buffer size (default: 50MB, ~50 min)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Rolling Summary Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            Summary Generation
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSummarySettings(!showSummarySettings)}
+            className="h-6 text-xs"
+          >
+            {showSummarySettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Rolling summary LLM configuration
+        </p>
+        {showSummarySettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Summary System Message</Label>
+              <Textarea
+                value={summarySettings.rollingSummarySystemMessage}
+                onChange={(e) => setSummarySettings(prev => ({ ...prev, rollingSummarySystemMessage: e.target.value }))}
+                placeholder="Leave empty for default: 'You are a concise call summary generator...'"
+                className="min-h-[80px] resize-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground">Custom system message for rolling summary generation (optional)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Summary Temperature</Label>
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.1"
+                value={summarySettings.rollingSummaryTemperature}
+                onChange={(e) => setSummarySettings(prev => ({ ...prev, rollingSummaryTemperature: parseFloat(e.target.value) || 0.2 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">LLM temperature for summary generation (default: 0.2, lower = more consistent)</p>
+            </div>
           </div>
         )}
       </div>
