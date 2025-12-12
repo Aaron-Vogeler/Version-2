@@ -973,6 +973,25 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     setTranscriptSettings({
       deepgramEndpointing: 100,
       appendSegments: true,
+      vadEvents: true,
+      interimResults: true,
+    });
+
+    // Audio normalization settings
+    setAudioNormSettings({
+      targetPeakPercent: 0.85,
+      minPeakThreshold: 0.82,
+      maxGain: 3.0,
+      softClipThreshold: 28000,
+      softClipFactor: 0.3,
+      preMulawMinPeak: 6500,
+      preMulawTargetPeak: 16000,
+    });
+
+    // Downsampling filter settings
+    setDownsampleSettings({
+      cutoffHz: 3400,
+      numTaps: 63,
     });
 
     // Voice settings
@@ -994,6 +1013,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     // Summary settings
     setSummarySettings({
       rollingSummarySystemMessage: '',
+      rollingSummaryTemperature: 0.2,
     });
 
     if (models.length > 0) {
