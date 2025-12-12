@@ -7,24 +7,14 @@
  * Features:
  * - Categorized settings with status indicators
  * - Collapsible/hideable sections
- * - Integrated AI assistant for help with configuration
+ * - Code references showing where each feature is implemented
  * - Real-time validation of settings
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   CheckCircle2,
   XCircle,
@@ -33,28 +23,31 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
-  Send,
-  Bot,
-  User,
   Phone,
   Radio,
   Clock,
-  Zap,
   Volume2,
   Brain,
   Settings2,
   FileText,
   Target,
-  RefreshCw,
   Info,
   HelpCircle,
-  Sparkles,
-  MessageSquare,
-  Loader2,
-  X,
-  Minimize2,
-  Maximize2,
+  Code,
+  FolderOpen,
+  ExternalLink,
+  Copy,
+  Check,
+  User,
 } from 'lucide-react';
+
+// Code reference type
+interface CodeReference {
+  file: string;
+  lines?: string;
+  description: string;
+  snippet?: string;
+}
 
 // Checklist category configuration
 interface ChecklistItem {
@@ -67,6 +60,7 @@ interface ChecklistItem {
   tips?: string[];
   humanValue?: string;
   ivrValue?: string;
+  codeRefs?: CodeReference[];
 }
 
 interface ChecklistCategory {
@@ -75,13 +69,7 @@ interface ChecklistCategory {
   icon: React.ReactNode;
   description: string;
   items: ChecklistItem[];
-}
-
-// Chat message type
-interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: Date;
+  mainCodeRefs: CodeReference[];
 }
 
 // Saved settings interface (mirrors groq-call.tsx)
@@ -122,13 +110,43 @@ interface AIOutboundChecklistProps {
   onNavigateToSettings?: () => void;
 }
 
-// Define all checklist categories and items
+// Define all checklist categories with code references
 const getChecklistCategories = (): ChecklistCategory[] => [
   {
     id: 'detection',
     name: 'Human vs IVR Detection',
     icon: <Radio className="h-5 w-5" />,
     description: 'Configure how the AI identifies whether it\'s talking to a human or an automated system (IVR/phone tree)',
+    mainCodeRefs: [
+      {
+        file: 'ai-server/src/pipeline/ivr.ts',
+        description: 'IVR pattern detection and analysis module',
+        snippet: `// IVR detection patterns - 30+ patterns for menu prompts
+const IVR_PATTERNS = [
+  /press\\s*(?:one|1|two|2|three|3)/i,
+  /for\\s+(?:sales|support|billing)/i,
+  /main\\s+menu/i,
+  /your\\s+(?:call|wait)\\s+(?:is|time)/i,
+  // ... more patterns
+];
+
+export function analyzeForIvr(text: string): IvrAnalysis {
+  // Returns confidence score 0-1, menu options, etc.
+}`,
+      },
+      {
+        file: 'ai-server/src/index.ts',
+        lines: '~450-520',
+        description: 'LLM-based human vs IVR detection at call start',
+        snippet: `// Detect party type (human vs robotic) using LLM
+const detectionPrompt = \`Analyze this greeting: "\${initialGreeting}"
+Is this a human or an automated system (IVR/voicemail)?
+Reply with just: HUMAN or ROBOTIC\`;
+
+const partyType = await detectPartyType(detectionPrompt);
+ctx.detectedPartyType = partyType; // "human" or "robotic"`,
+      },
+    ],
     items: [
       {
         id: 'auto-detect-threshold',
@@ -141,14 +159,23 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         tips: [
           'Lower threshold (0.5) = More aggressive IVR detection, may false-positive on humans',
           'Higher threshold (0.9) = Conservative, may miss some IVRs',
-          'Start with 0.7 and adjust based on call results',
         ],
         checkValue: (value) => {
           if (value === undefined) return 'warning';
           if (value >= 0.6 && value <= 0.8) return 'complete';
-          if (value < 0.5 || value > 0.9) return 'warning';
-          return 'complete';
+          return 'info';
         },
+        codeRefs: [
+          {
+            file: 'ai-server/src/pipeline/ivr.ts',
+            lines: '45-80',
+            description: 'Threshold comparison in IVR analysis',
+            snippet: `if (analysis.confidence >= ctx.ivrAutoDetectThreshold) {
+  ctx.isIvrMode = true;
+  ctx.ivrConfidence = analysis.confidence;
+}`,
+          },
+        ],
       },
       {
         id: 'debounce-difference',
@@ -160,7 +187,6 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         tips: [
           'Humans need longer pauses to think - 400-600ms is natural',
           'IVRs timeout quickly - 100-200ms keeps the system engaged',
-          'Too fast for humans = interrupting them, too slow for IVR = missed prompts',
         ],
         checkValue: (_, allSettings) => {
           const ttsDebounce = allSettings?.callControlSettings?.ttsDebounceMs;
@@ -169,18 +195,21 @@ const getChecklistCategories = (): ChecklistCategory[] => [
           if (ttsDebounce > ivrDebounce * 2) return 'complete';
           return 'warning';
         },
-      },
-      {
-        id: 'utterance-flush-difference',
-        name: 'Utterance Flush (Human vs IVR)',
-        description: 'How long to wait before finalizing what was heard. Shorter for IVRs, longer for humans.',
-        importance: 'important',
-        humanValue: '300ms - allows for natural speech pauses',
-        ivrValue: '200ms - quick finalization for IVR prompts',
-        tips: [
-          'This affects how quickly the AI "locks in" what it heard',
-          'Too short with humans = cutting off mid-sentence',
-          'IVRs give clear, complete prompts so faster flush is fine',
+        codeRefs: [
+          {
+            file: 'ai-server/src/index.ts',
+            lines: '~380-420',
+            description: 'Dynamic debounce switching based on party type',
+            snippet: `// Use IVR debounce when in IVR mode
+const debounceMs = ctx.isIvrMode
+  ? (ctx.ivrDebounceMs || 150)
+  : (ctx.ttsDebounceMs || 500);
+
+// Schedule TTS after silence
+debounceTimer = setTimeout(() => {
+  generateAndSpeakResponse();
+}, debounceMs);`,
+          },
         ],
       },
       {
@@ -190,10 +219,19 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         importance: 'recommended',
         humanValue: 'Enabled - prevents echo-triggered interrupts',
         ivrValue: 'Disabled - IVRs don\'t have echo issues',
-        tips: [
-          'Grace period prevents the AI from stopping when it hears its own voice',
-          'IVRs don\'t create this echo problem',
-          'If calls with humans get cut off, increase grace period',
+        codeRefs: [
+          {
+            file: 'ai-server/src/index.ts',
+            lines: '~300-340',
+            description: 'Grace period logic for barge-in handling',
+            snippet: `// Skip grace period in IVR mode
+if (ctx.isIvrMode && ctx.ivrDisableBargeInGracePeriod) {
+  // IVRs don't have echo, allow immediate barge-in
+  handleBargeIn();
+} else if (Date.now() - lastTtsStart > gracePeriodMs) {
+  handleBargeIn();
+}`,
+          },
         ],
       },
     ],
@@ -203,6 +241,27 @@ const getChecklistCategories = (): ChecklistCategory[] => [
     name: 'Voice & Timing Settings',
     icon: <Volume2 className="h-5 w-5" />,
     description: 'Control the pace and timing of speech interactions',
+    mainCodeRefs: [
+      {
+        file: 'ai-server/src/index.ts',
+        lines: '~200-400',
+        description: 'Main call flow timing and debounce handling',
+      },
+      {
+        file: 'ai-server/src/pipeline/tts.ts',
+        description: 'Text-to-speech generation and audio handling',
+      },
+      {
+        file: 'ai-server/src/callContextManager.ts',
+        description: 'Per-call state including timing settings',
+        snippet: `interface CallContext {
+  ttsDebounceMs?: number;        // Silence before AI responds
+  bargeInCooldownMs?: number;    // Time between stop commands
+  callerUtteranceFlushMs?: number; // Wait before logging
+  // ... more settings
+}`,
+      },
+    ],
     items: [
       {
         id: 'tts-debounce',
@@ -212,17 +271,24 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         settingKey: 'callControlSettings.ttsDebounceMs',
         humanValue: '400-600ms - natural conversation rhythm',
         ivrValue: '100-200ms - quick response to prompts',
-        tips: [
-          'This is the main "conversation pace" setting',
-          'Too low = AI interrupts, too high = awkward pauses',
-          '500ms is a good starting point for humans',
-        ],
         checkValue: (value) => {
           if (!value) return 'error';
           if (value >= 400 && value <= 600) return 'complete';
-          if (value < 300 || value > 800) return 'warning';
-          return 'complete';
+          return 'info';
         },
+        codeRefs: [
+          {
+            file: 'ai-server/src/index.ts',
+            lines: '~380-400',
+            description: 'Debounce timer implementation',
+            snippet: `// Reset debounce timer on new speech
+clearTimeout(debounceTimer);
+debounceTimer = setTimeout(async () => {
+  const response = await generateLlmResponse(ctx);
+  await speakResponse(response, ctx);
+}, ctx.ttsDebounceMs || 500);`,
+          },
+        ],
       },
       {
         id: 'barge-in-cooldown',
@@ -230,16 +296,23 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         description: 'Minimum time between stop commands when caller interrupts',
         importance: 'important',
         settingKey: 'callControlSettings.bargeInCooldownMs',
-        tips: [
-          'Prevents spam-stopping the AI',
-          '200-400ms is typically good',
-          'Lower if caller complaints about not being able to interrupt',
-        ],
         checkValue: (value) => {
           if (!value) return 'warning';
           if (value >= 200 && value <= 400) return 'complete';
           return 'info';
         },
+        codeRefs: [
+          {
+            file: 'ai-server/src/index.ts',
+            lines: '~310-330',
+            description: 'Barge-in cooldown enforcement',
+            snippet: `if (Date.now() - lastBargeIn < ctx.bargeInCooldownMs) {
+  return; // Too soon, ignore this barge-in
+}
+lastBargeIn = Date.now();
+await stopCurrentTts();`,
+          },
+        ],
       },
       {
         id: 'utterance-flush',
@@ -247,33 +320,23 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         description: 'Time to wait before logging what the caller said',
         importance: 'important',
         settingKey: 'callControlSettings.callerUtteranceFlushMs',
-        tips: [
-          'Affects transcription accuracy',
-          '200-400ms captures complete sentences',
-          'Too short = incomplete transcriptions',
+        codeRefs: [
+          {
+            file: 'ai-server/src/index.ts',
+            lines: '~420-450',
+            description: 'Utterance accumulation and flushing',
+            snippet: `// Accumulate speech, flush after silence
+utteranceBuffer += transcript;
+clearTimeout(flushTimer);
+flushTimer = setTimeout(() => {
+  ctx.conversationHistory.push({
+    role: 'user',
+    content: utteranceBuffer
+  });
+  utteranceBuffer = '';
+}, ctx.callerUtteranceFlushMs || 300);`,
+          },
         ],
-        checkValue: (value) => {
-          if (!value) return 'warning';
-          if (value >= 200 && value <= 400) return 'complete';
-          return 'info';
-        },
-      },
-      {
-        id: 'hangup-delay',
-        name: 'Hangup Delay',
-        description: 'Time to wait for TTS to finish before ending call',
-        importance: 'recommended',
-        settingKey: 'callControlSettings.hangupDelayMs',
-        tips: [
-          'Ensures goodbye message completes',
-          '1500-2500ms is usually enough',
-          'Increase if messages get cut off at end of call',
-        ],
-        checkValue: (value) => {
-          if (!value) return 'warning';
-          if (value >= 1500 && value <= 3000) return 'complete';
-          return 'info';
-        },
       },
     ],
   },
@@ -282,6 +345,31 @@ const getChecklistCategories = (): ChecklistCategory[] => [
     name: 'IVR/Phone Tree Navigation',
     icon: <Phone className="h-5 w-5" />,
     description: 'Settings for navigating automated phone systems using DTMF tones',
+    mainCodeRefs: [
+      {
+        file: 'ai-server/src/pipeline/ivr.ts',
+        description: 'Complete IVR analysis and DTMF handling',
+        snippet: `// Extract menu options from IVR prompt
+export function extractMenuOptions(text: string): string[] {
+  const options: string[] = [];
+  // "Press 1 for sales" -> ["1: sales"]
+  // "Say 'representative'" -> ["representative"]
+  return options;
+}
+
+// Send DTMF tone via Telnyx
+export async function sendDtmf(
+  callControlId: string,
+  digit: string,
+  durationMs: number
+) {
+  await telnyx.calls.sendDTMF(callControlId, {
+    digit,
+    duration_millis: durationMs
+  });
+}`,
+      },
+    ],
     items: [
       {
         id: 'dtmf-duration',
@@ -289,16 +377,22 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         description: 'How long each button press tone lasts',
         importance: 'important',
         settingKey: 'ivrSettings.dtmfDurationMs',
-        tips: [
-          '200-300ms is standard',
-          'Some older systems need longer tones (400ms)',
-          'Too short = tone not recognized',
-        ],
         checkValue: (value) => {
           if (!value) return 'warning';
           if (value >= 200 && value <= 300) return 'complete';
           return 'info';
         },
+        codeRefs: [
+          {
+            file: 'ai-server/src/pipeline/ivr.ts',
+            lines: '~120-140',
+            description: 'DTMF sending with configurable duration',
+            snippet: `await telnyx.calls.sendDTMF(callControlId, {
+  digit: dtmfDigit,
+  duration_millis: ctx.ivrDtmfDurationMs || 250
+});`,
+          },
+        ],
       },
       {
         id: 'dtmf-pause',
@@ -306,16 +400,15 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         description: 'Minimum time between sending DTMF tones',
         importance: 'important',
         settingKey: 'ivrSettings.dtmfMinPauseMs',
-        tips: [
-          '400-600ms prevents tones from blending',
-          'Some systems need longer gaps',
-          'If menu navigation fails, try increasing this',
+        codeRefs: [
+          {
+            file: 'ai-server/src/pipeline/ivr.ts',
+            lines: '~140-160',
+            description: 'Pause between DTMF tones',
+            snippet: `// Wait between digits to ensure recognition
+await sleep(ctx.ivrDtmfMinPauseMs || 500);`,
+          },
         ],
-        checkValue: (value) => {
-          if (!value) return 'warning';
-          if (value >= 400 && value <= 600) return 'complete';
-          return 'info';
-        },
       },
       {
         id: 'response-timeout',
@@ -323,33 +416,13 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         description: 'How long to wait for IVR to respond before retrying',
         importance: 'recommended',
         settingKey: 'ivrSettings.responseTimeoutMs',
-        tips: [
-          '6000-10000ms (6-10 seconds) is typical',
-          'Some complex IVRs need longer',
-          'Too short = premature retries',
+        codeRefs: [
+          {
+            file: 'ai-server/src/pipeline/ivr.ts',
+            lines: '~160-180',
+            description: 'Timeout handling for IVR responses',
+          },
         ],
-        checkValue: (value) => {
-          if (!value) return 'info';
-          if (value >= 6000 && value <= 10000) return 'complete';
-          return 'info';
-        },
-      },
-      {
-        id: 'max-dtmf-retries',
-        name: 'Maximum DTMF Retries',
-        description: 'How many times to retry DTMF if no response',
-        importance: 'optional',
-        settingKey: 'ivrSettings.maxDtmfRetries',
-        tips: [
-          '2-3 retries is usually enough',
-          'More retries can annoy IVR systems',
-          'If stuck in loops, reduce this',
-        ],
-        checkValue: (value) => {
-          if (!value) return 'info';
-          if (value >= 2 && value <= 3) return 'complete';
-          return 'info';
-        },
       },
     ],
   },
@@ -358,6 +431,33 @@ const getChecklistCategories = (): ChecklistCategory[] => [
     name: 'LLM Configuration',
     icon: <Brain className="h-5 w-5" />,
     description: 'Configure the AI model behavior and response generation',
+    mainCodeRefs: [
+      {
+        file: 'ai-server/src/pipeline/llm.ts',
+        description: 'LLM interaction and response generation',
+        snippet: `export async function generateResponse(
+  systemPrompt: string,
+  messages: Message[],
+  options: LlmOptions
+): Promise<string> {
+  const response = await groq.chat.completions.create({
+    model: options.model || 'llama-3.1-8b-instant',
+    temperature: options.temperature || 0.7,
+    max_tokens: options.maxTokens || 1024,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      ...messages
+    ]
+  });
+  return response.choices[0].message.content;
+}`,
+      },
+      {
+        file: 'src/components/dashboard/groq-call.tsx',
+        lines: '206-950',
+        description: 'Frontend LLM settings UI',
+      },
+    ],
     items: [
       {
         id: 'model-selection',
@@ -365,15 +465,17 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         description: 'Choose the AI model for generating responses',
         importance: 'critical',
         settingKey: 'model',
-        tips: [
-          'llama-3.1-8b-instant: Fast, good for simple tasks',
-          'llama-3.1-70b-versatile: Slower but smarter',
-          'Consider latency vs quality tradeoff for calls',
-        ],
         checkValue: (value) => {
           if (!value) return 'error';
           return 'complete';
         },
+        codeRefs: [
+          {
+            file: 'ai-server/src/pipeline/llm.ts',
+            lines: '~20-40',
+            description: 'Model selection in Groq API call',
+          },
+        ],
       },
       {
         id: 'temperature',
@@ -384,7 +486,6 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         tips: [
           '0.5-0.7: Focused, consistent responses (good for business calls)',
           '0.8-1.0: More varied, creative responses',
-          'Lower = more predictable, higher = more varied',
         ],
         checkValue: (value) => {
           if (value === undefined) return 'warning';
@@ -400,29 +501,12 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         settingKey: 'maxTokens',
         tips: [
           '512-1024: Good for concise phone responses',
-          'Higher values allow longer explanations',
           'Phone calls typically need shorter responses',
         ],
         checkValue: (value) => {
           if (!value) return 'warning';
           if (value >= 512 && value <= 1500) return 'complete';
           return 'info';
-        },
-      },
-      {
-        id: 'reasoning',
-        name: 'Reasoning Level',
-        description: 'How much "thinking" the model does before responding',
-        importance: 'recommended',
-        settingKey: 'reasoning',
-        tips: [
-          'Low: Quick responses, less complex reasoning',
-          'Medium: Balanced (recommended for most calls)',
-          'High: More thoughtful but slower responses',
-        ],
-        checkValue: (value) => {
-          if (!value) return 'info';
-          return 'complete';
         },
       },
     ],
@@ -432,6 +516,36 @@ const getChecklistCategories = (): ChecklistCategory[] => [
     name: 'System Prompts',
     icon: <FileText className="h-5 w-5" />,
     description: 'Configure the AI\'s personality, behavior, and instructions',
+    mainCodeRefs: [
+      {
+        file: 'ai-server/src/pipeline/llm.ts',
+        lines: '~60-120',
+        description: 'System prompt building and variable substitution',
+        snippet: `// Build system prompt with variable substitution
+let prompt = customSystemPrompt;
+prompt = prompt.replace(/\\{ASSISTANT_NAME\\}/g, assistantName);
+prompt = prompt.replace(/\\{USER_NAME\\}/g, userName);
+
+// Append goal at bottom
+if (goal) {
+  prompt += \`\\n\\nCALL GOAL (YOUR ONLY MISSION): "\${goal}"\`;
+}`,
+      },
+      {
+        file: 'ai-server/src/pipeline/llm.ts',
+        lines: '~150-200',
+        description: 'Rolling summary generation for long calls',
+        snippet: `// Generate rolling summary when turns exceed threshold
+if (turns.length > maxTurnsInWindow) {
+  const summaryPrompt = rollingSummaryPrompt
+    .replace('{EXISTING_SUMMARY}', existingSummary)
+    .replace('{TURNS_TEXT}', turnsToSummarize)
+    .replace('{MAX_TOKENS}', maxSummaryTokens);
+
+  ctx.rollingSummary = await generateSummary(summaryPrompt);
+}`,
+      },
+    ],
     items: [
       {
         id: 'system-prompt',
@@ -442,7 +556,6 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         tips: [
           'REQUIRED for calls to work',
           'Use {ASSISTANT_NAME} and {USER_NAME} placeholders',
-          'Be specific about tone, goals, and constraints',
           'Include instructions for IVR navigation if needed',
         ],
         checkValue: (value) => {
@@ -458,7 +571,6 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         importance: 'recommended',
         settingKey: 'rollingSummaryPrompt',
         tips: [
-          'Helps maintain context in long calls',
           'Use {EXISTING_SUMMARY}, {TURNS_TEXT}, {MAX_TOKENS} placeholders',
           'Optional - system has a default',
         ],
@@ -474,6 +586,29 @@ const getChecklistCategories = (): ChecklistCategory[] => [
     name: 'Hold & Wait Handling',
     icon: <Clock className="h-5 w-5" />,
     description: 'Configure behavior when placed on hold or waiting',
+    mainCodeRefs: [
+      {
+        file: 'ai-server/src/index.ts',
+        lines: '~550-620',
+        description: 'Hold detection and check-in logic',
+        snippet: `// Detect hold message patterns
+if (ivrAnalysis.isHoldMessage) {
+  ctx.onHold = true;
+  ctx.holdStartTime = Date.now();
+  ctx.holdCheckIns = 0;
+
+  // Schedule periodic check-ins
+  holdCheckInTimer = setInterval(async () => {
+    ctx.holdCheckIns++;
+    if (ctx.holdCheckIns >= ctx.holdMaxCheckIns) {
+      await endCall('Max hold time exceeded');
+      return;
+    }
+    await speak('I\\'m still here waiting...');
+  }, ctx.holdCheckInIntervalMs);
+}`,
+      },
+    ],
     items: [
       {
         id: 'hold-check-in-interval',
@@ -484,7 +619,6 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         tips: [
           '20-40 seconds is typical',
           'Too frequent = annoying, too rare = might miss when hold ends',
-          'Adjust based on typical hold times you encounter',
         ],
         checkValue: (value) => {
           if (!value) return 'info';
@@ -501,7 +635,6 @@ const getChecklistCategories = (): ChecklistCategory[] => [
         tips: [
           '3-5 check-ins is usually reasonable',
           'This determines max hold time (interval x check-ins)',
-          'Increase for businesses known to have long holds',
         ],
         checkValue: (value) => {
           if (!value) return 'info';
@@ -548,23 +681,56 @@ const ImportanceBadge = ({ importance }: { importance: ChecklistItem['importance
   );
 };
 
+// Code reference component
+function CodeReferenceBlock({ ref, onCopy }: { ref: CodeReference; onCopy: (text: string) => void }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    const text = ref.snippet || `// ${ref.file}${ref.lines ? `:${ref.lines}` : ''}\n// ${ref.description}`;
+    onCopy(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="bg-slate-900 rounded-lg overflow-hidden text-sm">
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700">
+        <div className="flex items-center gap-2 text-slate-300">
+          <FolderOpen className="h-3.5 w-3.5" />
+          <span className="font-mono text-xs">{ref.file}</span>
+          {ref.lines && (
+            <span className="text-slate-500 text-xs">:{ref.lines}</span>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-slate-400 hover:text-white"
+          onClick={handleCopy}
+        >
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        </Button>
+      </div>
+      <div className="p-3">
+        <p className="text-slate-400 text-xs mb-2">{ref.description}</p>
+        {ref.snippet && (
+          <pre className="text-green-400 text-xs overflow-x-auto whitespace-pre-wrap font-mono">
+            {ref.snippet}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function AIOutboundChecklist({
   groqSettings,
-  customAssistantName = 'Ferguson',
-  firstName = 'Aaron',
   onNavigateToSettings,
 }: AIOutboundChecklistProps) {
   // Section visibility state
   const [hiddenSections, setHiddenSections] = useState<Set<string>>(new Set());
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
-
-  // AI Chat state
-  const [showChat, setShowChat] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [chatInput, setChatInput] = useState('');
-  const [chatLoading, setChatLoading] = useState(false);
-  const [chatExpanded, setChatExpanded] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [expandedCodeRefs, setExpandedCodeRefs] = useState<Set<string>>(new Set());
 
   // Calculate checklist stats
   const categories = getChecklistCategories();
@@ -584,11 +750,6 @@ export function AIOutboundChecklist({
     error: allItems.filter(item => getItemStatus(item) === 'error').length,
     total: allItems.length,
   };
-
-  // Scroll chat to bottom when new messages arrive
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
 
   // Toggle section visibility
   const toggleSectionVisibility = (sectionId: string) => {
@@ -616,70 +777,23 @@ export function AIOutboundChecklist({
     });
   };
 
-  // Send message to AI assistant
-  const sendChatMessage = async () => {
-    if (!chatInput.trim() || chatLoading) return;
-
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: chatInput.trim(),
-      timestamp: new Date(),
-    };
-
-    setChatMessages(prev => [...prev, userMessage]);
-    setChatInput('');
-    setChatLoading(true);
-
-    try {
-      const response = await fetch('/api/openai-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            ...chatMessages.map(m => ({ role: m.role, content: m.content })),
-            { role: 'user', content: userMessage.content },
-          ],
-          context: {
-            currentSettings: groqSettings,
-            assistantName: customAssistantName,
-            userName: firstName,
-            checklistStats: stats,
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get response');
+  // Toggle code refs expansion
+  const toggleCodeRefs = (itemId: string) => {
+    setExpandedCodeRefs(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
       }
-
-      const data = await response.json();
-
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: data.message,
-        timestamp: new Date(),
-      };
-
-      setChatMessages(prev => [...prev, assistantMessage]);
-    } catch (error) {
-      console.error('Chat error:', error);
-      setChatMessages(prev => [...prev, {
-        role: 'assistant',
-        content: 'Sorry, I encountered an error. Please make sure the OpenAI API is configured correctly.',
-        timestamp: new Date(),
-      }]);
-    } finally {
-      setChatLoading(false);
-    }
+      return next;
+    });
   };
 
-  // Quick prompts for AI assistant
-  const quickPrompts = [
-    "What settings should I change for better call quality?",
-    "Explain human vs IVR detection",
-    "Why are my calls getting cut off?",
-    "How do I configure DTMF settings?",
-  ];
+  // Copy handler
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -718,14 +832,6 @@ export function AIOutboundChecklist({
               Go to Settings
             </Button>
           )}
-          <Button
-            variant={showChat ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setShowChat(!showChat)}
-          >
-            <Sparkles className="h-4 w-4 mr-2" />
-            AI Assistant
-          </Button>
         </div>
       </div>
 
@@ -765,309 +871,214 @@ export function AIOutboundChecklist({
         </CardContent>
       </Card>
 
-      {/* Main Content Grid */}
-      <div className={`grid gap-6 ${showChat && !chatExpanded ? 'lg:grid-cols-3' : ''}`}>
-        {/* Checklist Categories */}
-        <div className={`space-y-4 ${showChat && !chatExpanded ? 'lg:col-span-2' : ''}`}>
-          {/* Section Toggle Bar */}
-          <div className="flex items-center gap-2 flex-wrap bg-muted/30 rounded-lg p-3">
-            <span className="text-sm text-muted-foreground mr-2">Show sections:</span>
-            {categories.map(category => (
-              <Button
-                key={category.id}
-                variant={hiddenSections.has(category.id) ? 'ghost' : 'secondary'}
-                size="sm"
-                onClick={() => toggleSectionVisibility(category.id)}
-                className="h-7 text-xs"
+      {/* Section Toggle Bar */}
+      <div className="flex items-center gap-2 flex-wrap bg-muted/30 rounded-lg p-3">
+        <span className="text-sm text-muted-foreground mr-2">Show sections:</span>
+        {categories.map(category => (
+          <Button
+            key={category.id}
+            variant={hiddenSections.has(category.id) ? 'ghost' : 'secondary'}
+            size="sm"
+            onClick={() => toggleSectionVisibility(category.id)}
+            className="h-7 text-xs"
+          >
+            {hiddenSections.has(category.id) ? (
+              <EyeOff className="h-3 w-3 mr-1" />
+            ) : (
+              <Eye className="h-3 w-3 mr-1" />
+            )}
+            {category.name}
+          </Button>
+        ))}
+      </div>
+
+      {/* Category Cards */}
+      <div className="space-y-4">
+        {categories.filter(cat => !hiddenSections.has(cat.id)).map(category => {
+          const categoryStats = {
+            complete: category.items.filter(item => getItemStatus(item) === 'complete').length,
+            total: category.items.length,
+          };
+          const isCollapsed = collapsedSections.has(category.id);
+          const showMainCodeRefs = expandedCodeRefs.has(`main-${category.id}`);
+
+          return (
+            <Card key={category.id} className="overflow-hidden">
+              <CardHeader
+                className="cursor-pointer hover:bg-muted/30 transition-colors"
+                onClick={() => toggleSectionCollapse(category.id)}
               >
-                {hiddenSections.has(category.id) ? (
-                  <EyeOff className="h-3 w-3 mr-1" />
-                ) : (
-                  <Eye className="h-3 w-3 mr-1" />
-                )}
-                {category.name}
-              </Button>
-            ))}
-          </div>
-
-          {/* Category Cards */}
-          {categories.filter(cat => !hiddenSections.has(cat.id)).map(category => {
-            const categoryStats = {
-              complete: category.items.filter(item => getItemStatus(item) === 'complete').length,
-              total: category.items.length,
-            };
-            const isCollapsed = collapsedSections.has(category.id);
-
-            return (
-              <Card key={category.id} className="overflow-hidden">
-                <CardHeader
-                  className="cursor-pointer hover:bg-muted/30 transition-colors"
-                  onClick={() => toggleSectionCollapse(category.id)}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-primary/10 rounded-lg">
-                        {category.icon}
-                      </div>
-                      <div>
-                        <CardTitle className="text-lg flex items-center gap-2">
-                          {category.name}
-                          <Badge variant="outline" className="ml-2">
-                            {categoryStats.complete}/{categoryStats.total}
-                          </Badge>
-                        </CardTitle>
-                        <CardDescription>{category.description}</CardDescription>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSectionVisibility(category.id);
-                        }}
-                      >
-                        <EyeOff className="h-4 w-4" />
-                      </Button>
-                      {isCollapsed ? (
-                        <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                      ) : (
-                        <ChevronUp className="h-5 w-5 text-muted-foreground" />
-                      )}
-                    </div>
-                  </div>
-                </CardHeader>
-
-                {!isCollapsed && (
-                  <CardContent className="space-y-4">
-                    {category.items.map(item => {
-                      const status = getItemStatus(item);
-                      const currentValue = item.settingKey
-                        ? getNestedValue(groqSettings, item.settingKey)
-                        : undefined;
-
-                      return (
-                        <div
-                          key={item.id}
-                          className="border rounded-lg p-4 hover:border-primary/50 transition-colors"
-                        >
-                          <div className="flex items-start gap-3">
-                            <StatusIcon status={status} />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <h4 className="font-medium">{item.name}</h4>
-                                <ImportanceBadge importance={item.importance} />
-                              </div>
-                              <p className="text-sm text-muted-foreground mb-3">
-                                {item.description}
-                              </p>
-
-                              {/* Current Value */}
-                              {currentValue !== undefined && (
-                                <div className="bg-muted/50 rounded p-2 mb-3">
-                                  <span className="text-xs text-muted-foreground">Current: </span>
-                                  <span className="text-sm font-mono">{String(currentValue)}</span>
-                                </div>
-                              )}
-
-                              {/* Human vs IVR Values */}
-                              {(item.humanValue || item.ivrValue) && (
-                                <div className="grid grid-cols-2 gap-2 mb-3">
-                                  {item.humanValue && (
-                                    <div className="bg-blue-50 dark:bg-blue-900/20 rounded p-2">
-                                      <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 mb-1">
-                                        <User className="h-3 w-3" />
-                                        Human Calls
-                                      </div>
-                                      <p className="text-xs">{item.humanValue}</p>
-                                    </div>
-                                  )}
-                                  {item.ivrValue && (
-                                    <div className="bg-purple-50 dark:bg-purple-900/20 rounded p-2">
-                                      <div className="flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400 mb-1">
-                                        <Radio className="h-3 w-3" />
-                                        IVR Calls
-                                      </div>
-                                      <p className="text-xs">{item.ivrValue}</p>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Tips */}
-                              {item.tips && item.tips.length > 0 && (
-                                <div className="bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded p-2">
-                                  <div className="flex items-center gap-1 text-xs text-yellow-700 dark:text-yellow-400 mb-1">
-                                    <HelpCircle className="h-3 w-3" />
-                                    Tips
-                                  </div>
-                                  <ul className="text-xs space-y-1">
-                                    {item.tips.map((tip, i) => (
-                                      <li key={i} className="flex items-start gap-1">
-                                        <span className="text-yellow-500">•</span>
-                                        {tip}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </CardContent>
-                )}
-              </Card>
-            );
-          })}
-        </div>
-
-        {/* AI Chat Panel */}
-        {showChat && (
-          <div className={chatExpanded ? 'fixed inset-4 z-50' : 'lg:col-span-1'}>
-            <Card className={`flex flex-col ${chatExpanded ? 'h-full' : 'h-[600px] sticky top-4'}`}>
-              <CardHeader className="pb-3 border-b">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg">
-                      <Sparkles className="h-4 w-4 text-white" />
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-lg">
+                      {category.icon}
                     </div>
                     <div>
-                      <CardTitle className="text-base">AI Configuration Assistant</CardTitle>
-                      <CardDescription className="text-xs">
-                        Ask me anything about call settings
-                      </CardDescription>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        {category.name}
+                        <Badge variant="outline" className="ml-2">
+                          {categoryStats.complete}/{categoryStats.total}
+                        </Badge>
+                      </CardTitle>
+                      <CardDescription>{category.description}</CardDescription>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-2">
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setChatExpanded(!chatExpanded)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSectionVisibility(category.id);
+                      }}
                     >
-                      {chatExpanded ? (
-                        <Minimize2 className="h-4 w-4" />
-                      ) : (
-                        <Maximize2 className="h-4 w-4" />
-                      )}
+                      <EyeOff className="h-4 w-4" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowChat(false)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
+                    {isCollapsed ? (
+                      <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                    ) : (
+                      <ChevronUp className="h-5 w-5 text-muted-foreground" />
+                    )}
                   </div>
                 </div>
               </CardHeader>
 
-              <CardContent className="flex-1 overflow-hidden p-0 flex flex-col">
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {chatMessages.length === 0 ? (
-                    <div className="text-center py-8">
-                      <Bot className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
-                      <p className="text-sm text-muted-foreground mb-4">
-                        I can help you understand and configure your AI call settings.
-                        Ask me anything!
-                      </p>
-                      <div className="space-y-2">
-                        {quickPrompts.map((prompt, i) => (
-                          <Button
-                            key={i}
-                            variant="outline"
-                            size="sm"
-                            className="text-xs w-full justify-start"
-                            onClick={() => {
-                              setChatInput(prompt);
-                            }}
-                          >
-                            <MessageSquare className="h-3 w-3 mr-2" />
-                            {prompt}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    chatMessages.map((msg, i) => (
-                      <div
-                        key={i}
-                        className={`flex gap-3 ${
-                          msg.role === 'user' ? 'flex-row-reverse' : ''
-                        }`}
+              {!isCollapsed && (
+                <CardContent className="space-y-4">
+                  {/* Main Code References for Category */}
+                  {category.mainCodeRefs.length > 0 && (
+                    <div className="border rounded-lg p-3 bg-slate-50 dark:bg-slate-900/50">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-between mb-2"
+                        onClick={() => toggleCodeRefs(`main-${category.id}`)}
                       >
-                        <div
-                          className={`p-2 rounded-full ${
-                            msg.role === 'user'
-                              ? 'bg-primary'
-                              : 'bg-gradient-to-br from-purple-500 to-pink-500'
-                          }`}
-                        >
-                          {msg.role === 'user' ? (
-                            <User className="h-4 w-4 text-primary-foreground" />
-                          ) : (
-                            <Sparkles className="h-4 w-4 text-white" />
-                          )}
+                        <span className="flex items-center gap-2 text-sm font-medium">
+                          <Code className="h-4 w-4" />
+                          Main Implementation Files
+                        </span>
+                        {showMainCodeRefs ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </Button>
+                      {showMainCodeRefs && (
+                        <div className="space-y-3 mt-3">
+                          {category.mainCodeRefs.map((ref, i) => (
+                            <CodeReferenceBlock key={i} ref={ref} onCopy={handleCopy} />
+                          ))}
                         </div>
-                        <div
-                          className={`flex-1 rounded-lg p-3 ${
-                            msg.role === 'user'
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-muted'
-                          }`}
-                        >
-                          <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                          <p className="text-xs opacity-50 mt-1">
-                            {msg.timestamp.toLocaleTimeString()}
-                          </p>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                  {chatLoading && (
-                    <div className="flex gap-3">
-                      <div className="p-2 rounded-full bg-gradient-to-br from-purple-500 to-pink-500">
-                        <Sparkles className="h-4 w-4 text-white" />
-                      </div>
-                      <div className="bg-muted rounded-lg p-3">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      </div>
+                      )}
                     </div>
                   )}
-                  <div ref={chatEndRef} />
-                </div>
 
-                {/* Input */}
-                <div className="border-t p-4">
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Ask about call settings..."
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          sendChatMessage();
-                        }
-                      }}
-                      disabled={chatLoading}
-                    />
-                    <Button
-                      size="sm"
-                      onClick={sendChatMessage}
-                      disabled={!chatInput.trim() || chatLoading}
-                    >
-                      <Send className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
+                  {/* Individual Items */}
+                  {category.items.map(item => {
+                    const status = getItemStatus(item);
+                    const currentValue = item.settingKey
+                      ? getNestedValue(groqSettings, item.settingKey)
+                      : undefined;
+                    const showItemCodeRefs = expandedCodeRefs.has(item.id);
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="border rounded-lg p-4 hover:border-primary/50 transition-colors"
+                      >
+                        <div className="flex items-start gap-3">
+                          <StatusIcon status={status} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <h4 className="font-medium">{item.name}</h4>
+                              <ImportanceBadge importance={item.importance} />
+                            </div>
+                            <p className="text-sm text-muted-foreground mb-3">
+                              {item.description}
+                            </p>
+
+                            {/* Current Value */}
+                            {currentValue !== undefined && (
+                              <div className="bg-muted/50 rounded p-2 mb-3">
+                                <span className="text-xs text-muted-foreground">Current: </span>
+                                <span className="text-sm font-mono">{String(currentValue)}</span>
+                              </div>
+                            )}
+
+                            {/* Human vs IVR Values */}
+                            {(item.humanValue || item.ivrValue) && (
+                              <div className="grid grid-cols-2 gap-2 mb-3">
+                                {item.humanValue && (
+                                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded p-2">
+                                    <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 mb-1">
+                                      <User className="h-3 w-3" />
+                                      Human Calls
+                                    </div>
+                                    <p className="text-xs">{item.humanValue}</p>
+                                  </div>
+                                )}
+                                {item.ivrValue && (
+                                  <div className="bg-purple-50 dark:bg-purple-900/20 rounded p-2">
+                                    <div className="flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400 mb-1">
+                                      <Radio className="h-3 w-3" />
+                                      IVR Calls
+                                    </div>
+                                    <p className="text-xs">{item.ivrValue}</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Tips */}
+                            {item.tips && item.tips.length > 0 && (
+                              <div className="bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded p-2 mb-3">
+                                <div className="flex items-center gap-1 text-xs text-yellow-700 dark:text-yellow-400 mb-1">
+                                  <HelpCircle className="h-3 w-3" />
+                                  Tips
+                                </div>
+                                <ul className="text-xs space-y-1">
+                                  {item.tips.map((tip, i) => (
+                                    <li key={i} className="flex items-start gap-1">
+                                      <span className="text-yellow-500">•</span>
+                                      {tip}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {/* Code References */}
+                            {item.codeRefs && item.codeRefs.length > 0 && (
+                              <div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-xs mb-2"
+                                  onClick={() => toggleCodeRefs(item.id)}
+                                >
+                                  <Code className="h-3 w-3 mr-1" />
+                                  {showItemCodeRefs ? 'Hide' : 'Show'} Code ({item.codeRefs.length})
+                                </Button>
+                                {showItemCodeRefs && (
+                                  <div className="space-y-2 mt-2">
+                                    {item.codeRefs.map((ref, i) => (
+                                      <CodeReferenceBlock key={i} ref={ref} onCopy={handleCopy} />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              )}
             </Card>
-          </div>
-        )}
+          );
+        })}
       </div>
     </div>
   );

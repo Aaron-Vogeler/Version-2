@@ -443,8 +443,6 @@ export default function DashboardPage() {
           <TabsContent value="checklist" className="animate-fade-in">
             <AIOutboundChecklist
               groqSettings={groqSettings}
-              customAssistantName={customAssistantName || 'Ferguson'}
-              firstName={firstName || 'Aaron'}
               onNavigateToSettings={() => setActiveTab('groq-call')}
             />
           </TabsContent>
