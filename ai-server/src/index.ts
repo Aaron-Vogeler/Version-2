@@ -7,7 +7,7 @@ import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
-import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall } from "./pipeline/llm";
+import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall, detectPartyType } from "./pipeline/llm";
 import { synthesizeSpeech, stopSpeaking, hangupCall, sendDtmf } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording } from "./utils/supabase";
@@ -1656,6 +1656,31 @@ wss.on("connection", async (ws) => {
           }
           callContext.accumulatedTurnText.push(fullUtterance);
           console.log(`[TRANSCRIPT] Accumulated turn segment #${callContext.accumulatedTurnText.length}: "${fullUtterance}"`);
+
+          // PARTY DETECTION: On the first transcript segment, detect if we're talking to a human or IVR
+          if (!callContext.partyDetectionComplete && callContext.accumulatedTurnText.length === 1) {
+            console.log(`[PARTY-DETECT] 🎯 First transcript segment received, triggering party detection...`);
+            // Run detection asynchronously (don't block the response flow)
+            const ctx = callContext;
+            detectPartyType(fullUtterance, ctx.callId).then((isRobotic) => {
+              ctx.partyDetectionComplete = true;
+              ctx.detectedPartyType = isRobotic ? "robotic" : "human";
+              ctx.partyDetectionTimestamp = Date.now();
+              console.log(`[PARTY-DETECT] ✅ Detection complete: ${ctx.detectedPartyType.toUpperCase()}`);
+
+              // If robotic was detected, also set isIvrMode for consistency with existing pattern-based detection
+              if (isRobotic) {
+                ctx.isIvrMode = true;
+                ctx.ivrConfidence = 1.0; // High confidence from LLM detection
+                console.log(`[PARTY-DETECT] 🤖 IVR mode enabled based on LLM detection`);
+              }
+            }).catch((err) => {
+              console.error(`[PARTY-DETECT] ❌ Detection failed:`, err);
+              // Mark as complete even on error to prevent repeated attempts
+              ctx.partyDetectionComplete = true;
+              ctx.detectedPartyType = "human"; // Default to human on error
+            });
+          }
         }
 
         // Set debounce timer - only send to LLM after silence
@@ -1664,12 +1689,14 @@ wss.on("connection", async (ws) => {
           clearTimeout(callContext.ttsDebounceTimer);
         }
 
-        // Use IVR-optimized timing if in IVR mode
+        // Use IVR-optimized timing if detected as robotic or in IVR mode
         const debounceMs = ivrUtils.getDebounceMs(callContext);
-        if (callContext.isIvrMode) {
-          console.log(`[IVR] ⚡ Using fast debounce: ${debounceMs}ms (IVR mode)`);
+        if (callContext.detectedPartyType === "robotic") {
+          console.log(`[PARTY-DETECT] ⚡ Using fast debounce: ${debounceMs}ms (LLM detected ROBOTIC)`);
+        } else if (callContext.isIvrMode) {
+          console.log(`[IVR] ⚡ Using fast debounce: ${debounceMs}ms (pattern-based IVR mode)`);
         } else {
-          console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (per-call: ${callContext.ttsDebounceMs ?? 'default'})`);
+          console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (HUMAN mode, per-call: ${callContext.ttsDebounceMs ?? 'default'})`);
         }
 
         // Increment turn sequence (invalidates in-flight work from previous turns)
@@ -1724,14 +1751,44 @@ wss.on("connection", async (ws) => {
               ctx.accumulatedTurnText.push(fullUtterance);
               console.log(`[TRANSCRIPT] Accumulated turn segment #${ctx.accumulatedTurnText.length} (flush timer): "${fullUtterance}"`);
 
+              // PARTY DETECTION: On the first transcript segment, detect if we're talking to a human or IVR
+              if (!ctx.partyDetectionComplete && ctx.accumulatedTurnText.length === 1) {
+                console.log(`[PARTY-DETECT] 🎯 First transcript segment received (flush timer path), triggering party detection...`);
+                // Run detection asynchronously (don't block the response flow)
+                detectPartyType(fullUtterance, ctx.callId).then((isRobotic) => {
+                  ctx.partyDetectionComplete = true;
+                  ctx.detectedPartyType = isRobotic ? "robotic" : "human";
+                  ctx.partyDetectionTimestamp = Date.now();
+                  console.log(`[PARTY-DETECT] ✅ Detection complete: ${ctx.detectedPartyType.toUpperCase()}`);
+
+                  // If robotic was detected, also set isIvrMode for consistency with existing pattern-based detection
+                  if (isRobotic) {
+                    ctx.isIvrMode = true;
+                    ctx.ivrConfidence = 1.0; // High confidence from LLM detection
+                    console.log(`[PARTY-DETECT] 🤖 IVR mode enabled based on LLM detection`);
+                  }
+                }).catch((err) => {
+                  console.error(`[PARTY-DETECT] ❌ Detection failed:`, err);
+                  // Mark as complete even on error to prevent repeated attempts
+                  ctx.partyDetectionComplete = true;
+                  ctx.detectedPartyType = "human"; // Default to human on error
+                });
+              }
+
               // Clear any existing TTS debounce timer
               if (ctx.ttsDebounceTimer) {
                 clearTimeout(ctx.ttsDebounceTimer);
               }
 
-              // Use IVR-optimized timing if in IVR mode
+              // Use IVR-optimized timing if detected as robotic or in IVR mode
               const debounceMs = ivrUtils.getDebounceMs(ctx);
-              console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (flush timer path)`);
+              if (ctx.detectedPartyType === "robotic") {
+                console.log(`[PARTY-DETECT] ⚡ Setting TTS debounce: ${debounceMs}ms (flush timer, LLM detected ROBOTIC)`);
+              } else if (ctx.isIvrMode) {
+                console.log(`[IVR] ⚡ Setting TTS debounce: ${debounceMs}ms (flush timer, pattern-based IVR mode)`);
+              } else {
+                console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (flush timer, HUMAN mode)`);
+              }
 
               // Increment turn sequence
               ctx.turnSeq = (ctx.turnSeq || 0) + 1;

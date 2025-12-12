@@ -254,9 +254,17 @@ export function updateIvrState(callContext: CallContext, analysis: IvrAnalysis):
 }
 
 /**
- * Check if we should use IVR-optimized timing
+ * Check if we should use IVR-optimized timing.
+ * Returns true if:
+ * - Pattern-based IVR detection is active with high confidence, OR
+ * - LLM-based party detection determined this is a robotic/IVR system
  */
 export function shouldUseIvrTiming(callContext: CallContext): boolean {
+  // Check LLM-based party detection first (most authoritative)
+  if (callContext.partyDetectionComplete && callContext.detectedPartyType === "robotic") {
+    return true;
+  }
+  // Fall back to pattern-based detection
   return callContext.isIvrMode === true && (callContext.ivrConfidence || 0) >= config.ivr.autoDetectThreshold;
 }
 
