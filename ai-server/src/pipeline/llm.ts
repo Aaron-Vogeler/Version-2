@@ -52,7 +52,7 @@ function buildSystemPrompt(context?: CallContext): string {
   if (context?.additionalContext) {
     prompt += `
 
-ADDITIONAL CONTEXT:
+CALL_CONTEXT:
 ${context.additionalContext}`;
   }
 
@@ -60,7 +60,7 @@ ${context.additionalContext}`;
   if (context?.goal) {
     prompt += `
 
-CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`;
+CALL_GOAL: ${context.goal}`;
   }
 
   return prompt;

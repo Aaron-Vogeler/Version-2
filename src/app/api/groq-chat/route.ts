@@ -158,12 +158,12 @@ function buildSystemPrompt(
 
   // Add additional context if provided
   if (additionalContext) {
-    prompt += `\n\nADDITIONAL CONTEXT:\n${additionalContext}`;
+    prompt += `\n\nCALL_CONTEXT:\n${additionalContext}`;
   }
 
   // Goal is always injected at the bottom in simple format
   if (goal) {
-    prompt += `\n\nCALL GOAL (YOUR ONLY MISSION): "${goal}"`;
+    prompt += `\n\nCALL_GOAL: ${goal}`;
   }
 
   return prompt;
