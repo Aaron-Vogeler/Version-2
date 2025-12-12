@@ -20,6 +20,15 @@ interface OutboundCallRequest {
   callerUtteranceFlushMs?: number;
   holdCheckInIntervalMs?: number;
   holdMaxCheckIns?: number;
+  // IVR/Phone Tree settings
+  ivrDebounceMs?: number;
+  ivrUtteranceFlushMs?: number;
+  ivrDtmfMinPauseMs?: number;
+  ivrDtmfDurationMs?: number;
+  ivrAutoDetectThreshold?: number;
+  ivrResponseTimeoutMs?: number;
+  ivrMaxDtmfRetries?: number;
+  ivrDisableBargeInGracePeriod?: boolean;
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -44,7 +53,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
+    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -62,7 +71,7 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName + systemPrompt + additionalContext + rollingSummaryPrompt + call control settings + model + LLM params) in base64
+    // Encode client state (goal + userId + assistantName + userName + systemPrompt + additionalContext + rollingSummaryPrompt + call control settings + IVR settings + model + LLM params) in base64
     const clientStatePayload = JSON.stringify({
       goal,
       additionalContext: additionalContext || null,
@@ -77,6 +86,15 @@ router.post("/", async (req: Request, res: Response) => {
       callerUtteranceFlushMs: callerUtteranceFlushMs || null,
       holdCheckInIntervalMs: holdCheckInIntervalMs || null,
       holdMaxCheckIns: holdMaxCheckIns || null,
+      // IVR/Phone Tree settings
+      ivrDebounceMs: ivrDebounceMs || null,
+      ivrUtteranceFlushMs: ivrUtteranceFlushMs || null,
+      ivrDtmfMinPauseMs: ivrDtmfMinPauseMs || null,
+      ivrDtmfDurationMs: ivrDtmfDurationMs || null,
+      ivrAutoDetectThreshold: ivrAutoDetectThreshold || null,
+      ivrResponseTimeoutMs: ivrResponseTimeoutMs || null,
+      ivrMaxDtmfRetries: ivrMaxDtmfRetries || null,
+      ivrDisableBargeInGracePeriod: ivrDisableBargeInGracePeriod ?? null,
       model: model || null,
       temperature: temperature || null,
       maxTokens: maxTokens || null,

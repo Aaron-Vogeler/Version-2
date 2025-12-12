@@ -618,7 +618,9 @@ async function scheduleTtsResponse(
 
       // Check DTMF pacing (prevent rapid-fire tones)
       if (!ivrUtils.canSendDtmf(callContext)) {
-        const waitTime = config.ivr.dtmfMinPauseMs - (Date.now() - (callContext.lastDtmfSentAt || 0));
+        // Use per-call setting if provided, otherwise fall back to config default
+        const dtmfMinPause = callContext.ivrDtmfMinPauseMs ?? config.ivr.dtmfMinPauseMs;
+        const waitTime = dtmfMinPause - (Date.now() - (callContext.lastDtmfSentAt || 0));
         console.log(`[DTMF] ⏳ Waiting ${waitTime}ms before sending (pacing)`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
@@ -626,7 +628,9 @@ async function scheduleTtsResponse(
       // Send DTMF via Telnyx
       if (callContext.callControlId) {
         try {
-          await sendDtmf(callContext.callControlId, dtmf, config.ivr.dtmfDurationMs);
+          // Use per-call setting if provided, otherwise fall back to config default
+          const dtmfDuration = callContext.ivrDtmfDurationMs ?? config.ivr.dtmfDurationMs;
+          await sendDtmf(callContext.callControlId, dtmf, dtmfDuration);
           ivrUtils.recordDtmfSent(callContext, dtmf);
 
           // Append to conversation turns for context
@@ -1882,6 +1886,15 @@ wss.on("connection", async (ws) => {
           managedContext.callerUtteranceFlushMs = decoded.callerUtteranceFlushMs || null;
           managedContext.holdCheckInIntervalMs = decoded.holdCheckInIntervalMs || null;
           managedContext.holdMaxCheckIns = decoded.holdMaxCheckIns || null;
+          // IVR/Phone Tree settings
+          managedContext.ivrDebounceMs = decoded.ivrDebounceMs || null;
+          managedContext.ivrUtteranceFlushMs = decoded.ivrUtteranceFlushMs || null;
+          managedContext.ivrDtmfMinPauseMs = decoded.ivrDtmfMinPauseMs || null;
+          managedContext.ivrDtmfDurationMs = decoded.ivrDtmfDurationMs || null;
+          managedContext.ivrAutoDetectThreshold = decoded.ivrAutoDetectThreshold || null;
+          managedContext.ivrResponseTimeoutMs = decoded.ivrResponseTimeoutMs || null;
+          managedContext.ivrMaxDtmfRetries = decoded.ivrMaxDtmfRetries || null;
+          managedContext.ivrDisableBargeInGracePeriod = decoded.ivrDisableBargeInGracePeriod ?? null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";
