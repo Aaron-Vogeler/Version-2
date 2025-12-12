@@ -219,7 +219,8 @@ export function analyzeForIvr(text: string): IvrAnalysis {
  * Update call context based on IVR analysis
  */
 export function updateIvrState(callContext: CallContext, analysis: IvrAnalysis): void {
-  const threshold = config.ivr.autoDetectThreshold;
+  // Use per-call threshold if provided, otherwise fall back to config default
+  const threshold = callContext.ivrAutoDetectThreshold ?? config.ivr.autoDetectThreshold;
 
   // Update IVR mode based on confidence
   if (analysis.confidence >= threshold) {
@@ -265,7 +266,9 @@ export function shouldUseIvrTiming(callContext: CallContext): boolean {
     return true;
   }
   // Fall back to pattern-based detection
-  return callContext.isIvrMode === true && (callContext.ivrConfidence || 0) >= config.ivr.autoDetectThreshold;
+  // Use per-call threshold if provided, otherwise fall back to config default
+  const threshold = callContext.ivrAutoDetectThreshold ?? config.ivr.autoDetectThreshold;
+  return callContext.isIvrMode === true && (callContext.ivrConfidence || 0) >= threshold;
 }
 
 /**
@@ -273,7 +276,8 @@ export function shouldUseIvrTiming(callContext: CallContext): boolean {
  */
 export function getDebounceMs(callContext: CallContext): number {
   if (shouldUseIvrTiming(callContext)) {
-    return config.ivr.debounceMs;
+    // Use per-call IVR debounce if provided, otherwise fall back to config default
+    return callContext.ivrDebounceMs ?? config.ivr.debounceMs;
   }
   // Use per-call setting if provided, otherwise fall back to config default
   return callContext.ttsDebounceMs ?? config.callControl.ttsDebounceMs;
@@ -284,7 +288,8 @@ export function getDebounceMs(callContext: CallContext): number {
  */
 export function getUtteranceFlushMs(callContext: CallContext): number {
   if (shouldUseIvrTiming(callContext)) {
-    return config.ivr.utteranceFlushMs;
+    // Use per-call IVR utterance flush if provided, otherwise fall back to config default
+    return callContext.ivrUtteranceFlushMs ?? config.ivr.utteranceFlushMs;
   }
   // Use per-call setting if provided, otherwise fall back to config default
   return callContext.callerUtteranceFlushMs ?? config.callControl.callerUtteranceFlushMs;
@@ -295,7 +300,8 @@ export function getUtteranceFlushMs(callContext: CallContext): number {
  */
 export function canSendDtmf(callContext: CallContext): boolean {
   const lastSent = callContext.lastDtmfSentAt || 0;
-  const minPause = config.ivr.dtmfMinPauseMs;
+  // Use per-call DTMF min pause if provided, otherwise fall back to config default
+  const minPause = callContext.ivrDtmfMinPauseMs ?? config.ivr.dtmfMinPauseMs;
   return Date.now() - lastSent >= minPause;
 }
 

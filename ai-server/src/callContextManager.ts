@@ -111,6 +111,16 @@ export interface CallContext {
   lastDtmfSentAt?: number; // Timestamp of last DTMF sent (for pacing)
   humanDetectedAt?: number; // Timestamp when human was detected (exits IVR mode)
 
+  // Per-call IVR settings (overrides config defaults if provided)
+  ivrDebounceMs?: number; // Custom IVR debounce time for this call
+  ivrUtteranceFlushMs?: number; // Custom IVR utterance flush time for this call
+  ivrDtmfMinPauseMs?: number; // Custom minimum pause between DTMF sends
+  ivrDtmfDurationMs?: number; // Custom DTMF tone duration
+  ivrAutoDetectThreshold?: number; // Custom IVR auto-detection confidence threshold
+  ivrResponseTimeoutMs?: number; // Custom timeout before IVR retry
+  ivrMaxDtmfRetries?: number; // Custom max DTMF retry attempts
+  ivrDisableBargeInGracePeriod?: boolean; // Custom barge-in grace period setting for IVR
+
   // LLM-based party type detection (human vs IVR/robotic)
   detectedPartyType?: "human" | "robotic"; // Result of LLM party detection
   partyDetectionComplete?: boolean; // Whether initial party detection has been done
