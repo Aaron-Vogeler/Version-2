@@ -53,6 +53,14 @@ export default async function handler(
       speech_words_per_second, speech_min_meaningful_duration,
       // Transcript settings
       deepgram_endpointing, transcript_append_segments,
+      // TTS/Voice settings
+      tts_voice_id,
+      // STT/Deepgram settings
+      deepgram_model,
+      // Recording settings
+      custom_recording_enabled, custom_recording_max_bytes,
+      // Rolling summary settings
+      rolling_summary_system_message,
     } = req.body;
 
     if (!goal || !to_number) {
@@ -169,6 +177,19 @@ export default async function handler(
         // Transcript settings
         deepgramEndpointing: deepgram_endpointing,
         transcriptAppendSegments: transcript_append_segments,
+
+        // TTS/Voice settings
+        ttsVoiceId: tts_voice_id,
+
+        // STT/Deepgram settings
+        deepgramModel: deepgram_model,
+
+        // Recording settings
+        customRecordingEnabled: custom_recording_enabled,
+        customRecordingMaxBytes: custom_recording_max_bytes,
+
+        // Rolling summary settings
+        rollingSummarySystemMessage: rolling_summary_system_message,
       }),
     });
 

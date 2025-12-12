@@ -158,6 +158,19 @@ export interface CallContext {
 
   // Per-call hangup delay (overrides config default)
   hangupDelayMs?: number; // Wait for TTS before hangup
+
+  // Per-call TTS/Voice settings (overrides config defaults)
+  ttsVoiceId?: string; // Telnyx TTS voice
+
+  // Per-call STT/Deepgram settings (overrides config defaults)
+  deepgramModel?: string; // Deepgram model
+
+  // Per-call recording settings (overrides config defaults)
+  customRecordingEnabled?: boolean; // Enable self-hosted recording
+  customRecordingMaxBytes?: number; // Max recording buffer size
+
+  // Per-call rolling summary settings (overrides config defaults)
+  rollingSummarySystemMessage?: string; // System message for summary generation
 }
 
 /**

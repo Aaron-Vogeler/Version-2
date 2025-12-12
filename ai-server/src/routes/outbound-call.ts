@@ -89,6 +89,27 @@ interface OutboundCallRequest {
   // =============================================================================
   deepgramEndpointing?: number;    // End-of-speech detection ms (default: 100)
   transcriptAppendSegments?: boolean; // Append vs replace segments (default: true)
+
+  // =============================================================================
+  // TTS/VOICE SETTINGS
+  // =============================================================================
+  ttsVoiceId?: string;             // Telnyx TTS voice (default: Telnyx.KokoroTTS.bm_george)
+
+  // =============================================================================
+  // STT/DEEPGRAM SETTINGS
+  // =============================================================================
+  deepgramModel?: string;          // Deepgram model (default: nova-2)
+
+  // =============================================================================
+  // RECORDING SETTINGS
+  // =============================================================================
+  customRecordingEnabled?: boolean;  // Enable self-hosted recording (default: true)
+  customRecordingMaxBytes?: number;  // Max recording buffer size (default: 50MB)
+
+  // =============================================================================
+  // ROLLING SUMMARY SETTINGS
+  // =============================================================================
+  rollingSummarySystemMessage?: string; // System message for summary generation
 }
 
 interface TelnyxCallResponse {
@@ -128,6 +149,14 @@ router.post("/", async (req: Request, res: Response) => {
       speechWordsPerSecond, speechMinMeaningfulDuration,
       // Transcript settings
       deepgramEndpointing, transcriptAppendSegments,
+      // TTS/Voice settings
+      ttsVoiceId,
+      // STT/Deepgram settings
+      deepgramModel,
+      // Recording settings
+      customRecordingEnabled, customRecordingMaxBytes,
+      // Rolling summary settings
+      rollingSummarySystemMessage,
     } = req.body as OutboundCallRequest;
 
     // Validate required fields
@@ -213,6 +242,19 @@ router.post("/", async (req: Request, res: Response) => {
       // Transcript settings
       deepgramEndpointing: deepgramEndpointing ?? null,
       transcriptAppendSegments: transcriptAppendSegments ?? null,
+
+      // TTS/Voice settings
+      ttsVoiceId: ttsVoiceId || null,
+
+      // STT/Deepgram settings
+      deepgramModel: deepgramModel || null,
+
+      // Recording settings
+      customRecordingEnabled: customRecordingEnabled ?? null,
+      customRecordingMaxBytes: customRecordingMaxBytes ?? null,
+
+      // Rolling summary settings
+      rollingSummarySystemMessage: rollingSummarySystemMessage || null,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

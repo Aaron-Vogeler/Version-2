@@ -57,6 +57,8 @@ import {
   Volume2,
   Headphones,
   Radio,
+  Mic,
+  Save,
 } from 'lucide-react';
 import { LiveCallObserver } from './live-call-observer';
 
@@ -213,6 +215,27 @@ interface SavedGroqSettings {
     deepgramEndpointing?: number;
     appendSegments?: boolean;
   };
+
+  // TTS/Voice Settings
+  voiceSettings?: {
+    ttsVoiceId?: string;
+  };
+
+  // STT/Deepgram Settings
+  sttSettings?: {
+    deepgramModel?: string;
+  };
+
+  // Recording Settings
+  recordingSettings?: {
+    customRecordingEnabled?: boolean;
+    customRecordingMaxBytes?: number;
+  };
+
+  // Rolling Summary Settings
+  summarySettings?: {
+    rollingSummarySystemMessage?: string;
+  };
 }
 
 interface GroqCallProps {
@@ -333,6 +356,31 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   });
   const [showTranscriptSettings, setShowTranscriptSettings] = useState(false);
 
+  // TTS/Voice settings
+  const [voiceSettings, setVoiceSettings] = useState({
+    ttsVoiceId: 'Telnyx.KokoroTTS.bm_george',
+  });
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+
+  // STT/Deepgram settings
+  const [sttSettings, setSttSettings] = useState({
+    deepgramModel: 'nova-2',
+  });
+  const [showSttSettings, setShowSttSettings] = useState(false);
+
+  // Recording settings
+  const [recordingSettings, setRecordingSettings] = useState({
+    customRecordingEnabled: true,
+    customRecordingMaxBytes: 50000000, // 50MB
+  });
+  const [showRecordingSettings, setShowRecordingSettings] = useState(false);
+
+  // Rolling Summary settings
+  const [summarySettings, setSummarySettings] = useState({
+    rollingSummarySystemMessage: '',
+  });
+  const [showSummarySettings, setShowSummarySettings] = useState(false);
+
   // UI state
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [expandedSystemPrompt, setExpandedSystemPrompt] = useState(false);
@@ -417,6 +465,34 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         setTranscriptSettings(prev => ({
           ...prev,
           ...groqSettings.transcriptSettings,
+        }));
+      }
+      // Voice settings
+      if (groqSettings.voiceSettings) {
+        setVoiceSettings(prev => ({
+          ...prev,
+          ...groqSettings.voiceSettings,
+        }));
+      }
+      // STT settings
+      if (groqSettings.sttSettings) {
+        setSttSettings(prev => ({
+          ...prev,
+          ...groqSettings.sttSettings,
+        }));
+      }
+      // Recording settings
+      if (groqSettings.recordingSettings) {
+        setRecordingSettings(prev => ({
+          ...prev,
+          ...groqSettings.recordingSettings,
+        }));
+      }
+      // Summary settings
+      if (groqSettings.summarySettings) {
+        setSummarySettings(prev => ({
+          ...prev,
+          ...groqSettings.summarySettings,
         }));
       }
     }
@@ -683,6 +759,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           // Transcript settings
           deepgram_endpointing: transcriptSettings.deepgramEndpointing,
           transcript_append_segments: transcriptSettings.appendSegments,
+
+          // TTS/Voice settings
+          tts_voice_id: voiceSettings.ttsVoiceId,
+
+          // STT/Deepgram settings
+          deepgram_model: sttSettings.deepgramModel,
+
+          // Recording settings
+          custom_recording_enabled: recordingSettings.customRecordingEnabled,
+          custom_recording_max_bytes: recordingSettings.customRecordingMaxBytes,
+
+          // Rolling summary settings
+          rolling_summary_system_message: summarySettings.rollingSummarySystemMessage,
         }),
       });
 
@@ -814,6 +903,27 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       appendSegments: true,
     });
 
+    // Voice settings
+    setVoiceSettings({
+      ttsVoiceId: 'Telnyx.KokoroTTS.bm_george',
+    });
+
+    // STT settings
+    setSttSettings({
+      deepgramModel: 'nova-2',
+    });
+
+    // Recording settings
+    setRecordingSettings({
+      customRecordingEnabled: true,
+      customRecordingMaxBytes: 50000000,
+    });
+
+    // Summary settings
+    setSummarySettings({
+      rollingSummarySystemMessage: '',
+    });
+
     if (models.length > 0) {
       setSelectedModel(models[0].id);
     }
@@ -850,6 +960,14 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       speechSettings,
       // Transcript settings
       transcriptSettings,
+      // Voice settings
+      voiceSettings,
+      // STT settings
+      sttSettings,
+      // Recording settings
+      recordingSettings,
+      // Summary settings
+      summarySettings,
     };
 
     try {
@@ -1809,6 +1927,172 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               />
             </div>
             <p className="text-[10px] text-muted-foreground">Accumulate segments vs replace (default: append)</p>
+          </div>
+        )}
+      </div>
+
+      {/* TTS/Voice Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Volume2 className="h-4 w-4" />
+            Voice/TTS Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+            className="h-6 text-xs"
+          >
+            {showVoiceSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Text-to-speech voice configuration
+        </p>
+        {showVoiceSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">TTS Voice ID</Label>
+              <select
+                value={voiceSettings.ttsVoiceId}
+                onChange={(e) => setVoiceSettings(prev => ({ ...prev, ttsVoiceId: e.target.value }))}
+                className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
+              >
+                <option value="Telnyx.KokoroTTS.bm_george">George (Male, Neutral)</option>
+                <option value="Telnyx.KokoroTTS.af_nicole">Nicole (Female, US)</option>
+                <option value="Telnyx.KokoroTTS.af_sarah">Sarah (Female, US)</option>
+                <option value="Telnyx.KokoroTTS.am_adam">Adam (Male, US)</option>
+                <option value="Telnyx.KokoroTTS.am_michael">Michael (Male, US)</option>
+                <option value="Telnyx.KokoroTTS.bf_emma">Emma (Female, UK)</option>
+                <option value="Telnyx.KokoroTTS.bm_daniel">Daniel (Male, UK)</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground">Telnyx Kokoro TTS voice (default: George)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* STT/Deepgram Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Mic className="h-4 w-4" />
+            Speech-to-Text Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSttSettings(!showSttSettings)}
+            className="h-6 text-xs"
+          >
+            {showSttSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Deepgram speech recognition configuration
+        </p>
+        {showSttSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Deepgram Model</Label>
+              <select
+                value={sttSettings.deepgramModel}
+                onChange={(e) => setSttSettings(prev => ({ ...prev, deepgramModel: e.target.value }))}
+                className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
+              >
+                <option value="nova-2">Nova-2 (Best accuracy, recommended)</option>
+                <option value="nova-2-phonecall">Nova-2 Phonecall (Optimized for calls)</option>
+                <option value="nova-2-general">Nova-2 General</option>
+                <option value="nova">Nova (Previous gen)</option>
+                <option value="enhanced">Enhanced (Older model)</option>
+                <option value="base">Base (Fastest, lower accuracy)</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground">Deepgram STT model (default: nova-2)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Recording Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Save className="h-4 w-4" />
+            Recording Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowRecordingSettings(!showRecordingSettings)}
+            className="h-6 text-xs"
+          >
+            {showRecordingSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Call recording configuration
+        </p>
+        {showRecordingSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Enable Custom Recording</Label>
+              <input
+                type="checkbox"
+                checked={recordingSettings.customRecordingEnabled}
+                onChange={(e) => setRecordingSettings(prev => ({ ...prev, customRecordingEnabled: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Use self-hosted dual-channel recording (default: enabled)</p>
+            <div className="space-y-1">
+              <Label className="text-xs">Max Recording Size (MB)</Label>
+              <Input
+                type="number"
+                min="10"
+                max="200"
+                step="10"
+                value={Math.round(recordingSettings.customRecordingMaxBytes / 1000000)}
+                onChange={(e) => setRecordingSettings(prev => ({ ...prev, customRecordingMaxBytes: (parseInt(e.target.value) || 50) * 1000000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Max recording buffer size (default: 50MB, ~50 min)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Rolling Summary Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            Summary Generation
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSummarySettings(!showSummarySettings)}
+            className="h-6 text-xs"
+          >
+            {showSummarySettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Rolling summary LLM configuration
+        </p>
+        {showSummarySettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Summary System Message</Label>
+              <Textarea
+                value={summarySettings.rollingSummarySystemMessage}
+                onChange={(e) => setSummarySettings(prev => ({ ...prev, rollingSummarySystemMessage: e.target.value }))}
+                placeholder="Leave empty for default: 'You are a concise call summary generator...'"
+                className="min-h-[80px] resize-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground">Custom system message for rolling summary generation (optional)</p>
+            </div>
           </div>
         )}
       </div>
