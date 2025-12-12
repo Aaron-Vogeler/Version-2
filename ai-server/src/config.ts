@@ -138,6 +138,60 @@ const config = {
   },
 
   // =============================================================================
+  // PARTY DETECTION SETTINGS (Human vs IVR/Robotic)
+  // =============================================================================
+  partyDetection: {
+    // Enable automatic party detection at call start
+    enabled: getEnv("PARTY_DETECTION_ENABLED", "true") === "true",
+    // Temperature for party detection LLM call (low for consistency)
+    temperature: parseFloat(getEnv("PARTY_DETECTION_TEMPERATURE", "0.1")),
+    // Max tokens for party detection (only needs True/False)
+    maxTokens: getEnvInt("PARTY_DETECTION_MAX_TOKENS", 10),
+    // System prompt for party detection (can be customized)
+    systemPrompt: getEnv("PARTY_DETECTION_SYSTEM_PROMPT", ""),
+    // Minimum transcript length before attempting detection
+    minTranscriptLength: getEnvInt("PARTY_DETECTION_MIN_TRANSCRIPT_LENGTH", 20),
+  },
+
+  // =============================================================================
+  // AUDIO PROCESSING SETTINGS
+  // =============================================================================
+  audio: {
+    // PCM amplitude threshold for silence detection (0-32768)
+    silenceThreshold: getEnvInt("AUDIO_SILENCE_THRESHOLD", 3000),
+    // Consecutive packets required to confirm state change (at 50 packets/sec)
+    hysteresisPackets: getEnvInt("AUDIO_HYSTERESIS_PACKETS", 8),
+    // Sample jump threshold to trigger smoothing (~40% of full scale)
+    discontinuityThreshold: getEnvInt("AUDIO_DISCONTINUITY_THRESHOLD", 25000),
+    // Fade length for discontinuities in samples (at 8kHz, 16 = 2ms)
+    fadeSamples: getEnvInt("AUDIO_FADE_SAMPLES", 16),
+    // Fade length for silence transitions in samples (at 8kHz, 32 = 4ms)
+    silenceFadeSamples: getEnvInt("AUDIO_SILENCE_FADE_SAMPLES", 32),
+    // Enable audio smoother debug logging
+    debugSmoother: getEnv("DEBUG_AUDIO_SMOOTHER", "false") === "true",
+  },
+
+  // =============================================================================
+  // SPEECH ESTIMATION SETTINGS
+  // =============================================================================
+  speech: {
+    // Average speaking rate in words per second (for barge-in estimation)
+    wordsPerSecond: parseFloat(getEnv("SPEECH_WORDS_PER_SECOND", "2.5")),
+    // Minimum duration in seconds to consider speech meaningful
+    minMeaningfulDuration: parseFloat(getEnv("SPEECH_MIN_MEANINGFUL_DURATION", "0.5")),
+  },
+
+  // =============================================================================
+  // TRANSCRIPT SETTINGS
+  // =============================================================================
+  transcript: {
+    // Deepgram endpointing - milliseconds before end-of-speech detection
+    deepgramEndpointing: getEnvInt("DEEPGRAM_ENDPOINTING", 100),
+    // Whether to append/accumulate transcript segments vs replace
+    appendSegments: getEnv("TRANSCRIPT_APPEND_SEGMENTS", "true") === "true",
+  },
+
+  // =============================================================================
   // LLM CONFIG
   // =============================================================================
   llm: {

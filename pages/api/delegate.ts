@@ -28,8 +28,32 @@ export default async function handler(
   }
 
   try {
-    // Validate request body
-    const { goal, context, to_number, custom_system_prompt, rolling_summary_prompt, tts_debounce_ms, barge_in_cooldown_ms, caller_utterance_flush_ms, hold_check_in_interval_ms, hold_max_check_ins, ivr_debounce_ms, ivr_utterance_flush_ms, ivr_dtmf_min_pause_ms, ivr_dtmf_duration_ms, ivr_auto_detect_threshold, ivr_response_timeout_ms, ivr_max_dtmf_retries, ivr_disable_barge_in_grace_period, model, temperature, max_tokens, top_p, reasoning, stream, json_mode } = req.body;
+    // Validate request body - extract all call control parameters
+    const {
+      // Basic call info
+      goal, context, to_number, custom_system_prompt, rolling_summary_prompt,
+      // Call control settings (TTS & Response Timing)
+      tts_debounce_ms, barge_in_cooldown_ms, barge_in_grace_period_ms, caller_utterance_flush_ms, hangup_delay_ms,
+      // Hold settings
+      hold_check_in_interval_ms, hold_max_check_ins,
+      // IVR settings
+      ivr_debounce_ms, ivr_utterance_flush_ms, ivr_dtmf_min_pause_ms, ivr_dtmf_duration_ms,
+      ivr_auto_detect_threshold, ivr_response_timeout_ms, ivr_max_dtmf_retries, ivr_disable_barge_in_grace_period,
+      // LLM parameters
+      model, temperature, max_tokens, top_p, reasoning, stream, json_mode,
+      // Context management
+      max_turns_in_window, summary_update_interval_turns, max_summary_tokens_hint,
+      // Party detection settings
+      party_detection_enabled, party_detection_temperature, party_detection_max_tokens,
+      party_detection_system_prompt, party_detection_min_transcript_length,
+      // Audio processing settings
+      audio_silence_threshold, audio_hysteresis_packets, audio_discontinuity_threshold,
+      audio_fade_samples, audio_silence_fade_samples,
+      // Speech estimation settings
+      speech_words_per_second, speech_min_meaningful_duration,
+      // Transcript settings
+      deepgram_endpointing, transcript_append_segments,
+    } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
@@ -79,6 +103,7 @@ export default async function handler(
       method: 'POST',
       headers,
       body: JSON.stringify({
+        // Basic call info
         goal,
         additionalContext: context,
         toNumber: to_number,
@@ -87,12 +112,18 @@ export default async function handler(
         userName: firstName,
         systemPrompt: custom_system_prompt,
         rollingSummaryPrompt: rolling_summary_prompt,
-        // Call control settings
+
+        // Call control settings (TTS & Response Timing)
         ttsDebounceMs: tts_debounce_ms,
         bargeInCooldownMs: barge_in_cooldown_ms,
+        bargeInGracePeriodMs: barge_in_grace_period_ms,
         callerUtteranceFlushMs: caller_utterance_flush_ms,
+        hangupDelayMs: hangup_delay_ms,
+
+        // Hold settings
         holdCheckInIntervalMs: hold_check_in_interval_ms,
         holdMaxCheckIns: hold_max_check_ins,
+
         // IVR/Phone Tree settings
         ivrDebounceMs: ivr_debounce_ms,
         ivrUtteranceFlushMs: ivr_utterance_flush_ms,
@@ -102,13 +133,42 @@ export default async function handler(
         ivrResponseTimeoutMs: ivr_response_timeout_ms,
         ivrMaxDtmfRetries: ivr_max_dtmf_retries,
         ivrDisableBargeInGracePeriod: ivr_disable_barge_in_grace_period,
-        model: model,
-        temperature: temperature,
+
+        // LLM parameters
+        model,
+        temperature,
         maxTokens: max_tokens,
         topP: top_p,
-        reasoning: reasoning,
-        stream: stream,
+        reasoning,
+        stream,
         jsonMode: json_mode,
+
+        // Context management settings
+        maxTurnsInWindow: max_turns_in_window,
+        summaryUpdateIntervalTurns: summary_update_interval_turns,
+        maxSummaryTokensHint: max_summary_tokens_hint,
+
+        // Party detection settings
+        partyDetectionEnabled: party_detection_enabled,
+        partyDetectionTemperature: party_detection_temperature,
+        partyDetectionMaxTokens: party_detection_max_tokens,
+        partyDetectionSystemPrompt: party_detection_system_prompt,
+        partyDetectionMinTranscriptLength: party_detection_min_transcript_length,
+
+        // Audio processing settings
+        audioSilenceThreshold: audio_silence_threshold,
+        audioHysteresisPackets: audio_hysteresis_packets,
+        audioDiscontinuityThreshold: audio_discontinuity_threshold,
+        audioFadeSamples: audio_fade_samples,
+        audioSilenceFadeSamples: audio_silence_fade_samples,
+
+        // Speech estimation settings
+        speechWordsPerSecond: speech_words_per_second,
+        speechMinMeaningfulDuration: speech_min_meaningful_duration,
+
+        // Transcript settings
+        deepgramEndpointing: deepgram_endpointing,
+        transcriptAppendSegments: transcript_append_segments,
       }),
     });
 

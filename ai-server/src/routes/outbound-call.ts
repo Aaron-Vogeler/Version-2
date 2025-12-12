@@ -14,21 +14,37 @@ interface OutboundCallRequest {
   userName?: string;
   systemPrompt?: string;
   rollingSummaryPrompt?: string;
-  // Call control settings
-  ttsDebounceMs?: number;
-  bargeInCooldownMs?: number;
-  callerUtteranceFlushMs?: number;
-  holdCheckInIntervalMs?: number;
-  holdMaxCheckIns?: number;
-  // IVR/Phone Tree settings
-  ivrDebounceMs?: number;
-  ivrUtteranceFlushMs?: number;
-  ivrDtmfMinPauseMs?: number;
-  ivrDtmfDurationMs?: number;
-  ivrAutoDetectThreshold?: number;
-  ivrResponseTimeoutMs?: number;
-  ivrMaxDtmfRetries?: number;
-  ivrDisableBargeInGracePeriod?: boolean;
+
+  // =============================================================================
+  // CALL CONTROL SETTINGS (TTS & Response Timing)
+  // =============================================================================
+  ttsDebounceMs?: number;           // Silence before AI responds (default: 500ms)
+  bargeInCooldownMs?: number;       // Time between stop commands (default: 300ms)
+  bargeInGracePeriodMs?: number;    // Delay before enabling barge-in (default: 800ms)
+  callerUtteranceFlushMs?: number;  // Wait before flushing utterance (default: 300ms)
+  hangupDelayMs?: number;           // Wait for TTS before hangup (default: 2000ms)
+
+  // =============================================================================
+  // HOLD SETTINGS
+  // =============================================================================
+  holdCheckInIntervalMs?: number;   // Time between AI check-ins while on hold (default: 30000ms)
+  holdMaxCheckIns?: number;         // Max check-ins before ending call (default: 5)
+
+  // =============================================================================
+  // IVR/PHONE TREE SETTINGS
+  // =============================================================================
+  ivrDebounceMs?: number;                  // Silence before responding to IVR (default: 150ms)
+  ivrUtteranceFlushMs?: number;            // Quick utterance finalization (default: 200ms)
+  ivrDtmfMinPauseMs?: number;              // Min pause between DTMF sends (default: 500ms)
+  ivrDtmfDurationMs?: number;              // Duration of each DTMF tone (default: 250ms)
+  ivrAutoDetectThreshold?: number;         // Confidence threshold for IVR mode (default: 0.7)
+  ivrResponseTimeoutMs?: number;           // Wait time before retry (default: 8000ms)
+  ivrMaxDtmfRetries?: number;              // Max retries for same option (default: 2)
+  ivrDisableBargeInGracePeriod?: boolean;  // Skip grace period for IVRs (default: true)
+
+  // =============================================================================
+  // LLM PARAMETERS
+  // =============================================================================
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -36,6 +52,43 @@ interface OutboundCallRequest {
   reasoning?: 'low' | 'medium' | 'high';
   stream?: boolean;
   jsonMode?: boolean;
+
+  // =============================================================================
+  // CONTEXT MANAGEMENT SETTINGS
+  // =============================================================================
+  maxTurnsInWindow?: number;           // Recent turns to keep (default: 12)
+  summaryUpdateIntervalTurns?: number; // Turns before updating summary (default: 6)
+  maxSummaryTokensHint?: number;       // Token limit for summaries (default: 300)
+
+  // =============================================================================
+  // PARTY DETECTION SETTINGS (Human vs IVR)
+  // =============================================================================
+  partyDetectionEnabled?: boolean;           // Enable auto party detection (default: true)
+  partyDetectionTemperature?: number;        // LLM temperature for detection (default: 0.1)
+  partyDetectionMaxTokens?: number;          // Max tokens for detection (default: 10)
+  partyDetectionSystemPrompt?: string;       // Custom detection prompt
+  partyDetectionMinTranscriptLength?: number; // Min chars before detection (default: 20)
+
+  // =============================================================================
+  // AUDIO PROCESSING SETTINGS
+  // =============================================================================
+  audioSilenceThreshold?: number;       // PCM amplitude for silence (default: 3000)
+  audioHysteresisPackets?: number;      // Packets to confirm state change (default: 8)
+  audioDiscontinuityThreshold?: number; // Sample jump to trigger smoothing (default: 25000)
+  audioFadeSamples?: number;            // Fade length for discontinuities (default: 16)
+  audioSilenceFadeSamples?: number;     // Fade length for silence transitions (default: 32)
+
+  // =============================================================================
+  // SPEECH ESTIMATION SETTINGS
+  // =============================================================================
+  speechWordsPerSecond?: number;        // Speaking rate for barge-in (default: 2.5)
+  speechMinMeaningfulDuration?: number; // Min duration for meaningful speech (default: 0.5)
+
+  // =============================================================================
+  // TRANSCRIPT SETTINGS
+  // =============================================================================
+  deepgramEndpointing?: number;    // End-of-speech detection ms (default: 100)
+  transcriptAppendSegments?: boolean; // Append vs replace segments (default: true)
 }
 
 interface TelnyxCallResponse {
@@ -53,7 +106,29 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
+    const {
+      // Required fields
+      goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt,
+      // Call control settings
+      ttsDebounceMs, bargeInCooldownMs, bargeInGracePeriodMs, callerUtteranceFlushMs, hangupDelayMs,
+      // Hold settings
+      holdCheckInIntervalMs, holdMaxCheckIns,
+      // IVR settings
+      ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold,
+      ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod,
+      // LLM parameters
+      model, temperature, maxTokens, topP, reasoning, stream, jsonMode,
+      // Context management
+      maxTurnsInWindow, summaryUpdateIntervalTurns, maxSummaryTokensHint,
+      // Party detection
+      partyDetectionEnabled, partyDetectionTemperature, partyDetectionMaxTokens, partyDetectionSystemPrompt, partyDetectionMinTranscriptLength,
+      // Audio processing
+      audioSilenceThreshold, audioHysteresisPackets, audioDiscontinuityThreshold, audioFadeSamples, audioSilenceFadeSamples,
+      // Speech estimation
+      speechWordsPerSecond, speechMinMeaningfulDuration,
+      // Transcript settings
+      deepgramEndpointing, transcriptAppendSegments,
+    } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -71,8 +146,9 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName + systemPrompt + additionalContext + rollingSummaryPrompt + call control settings + IVR settings + model + LLM params) in base64
+    // Encode all call settings in client state for retrieval during call handling
     const clientStatePayload = JSON.stringify({
+      // Basic call info
       goal,
       additionalContext: additionalContext || null,
       userId,
@@ -80,28 +156,63 @@ router.post("/", async (req: Request, res: Response) => {
       userName: userName || null,
       systemPrompt: systemPrompt,
       rollingSummaryPrompt: rollingSummaryPrompt || null,
-      // Call control settings
-      ttsDebounceMs: ttsDebounceMs || null,
-      bargeInCooldownMs: bargeInCooldownMs || null,
-      callerUtteranceFlushMs: callerUtteranceFlushMs || null,
-      holdCheckInIntervalMs: holdCheckInIntervalMs || null,
-      holdMaxCheckIns: holdMaxCheckIns || null,
+
+      // Call control settings (TTS & Response Timing)
+      ttsDebounceMs: ttsDebounceMs ?? null,
+      bargeInCooldownMs: bargeInCooldownMs ?? null,
+      bargeInGracePeriodMs: bargeInGracePeriodMs ?? null,
+      callerUtteranceFlushMs: callerUtteranceFlushMs ?? null,
+      hangupDelayMs: hangupDelayMs ?? null,
+
+      // Hold settings
+      holdCheckInIntervalMs: holdCheckInIntervalMs ?? null,
+      holdMaxCheckIns: holdMaxCheckIns ?? null,
+
       // IVR/Phone Tree settings
-      ivrDebounceMs: ivrDebounceMs || null,
-      ivrUtteranceFlushMs: ivrUtteranceFlushMs || null,
-      ivrDtmfMinPauseMs: ivrDtmfMinPauseMs || null,
-      ivrDtmfDurationMs: ivrDtmfDurationMs || null,
-      ivrAutoDetectThreshold: ivrAutoDetectThreshold || null,
-      ivrResponseTimeoutMs: ivrResponseTimeoutMs || null,
-      ivrMaxDtmfRetries: ivrMaxDtmfRetries || null,
+      ivrDebounceMs: ivrDebounceMs ?? null,
+      ivrUtteranceFlushMs: ivrUtteranceFlushMs ?? null,
+      ivrDtmfMinPauseMs: ivrDtmfMinPauseMs ?? null,
+      ivrDtmfDurationMs: ivrDtmfDurationMs ?? null,
+      ivrAutoDetectThreshold: ivrAutoDetectThreshold ?? null,
+      ivrResponseTimeoutMs: ivrResponseTimeoutMs ?? null,
+      ivrMaxDtmfRetries: ivrMaxDtmfRetries ?? null,
       ivrDisableBargeInGracePeriod: ivrDisableBargeInGracePeriod ?? null,
+
+      // LLM parameters
       model: model || null,
-      temperature: temperature || null,
-      maxTokens: maxTokens || null,
-      topP: topP || null,
+      temperature: temperature ?? null,
+      maxTokens: maxTokens ?? null,
+      topP: topP ?? null,
       reasoning: reasoning || null,
-      stream: stream || null,
-      jsonMode: jsonMode || null,
+      stream: stream ?? null,
+      jsonMode: jsonMode ?? null,
+
+      // Context management settings
+      maxTurnsInWindow: maxTurnsInWindow ?? null,
+      summaryUpdateIntervalTurns: summaryUpdateIntervalTurns ?? null,
+      maxSummaryTokensHint: maxSummaryTokensHint ?? null,
+
+      // Party detection settings (Human vs IVR)
+      partyDetectionEnabled: partyDetectionEnabled ?? null,
+      partyDetectionTemperature: partyDetectionTemperature ?? null,
+      partyDetectionMaxTokens: partyDetectionMaxTokens ?? null,
+      partyDetectionSystemPrompt: partyDetectionSystemPrompt || null,
+      partyDetectionMinTranscriptLength: partyDetectionMinTranscriptLength ?? null,
+
+      // Audio processing settings
+      audioSilenceThreshold: audioSilenceThreshold ?? null,
+      audioHysteresisPackets: audioHysteresisPackets ?? null,
+      audioDiscontinuityThreshold: audioDiscontinuityThreshold ?? null,
+      audioFadeSamples: audioFadeSamples ?? null,
+      audioSilenceFadeSamples: audioSilenceFadeSamples ?? null,
+
+      // Speech estimation settings
+      speechWordsPerSecond: speechWordsPerSecond ?? null,
+      speechMinMeaningfulDuration: speechMinMeaningfulDuration ?? null,
+
+      // Transcript settings
+      deepgramEndpointing: deepgramEndpointing ?? null,
+      transcriptAppendSegments: transcriptAppendSegments ?? null,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

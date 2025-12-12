@@ -125,6 +125,39 @@ export interface CallContext {
   detectedPartyType?: "human" | "robotic"; // Result of LLM party detection
   partyDetectionComplete?: boolean; // Whether initial party detection has been done
   partyDetectionTimestamp?: number; // When party detection occurred
+
+  // Per-call party detection settings (overrides config defaults)
+  partyDetectionEnabled?: boolean; // Enable auto party detection
+  partyDetectionTemperature?: number; // LLM temperature for detection
+  partyDetectionMaxTokens?: number; // Max tokens for detection
+  partyDetectionSystemPrompt?: string; // Custom detection system prompt
+  partyDetectionMinTranscriptLength?: number; // Min chars before detection
+
+  // Per-call context management settings (overrides config defaults)
+  maxTurnsInWindow?: number; // Recent turns to keep
+  summaryUpdateIntervalTurns?: number; // Turns before updating summary
+  maxSummaryTokensHint?: number; // Token limit for summaries
+
+  // Per-call audio processing settings (overrides config defaults)
+  audioSilenceThreshold?: number; // PCM amplitude for silence
+  audioHysteresisPackets?: number; // Packets to confirm state change
+  audioDiscontinuityThreshold?: number; // Sample jump to trigger smoothing
+  audioFadeSamples?: number; // Fade length for discontinuities
+  audioSilenceFadeSamples?: number; // Fade length for silence transitions
+
+  // Per-call speech estimation settings (overrides config defaults)
+  speechWordsPerSecond?: number; // Speaking rate for barge-in
+  speechMinMeaningfulDuration?: number; // Min duration for meaningful speech
+
+  // Per-call transcript settings (overrides config defaults)
+  deepgramEndpointing?: number; // End-of-speech detection ms
+  transcriptAppendSegments?: boolean; // Append vs replace segments
+
+  // Per-call barge-in grace period (overrides config default)
+  bargeInGracePeriodMs?: number; // Delay before enabling barge-in
+
+  // Per-call hangup delay (overrides config default)
+  hangupDelayMs?: number; // Wait for TTS before hangup
 }
 
 /**

@@ -143,6 +143,7 @@ const CALL_AUDIO_SOUNDS = [
 
 // Groq settings interface for saved configuration
 interface SavedGroqSettings {
+  // LLM Parameters
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -152,14 +153,19 @@ interface SavedGroqSettings {
   jsonMode?: boolean;
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
+
+  // Call Control Settings (TTS & Response Timing)
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
+    bargeInGracePeriodMs?: number;
     callerUtteranceFlushMs?: number;
     hangupDelayMs?: number;
     holdCheckInIntervalMs?: number;
     holdMaxCheckIns?: number;
   };
+
+  // IVR/Phone Tree Settings
   ivrSettings?: {
     debounceMs?: number;
     utteranceFlushMs?: number;
@@ -169,6 +175,43 @@ interface SavedGroqSettings {
     responseTimeoutMs?: number;
     maxDtmfRetries?: number;
     disableBargeInGracePeriod?: boolean;
+  };
+
+  // Context Management Settings
+  contextSettings?: {
+    maxTurnsInWindow?: number;
+    summaryUpdateIntervalTurns?: number;
+    maxSummaryTokensHint?: number;
+  };
+
+  // Party Detection Settings (Human vs IVR)
+  partyDetectionSettings?: {
+    enabled?: boolean;
+    temperature?: number;
+    maxTokens?: number;
+    systemPrompt?: string;
+    minTranscriptLength?: number;
+  };
+
+  // Audio Processing Settings
+  audioSettings?: {
+    silenceThreshold?: number;
+    hysteresisPackets?: number;
+    discontinuityThreshold?: number;
+    fadeSamples?: number;
+    silenceFadeSamples?: number;
+  };
+
+  // Speech Estimation Settings
+  speechSettings?: {
+    wordsPerSecond?: number;
+    minMeaningfulDuration?: number;
+  };
+
+  // Transcript Settings
+  transcriptSettings?: {
+    deepgramEndpointing?: number;
+    appendSegments?: boolean;
   };
 }
 
@@ -227,6 +270,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [callControlSettings, setCallControlSettings] = useState({
     ttsDebounceMs: 500,
     bargeInCooldownMs: 300,
+    bargeInGracePeriodMs: 800,
     callerUtteranceFlushMs: 300,
     hangupDelayMs: 2000,
     holdCheckInIntervalMs: 30000,
@@ -246,6 +290,48 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     disableBargeInGracePeriod: true,
   });
   const [showIvrSettings, setShowIvrSettings] = useState(false);
+
+  // Context Management settings
+  const [contextSettings, setContextSettings] = useState({
+    maxTurnsInWindow: 12,
+    summaryUpdateIntervalTurns: 6,
+    maxSummaryTokensHint: 300,
+  });
+  const [showContextSettings, setShowContextSettings] = useState(false);
+
+  // Party Detection settings (Human vs IVR)
+  const [partyDetectionSettings, setPartyDetectionSettings] = useState({
+    enabled: true,
+    temperature: 0.1,
+    maxTokens: 10,
+    systemPrompt: '',
+    minTranscriptLength: 20,
+  });
+  const [showPartyDetectionSettings, setShowPartyDetectionSettings] = useState(false);
+
+  // Audio Processing settings
+  const [audioSettings, setAudioSettings] = useState({
+    silenceThreshold: 3000,
+    hysteresisPackets: 8,
+    discontinuityThreshold: 25000,
+    fadeSamples: 16,
+    silenceFadeSamples: 32,
+  });
+  const [showAudioSettings, setShowAudioSettings] = useState(false);
+
+  // Speech Estimation settings
+  const [speechSettings, setSpeechSettings] = useState({
+    wordsPerSecond: 2.5,
+    minMeaningfulDuration: 0.5,
+  });
+  const [showSpeechSettings, setShowSpeechSettings] = useState(false);
+
+  // Transcript settings
+  const [transcriptSettings, setTranscriptSettings] = useState({
+    deepgramEndpointing: 100,
+    appendSegments: true,
+  });
+  const [showTranscriptSettings, setShowTranscriptSettings] = useState(false);
 
   // UI state
   const [copiedPrompt, setCopiedPrompt] = useState(false);
@@ -274,6 +360,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   useEffect(() => {
     if (groqSettings) {
       console.log('[GroqCall] Loading saved settings:', groqSettings);
+      // LLM parameters
       if (groqSettings.model) setSelectedModel(groqSettings.model);
       if (groqSettings.temperature !== undefined) setTemperature(groqSettings.temperature);
       if (groqSettings.maxTokens !== undefined) setMaxTokens(groqSettings.maxTokens);
@@ -283,16 +370,53 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       if (groqSettings.jsonMode !== undefined) setJsonMode(groqSettings.jsonMode);
       if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
       if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
+      // Call control settings
       if (groqSettings.callControlSettings) {
         setCallControlSettings(prev => ({
           ...prev,
           ...groqSettings.callControlSettings,
         }));
       }
+      // IVR settings
       if (groqSettings.ivrSettings) {
         setIvrSettings(prev => ({
           ...prev,
           ...groqSettings.ivrSettings,
+        }));
+      }
+      // Context settings
+      if (groqSettings.contextSettings) {
+        setContextSettings(prev => ({
+          ...prev,
+          ...groqSettings.contextSettings,
+        }));
+      }
+      // Party detection settings
+      if (groqSettings.partyDetectionSettings) {
+        setPartyDetectionSettings(prev => ({
+          ...prev,
+          ...groqSettings.partyDetectionSettings,
+        }));
+      }
+      // Audio settings
+      if (groqSettings.audioSettings) {
+        setAudioSettings(prev => ({
+          ...prev,
+          ...groqSettings.audioSettings,
+        }));
+      }
+      // Speech settings
+      if (groqSettings.speechSettings) {
+        setSpeechSettings(prev => ({
+          ...prev,
+          ...groqSettings.speechSettings,
+        }));
+      }
+      // Transcript settings
+      if (groqSettings.transcriptSettings) {
+        setTranscriptSettings(prev => ({
+          ...prev,
+          ...groqSettings.transcriptSettings,
         }));
       }
     }
@@ -496,17 +620,24 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          // Basic call info
           goal,
           context: additionalContext,
           to_number: toNumber,
           custom_system_prompt: customSystemPrompt,
           rolling_summary_prompt: rollingSummaryPrompt,
-          // Call control settings
+
+          // Call control settings (TTS & Response Timing)
           tts_debounce_ms: callControlSettings.ttsDebounceMs,
           barge_in_cooldown_ms: callControlSettings.bargeInCooldownMs,
+          barge_in_grace_period_ms: callControlSettings.bargeInGracePeriodMs,
           caller_utterance_flush_ms: callControlSettings.callerUtteranceFlushMs,
+          hangup_delay_ms: callControlSettings.hangupDelayMs,
+
+          // Hold settings
           hold_check_in_interval_ms: callControlSettings.holdCheckInIntervalMs,
           hold_max_check_ins: callControlSettings.holdMaxCheckIns,
+
           // IVR/Phone Tree settings
           ivr_debounce_ms: ivrSettings.debounceMs,
           ivr_utterance_flush_ms: ivrSettings.utteranceFlushMs,
@@ -516,6 +647,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           ivr_response_timeout_ms: ivrSettings.responseTimeoutMs,
           ivr_max_dtmf_retries: ivrSettings.maxDtmfRetries,
           ivr_disable_barge_in_grace_period: ivrSettings.disableBargeInGracePeriod,
+
+          // LLM parameters
           model: selectedModel,
           temperature: temperature,
           max_tokens: maxTokens,
@@ -523,6 +656,33 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           reasoning: reasoning,
           stream: stream,
           json_mode: jsonMode,
+
+          // Context management settings
+          max_turns_in_window: contextSettings.maxTurnsInWindow,
+          summary_update_interval_turns: contextSettings.summaryUpdateIntervalTurns,
+          max_summary_tokens_hint: contextSettings.maxSummaryTokensHint,
+
+          // Party detection settings
+          party_detection_enabled: partyDetectionSettings.enabled,
+          party_detection_temperature: partyDetectionSettings.temperature,
+          party_detection_max_tokens: partyDetectionSettings.maxTokens,
+          party_detection_system_prompt: partyDetectionSettings.systemPrompt,
+          party_detection_min_transcript_length: partyDetectionSettings.minTranscriptLength,
+
+          // Audio processing settings
+          audio_silence_threshold: audioSettings.silenceThreshold,
+          audio_hysteresis_packets: audioSettings.hysteresisPackets,
+          audio_discontinuity_threshold: audioSettings.discontinuityThreshold,
+          audio_fade_samples: audioSettings.fadeSamples,
+          audio_silence_fade_samples: audioSettings.silenceFadeSamples,
+
+          // Speech estimation settings
+          speech_words_per_second: speechSettings.wordsPerSecond,
+          speech_min_meaningful_duration: speechSettings.minMeaningfulDuration,
+
+          // Transcript settings
+          deepgram_endpointing: transcriptSettings.deepgramEndpointing,
+          transcript_append_segments: transcriptSettings.appendSegments,
         }),
       });
 
@@ -578,23 +738,34 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   };
 
   const handleResetSettings = () => {
+    // Basic settings
     setGoal('');
     setAdditionalContext('');
     setAssistantName(customAssistantName);
     setUserName(firstName);
     setCustomSystemPrompt('');
     setRollingSummaryPrompt('');
+
+    // LLM parameters
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
+    setReasoning('medium');
+    setStream(false);
+    setJsonMode(false);
+
+    // Call control settings
     setCallControlSettings({
       ttsDebounceMs: 500,
       bargeInCooldownMs: 300,
+      bargeInGracePeriodMs: 800,
       callerUtteranceFlushMs: 300,
       hangupDelayMs: 2000,
       holdCheckInIntervalMs: 30000,
       holdMaxCheckIns: 5,
     });
+
+    // IVR settings
     setIvrSettings({
       debounceMs: 150,
       utteranceFlushMs: 200,
@@ -605,6 +776,44 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       maxDtmfRetries: 2,
       disableBargeInGracePeriod: true,
     });
+
+    // Context settings
+    setContextSettings({
+      maxTurnsInWindow: 12,
+      summaryUpdateIntervalTurns: 6,
+      maxSummaryTokensHint: 300,
+    });
+
+    // Party detection settings
+    setPartyDetectionSettings({
+      enabled: true,
+      temperature: 0.1,
+      maxTokens: 10,
+      systemPrompt: '',
+      minTranscriptLength: 20,
+    });
+
+    // Audio settings
+    setAudioSettings({
+      silenceThreshold: 3000,
+      hysteresisPackets: 8,
+      discontinuityThreshold: 25000,
+      fadeSamples: 16,
+      silenceFadeSamples: 32,
+    });
+
+    // Speech settings
+    setSpeechSettings({
+      wordsPerSecond: 2.5,
+      minMeaningfulDuration: 0.5,
+    });
+
+    // Transcript settings
+    setTranscriptSettings({
+      deepgramEndpointing: 100,
+      appendSegments: true,
+    });
+
     if (models.length > 0) {
       setSelectedModel(models[0].id);
     }
@@ -617,6 +826,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
     setSettingsSaveStatus('idle');
 
     const settingsToSave: SavedGroqSettings = {
+      // LLM parameters
       model: selectedModel,
       temperature,
       maxTokens,
@@ -626,8 +836,20 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       jsonMode,
       customSystemPrompt,
       rollingSummaryPrompt,
+      // Call control settings
       callControlSettings,
+      // IVR settings
       ivrSettings,
+      // Context settings
+      contextSettings,
+      // Party detection settings
+      partyDetectionSettings,
+      // Audio settings
+      audioSettings,
+      // Speech settings
+      speechSettings,
+      // Transcript settings
+      transcriptSettings,
     };
 
     try {
@@ -1077,6 +1299,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               <p className="text-[10px] text-muted-foreground">Time between stop commands</p>
             </div>
             <div className="space-y-1">
+              <Label className="text-xs">Barge-In Grace Period (ms)</Label>
+              <Input
+                type="number"
+                min="0"
+                max="2000"
+                step="100"
+                value={callControlSettings.bargeInGracePeriodMs}
+                onChange={(e) => setCallControlSettings(prev => ({ ...prev, bargeInGracePeriodMs: parseInt(e.target.value) || 800 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Delay before enabling barge-in (prevents echo)</p>
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Utterance Flush (ms)</Label>
               <Input
                 type="number"
@@ -1237,6 +1472,343 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               />
             </div>
             <p className="text-[10px] text-muted-foreground">IVRs don&apos;t have echo issues, so grace period can be disabled</p>
+          </div>
+        )}
+      </div>
+
+      {/* Context Management Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            Context Management
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowContextSettings(!showContextSettings)}
+            className="h-6 text-xs"
+          >
+            {showContextSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Controls how conversation history is managed and summarized
+        </p>
+        {showContextSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Max Turns In Window</Label>
+              <Input
+                type="number"
+                min="4"
+                max="50"
+                step="2"
+                value={contextSettings.maxTurnsInWindow}
+                onChange={(e) => setContextSettings(prev => ({ ...prev, maxTurnsInWindow: parseInt(e.target.value) || 12 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Recent conversation turns to keep (default: 12)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Summary Update Interval (turns)</Label>
+              <Input
+                type="number"
+                min="2"
+                max="20"
+                step="1"
+                value={contextSettings.summaryUpdateIntervalTurns}
+                onChange={(e) => setContextSettings(prev => ({ ...prev, summaryUpdateIntervalTurns: parseInt(e.target.value) || 6 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Turns before generating new summary (default: 6)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Max Summary Tokens</Label>
+              <Input
+                type="number"
+                min="100"
+                max="1000"
+                step="50"
+                value={contextSettings.maxSummaryTokensHint}
+                onChange={(e) => setContextSettings(prev => ({ ...prev, maxSummaryTokensHint: parseInt(e.target.value) || 300 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Approximate max tokens for rolling summary (default: 300)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Party Detection Settings (Human vs IVR) */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <User className="h-4 w-4" />
+            Human vs IVR Detection
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowPartyDetectionSettings(!showPartyDetectionSettings)}
+            className="h-6 text-xs"
+          >
+            {showPartyDetectionSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          LLM-based detection to differentiate humans from automated systems
+        </p>
+        {showPartyDetectionSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Enable Party Detection</Label>
+              <input
+                type="checkbox"
+                checked={partyDetectionSettings.enabled}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, enabled: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Auto-detect if callee is human or IVR at call start</p>
+            <div className="space-y-1">
+              <Label className="text-xs">Detection Temperature</Label>
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                value={partyDetectionSettings.temperature}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, temperature: parseFloat(e.target.value) || 0.1 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Lower = more consistent (default: 0.1)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Detection Max Tokens</Label>
+              <Input
+                type="number"
+                min="5"
+                max="50"
+                step="5"
+                value={partyDetectionSettings.maxTokens}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, maxTokens: parseInt(e.target.value) || 10 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Only needs True/False response (default: 10)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Min Transcript Length (chars)</Label>
+              <Input
+                type="number"
+                min="10"
+                max="100"
+                step="5"
+                value={partyDetectionSettings.minTranscriptLength}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, minTranscriptLength: parseInt(e.target.value) || 20 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Wait for this many characters before detection (default: 20)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Custom Detection Prompt</Label>
+              <Textarea
+                value={partyDetectionSettings.systemPrompt}
+                onChange={(e) => setPartyDetectionSettings(prev => ({ ...prev, systemPrompt: e.target.value }))}
+                placeholder="Leave empty for default prompt..."
+                className="min-h-[60px] resize-none text-xs font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground">Custom system prompt for party detection (optional)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Audio Processing Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Volume2 className="h-4 w-4" />
+            Audio Processing
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAudioSettings(!showAudioSettings)}
+            className="h-6 text-xs"
+          >
+            {showAudioSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Audio smoothing and silence detection parameters
+        </p>
+        {showAudioSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Silence Threshold (0-32768)</Label>
+              <Input
+                type="number"
+                min="500"
+                max="10000"
+                step="500"
+                value={audioSettings.silenceThreshold}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, silenceThreshold: parseInt(e.target.value) || 3000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">PCM amplitude below this = silence (default: 3000)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Hysteresis Packets</Label>
+              <Input
+                type="number"
+                min="2"
+                max="20"
+                step="1"
+                value={audioSettings.hysteresisPackets}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, hysteresisPackets: parseInt(e.target.value) || 8 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Consecutive packets to confirm state change (default: 8 = 160ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Discontinuity Threshold</Label>
+              <Input
+                type="number"
+                min="5000"
+                max="50000"
+                step="5000"
+                value={audioSettings.discontinuityThreshold}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, discontinuityThreshold: parseInt(e.target.value) || 25000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Sample jump to trigger smoothing (default: 25000)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Fade Samples</Label>
+              <Input
+                type="number"
+                min="4"
+                max="64"
+                step="4"
+                value={audioSettings.fadeSamples}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, fadeSamples: parseInt(e.target.value) || 16 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Fade length for discontinuities (default: 16 = 2ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Silence Fade Samples</Label>
+              <Input
+                type="number"
+                min="8"
+                max="128"
+                step="8"
+                value={audioSettings.silenceFadeSamples}
+                onChange={(e) => setAudioSettings(prev => ({ ...prev, silenceFadeSamples: parseInt(e.target.value) || 32 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Fade length for silence transitions (default: 32 = 4ms)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Speech Estimation Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <MessageSquare className="h-4 w-4" />
+            Speech Estimation
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSpeechSettings(!showSpeechSettings)}
+            className="h-6 text-xs"
+          >
+            {showSpeechSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Settings for estimating spoken content during barge-in
+        </p>
+        {showSpeechSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Words Per Second</Label>
+              <Input
+                type="number"
+                min="1.0"
+                max="5.0"
+                step="0.5"
+                value={speechSettings.wordsPerSecond}
+                onChange={(e) => setSpeechSettings(prev => ({ ...prev, wordsPerSecond: parseFloat(e.target.value) || 2.5 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Average speaking rate for barge-in estimation (default: 2.5)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Min Meaningful Duration (sec)</Label>
+              <Input
+                type="number"
+                min="0.1"
+                max="2.0"
+                step="0.1"
+                value={speechSettings.minMeaningfulDuration}
+                onChange={(e) => setSpeechSettings(prev => ({ ...prev, minMeaningfulDuration: parseFloat(e.target.value) || 0.5 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Minimum duration to consider speech meaningful (default: 0.5s)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Transcript Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Transcript Settings
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowTranscriptSettings(!showTranscriptSettings)}
+            className="h-6 text-xs"
+          >
+            {showTranscriptSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Deepgram STT and transcript handling configuration
+        </p>
+        {showTranscriptSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Deepgram Endpointing (ms)</Label>
+              <Input
+                type="number"
+                min="50"
+                max="500"
+                step="25"
+                value={transcriptSettings.deepgramEndpointing}
+                onChange={(e) => setTranscriptSettings(prev => ({ ...prev, deepgramEndpointing: parseInt(e.target.value) || 100 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">End-of-speech detection time (default: 100ms)</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Append Transcript Segments</Label>
+              <input
+                type="checkbox"
+                checked={transcriptSettings.appendSegments}
+                onChange={(e) => setTranscriptSettings(prev => ({ ...prev, appendSegments: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Accumulate segments vs replace (default: append)</p>
           </div>
         )}
       </div>
