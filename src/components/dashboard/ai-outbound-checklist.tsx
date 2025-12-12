@@ -682,11 +682,11 @@ const ImportanceBadge = ({ importance }: { importance: ChecklistItem['importance
 };
 
 // Code reference component
-function CodeReferenceBlock({ ref, onCopy }: { ref: CodeReference; onCopy: (text: string) => void }) {
+function CodeReferenceBlock({ codeRef, onCopy }: { codeRef: CodeReference; onCopy: (text: string) => void }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    const text = ref.snippet || `// ${ref.file}${ref.lines ? `:${ref.lines}` : ''}\n// ${ref.description}`;
+    const text = codeRef.snippet || `// ${codeRef.file}${codeRef.lines ? `:${codeRef.lines}` : ''}\n// ${codeRef.description}`;
     onCopy(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -697,9 +697,9 @@ function CodeReferenceBlock({ ref, onCopy }: { ref: CodeReference; onCopy: (text
       <div className="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700">
         <div className="flex items-center gap-2 text-slate-300">
           <FolderOpen className="h-3.5 w-3.5" />
-          <span className="font-mono text-xs">{ref.file}</span>
-          {ref.lines && (
-            <span className="text-slate-500 text-xs">:{ref.lines}</span>
+          <span className="font-mono text-xs">{codeRef.file}</span>
+          {codeRef.lines && (
+            <span className="text-slate-500 text-xs">:{codeRef.lines}</span>
           )}
         </div>
         <Button
@@ -712,10 +712,10 @@ function CodeReferenceBlock({ ref, onCopy }: { ref: CodeReference; onCopy: (text
         </Button>
       </div>
       <div className="p-3">
-        <p className="text-slate-400 text-xs mb-2">{ref.description}</p>
-        {ref.snippet && (
+        <p className="text-slate-400 text-xs mb-2">{codeRef.description}</p>
+        {codeRef.snippet && (
           <pre className="text-green-400 text-xs overflow-x-auto whitespace-pre-wrap font-mono">
-            {ref.snippet}
+            {codeRef.snippet}
           </pre>
         )}
       </div>
@@ -966,8 +966,8 @@ export function AIOutboundChecklist({
                       </Button>
                       {showMainCodeRefs && (
                         <div className="space-y-3 mt-3">
-                          {category.mainCodeRefs.map((ref, i) => (
-                            <CodeReferenceBlock key={i} ref={ref} onCopy={handleCopy} />
+                          {category.mainCodeRefs.map((codeRef, i) => (
+                            <CodeReferenceBlock key={i} codeRef={codeRef} onCopy={handleCopy} />
                           ))}
                         </div>
                       )}
@@ -1062,8 +1062,8 @@ export function AIOutboundChecklist({
                                 </Button>
                                 {showItemCodeRefs && (
                                   <div className="space-y-2 mt-2">
-                                    {item.codeRefs.map((ref, i) => (
-                                      <CodeReferenceBlock key={i} ref={ref} onCopy={handleCopy} />
+                                    {item.codeRefs.map((codeRef, i) => (
+                                      <CodeReferenceBlock key={i} codeRef={codeRef} onCopy={handleCopy} />
                                     ))}
                                   </div>
                                 )}
