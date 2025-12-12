@@ -52,7 +52,12 @@ export default async function handler(
       // Speech estimation settings
       speech_words_per_second, speech_min_meaningful_duration,
       // Transcript settings
-      deepgram_endpointing, transcript_append_segments,
+      deepgram_endpointing, transcript_append_segments, deepgram_vad_events, deepgram_interim_results,
+      // Audio normalization settings
+      audio_norm_target_peak, audio_norm_min_threshold, audio_norm_max_gain, audio_soft_clip_threshold,
+      audio_soft_clip_factor, audio_pre_mulaw_min_peak, audio_pre_mulaw_target_peak,
+      // Downsampling filter settings
+      downsample_cutoff_hz, downsample_num_taps,
       // TTS/Voice settings
       tts_voice_id,
       // STT/Deepgram settings
@@ -60,7 +65,7 @@ export default async function handler(
       // Recording settings
       custom_recording_enabled, custom_recording_max_bytes,
       // Rolling summary settings
-      rolling_summary_system_message,
+      rolling_summary_system_message, rolling_summary_temperature,
     } = req.body;
 
     if (!goal || !to_number) {
@@ -177,6 +182,21 @@ export default async function handler(
         // Transcript settings
         deepgramEndpointing: deepgram_endpointing,
         transcriptAppendSegments: transcript_append_segments,
+        deepgramVadEvents: deepgram_vad_events,
+        deepgramInterimResults: deepgram_interim_results,
+
+        // Audio normalization settings
+        audioNormTargetPeak: audio_norm_target_peak,
+        audioNormMinThreshold: audio_norm_min_threshold,
+        audioNormMaxGain: audio_norm_max_gain,
+        audioSoftClipThreshold: audio_soft_clip_threshold,
+        audioSoftClipFactor: audio_soft_clip_factor,
+        audioPreMulawMinPeak: audio_pre_mulaw_min_peak,
+        audioPreMulawTargetPeak: audio_pre_mulaw_target_peak,
+
+        // Downsampling filter settings
+        downsampleCutoffHz: downsample_cutoff_hz,
+        downsampleNumTaps: downsample_num_taps,
 
         // TTS/Voice settings
         ttsVoiceId: tts_voice_id,
@@ -190,6 +210,7 @@ export default async function handler(
 
         // Rolling summary settings
         rollingSummarySystemMessage: rolling_summary_system_message,
+        rollingSummaryTemperature: rolling_summary_temperature,
       }),
     });
 

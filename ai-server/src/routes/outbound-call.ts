@@ -89,6 +89,25 @@ interface OutboundCallRequest {
   // =============================================================================
   deepgramEndpointing?: number;    // End-of-speech detection ms (default: 100)
   transcriptAppendSegments?: boolean; // Append vs replace segments (default: true)
+  deepgramVadEvents?: boolean;     // Enable VAD events from Deepgram (default: true)
+  deepgramInterimResults?: boolean; // Enable interim results from Deepgram (default: true)
+
+  // =============================================================================
+  // AUDIO NORMALIZATION SETTINGS
+  // =============================================================================
+  audioNormTargetPeak?: number;    // Target peak as % of full scale (default: 0.85)
+  audioNormMinThreshold?: number;  // Min peak threshold before normalizing (default: 0.82)
+  audioNormMaxGain?: number;       // Max gain multiplier (default: 3.0)
+  audioSoftClipThreshold?: number; // Soft clipping threshold PCM value (default: 28000)
+  audioSoftClipFactor?: number;    // Soft clip compression factor (default: 0.3)
+  audioPreMulawMinPeak?: number;   // Min peak for pre-mulaw boost (default: 6500)
+  audioPreMulawTargetPeak?: number; // Target peak for pre-mulaw boost (default: 16000)
+
+  // =============================================================================
+  // DOWNSAMPLING FILTER SETTINGS
+  // =============================================================================
+  downsampleCutoffHz?: number;     // FIR filter cutoff frequency (default: 3400)
+  downsampleNumTaps?: number;      // FIR filter taps count (default: 63)
 
   // =============================================================================
   // TTS/VOICE SETTINGS
@@ -110,6 +129,7 @@ interface OutboundCallRequest {
   // ROLLING SUMMARY SETTINGS
   // =============================================================================
   rollingSummarySystemMessage?: string; // System message for summary generation
+  rollingSummaryTemperature?: number;   // Temperature for summary generation (default: 0.2)
 }
 
 interface TelnyxCallResponse {
@@ -148,7 +168,12 @@ router.post("/", async (req: Request, res: Response) => {
       // Speech estimation
       speechWordsPerSecond, speechMinMeaningfulDuration,
       // Transcript settings
-      deepgramEndpointing, transcriptAppendSegments,
+      deepgramEndpointing, transcriptAppendSegments, deepgramVadEvents, deepgramInterimResults,
+      // Audio normalization settings
+      audioNormTargetPeak, audioNormMinThreshold, audioNormMaxGain, audioSoftClipThreshold,
+      audioSoftClipFactor, audioPreMulawMinPeak, audioPreMulawTargetPeak,
+      // Downsampling filter settings
+      downsampleCutoffHz, downsampleNumTaps,
       // TTS/Voice settings
       ttsVoiceId,
       // STT/Deepgram settings
@@ -156,7 +181,7 @@ router.post("/", async (req: Request, res: Response) => {
       // Recording settings
       customRecordingEnabled, customRecordingMaxBytes,
       // Rolling summary settings
-      rollingSummarySystemMessage,
+      rollingSummarySystemMessage, rollingSummaryTemperature,
     } = req.body as OutboundCallRequest;
 
     // Validate required fields
@@ -242,6 +267,21 @@ router.post("/", async (req: Request, res: Response) => {
       // Transcript settings
       deepgramEndpointing: deepgramEndpointing ?? null,
       transcriptAppendSegments: transcriptAppendSegments ?? null,
+      deepgramVadEvents: deepgramVadEvents ?? null,
+      deepgramInterimResults: deepgramInterimResults ?? null,
+
+      // Audio normalization settings
+      audioNormTargetPeak: audioNormTargetPeak ?? null,
+      audioNormMinThreshold: audioNormMinThreshold ?? null,
+      audioNormMaxGain: audioNormMaxGain ?? null,
+      audioSoftClipThreshold: audioSoftClipThreshold ?? null,
+      audioSoftClipFactor: audioSoftClipFactor ?? null,
+      audioPreMulawMinPeak: audioPreMulawMinPeak ?? null,
+      audioPreMulawTargetPeak: audioPreMulawTargetPeak ?? null,
+
+      // Downsampling filter settings
+      downsampleCutoffHz: downsampleCutoffHz ?? null,
+      downsampleNumTaps: downsampleNumTaps ?? null,
 
       // TTS/Voice settings
       ttsVoiceId: ttsVoiceId || null,
@@ -255,6 +295,7 @@ router.post("/", async (req: Request, res: Response) => {
 
       // Rolling summary settings
       rollingSummarySystemMessage: rollingSummarySystemMessage || null,
+      rollingSummaryTemperature: rollingSummaryTemperature ?? null,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

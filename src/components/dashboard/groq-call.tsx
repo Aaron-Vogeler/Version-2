@@ -214,6 +214,25 @@ interface SavedGroqSettings {
   transcriptSettings?: {
     deepgramEndpointing?: number;
     appendSegments?: boolean;
+    vadEvents?: boolean;
+    interimResults?: boolean;
+  };
+
+  // Audio Normalization Settings
+  audioNormSettings?: {
+    targetPeakPercent?: number;
+    minPeakThreshold?: number;
+    maxGain?: number;
+    softClipThreshold?: number;
+    softClipFactor?: number;
+    preMulawMinPeak?: number;
+    preMulawTargetPeak?: number;
+  };
+
+  // Downsampling Filter Settings
+  downsampleSettings?: {
+    cutoffHz?: number;
+    numTaps?: number;
   };
 
   // TTS/Voice Settings
@@ -235,6 +254,7 @@ interface SavedGroqSettings {
   // Rolling Summary Settings
   summarySettings?: {
     rollingSummarySystemMessage?: string;
+    rollingSummaryTemperature?: number;
   };
 }
 
@@ -353,8 +373,29 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [transcriptSettings, setTranscriptSettings] = useState({
     deepgramEndpointing: 100,
     appendSegments: true,
+    vadEvents: true,
+    interimResults: true,
   });
   const [showTranscriptSettings, setShowTranscriptSettings] = useState(false);
+
+  // Audio Normalization settings
+  const [audioNormSettings, setAudioNormSettings] = useState({
+    targetPeakPercent: 0.85,
+    minPeakThreshold: 0.82,
+    maxGain: 3.0,
+    softClipThreshold: 28000,
+    softClipFactor: 0.3,
+    preMulawMinPeak: 6500,
+    preMulawTargetPeak: 16000,
+  });
+  const [showAudioNormSettings, setShowAudioNormSettings] = useState(false);
+
+  // Downsampling Filter settings
+  const [downsampleSettings, setDownsampleSettings] = useState({
+    cutoffHz: 3400,
+    numTaps: 63,
+  });
+  const [showDownsampleSettings, setShowDownsampleSettings] = useState(false);
 
   // TTS/Voice settings
   const [voiceSettings, setVoiceSettings] = useState({
@@ -378,6 +419,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   // Rolling Summary settings
   const [summarySettings, setSummarySettings] = useState({
     rollingSummarySystemMessage: '',
+    rollingSummaryTemperature: 0.2,
   });
   const [showSummarySettings, setShowSummarySettings] = useState(false);
 
@@ -465,6 +507,20 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         setTranscriptSettings(prev => ({
           ...prev,
           ...groqSettings.transcriptSettings,
+        }));
+      }
+      // Audio normalization settings
+      if (groqSettings.audioNormSettings) {
+        setAudioNormSettings(prev => ({
+          ...prev,
+          ...groqSettings.audioNormSettings,
+        }));
+      }
+      // Downsampling filter settings
+      if (groqSettings.downsampleSettings) {
+        setDownsampleSettings(prev => ({
+          ...prev,
+          ...groqSettings.downsampleSettings,
         }));
       }
       // Voice settings
@@ -759,6 +815,21 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           // Transcript settings
           deepgram_endpointing: transcriptSettings.deepgramEndpointing,
           transcript_append_segments: transcriptSettings.appendSegments,
+          deepgram_vad_events: transcriptSettings.vadEvents,
+          deepgram_interim_results: transcriptSettings.interimResults,
+
+          // Audio normalization settings
+          audio_norm_target_peak: audioNormSettings.targetPeakPercent,
+          audio_norm_min_threshold: audioNormSettings.minPeakThreshold,
+          audio_norm_max_gain: audioNormSettings.maxGain,
+          audio_soft_clip_threshold: audioNormSettings.softClipThreshold,
+          audio_soft_clip_factor: audioNormSettings.softClipFactor,
+          audio_pre_mulaw_min_peak: audioNormSettings.preMulawMinPeak,
+          audio_pre_mulaw_target_peak: audioNormSettings.preMulawTargetPeak,
+
+          // Downsampling filter settings
+          downsample_cutoff_hz: downsampleSettings.cutoffHz,
+          downsample_num_taps: downsampleSettings.numTaps,
 
           // TTS/Voice settings
           tts_voice_id: voiceSettings.ttsVoiceId,
@@ -772,6 +843,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
 
           // Rolling summary settings
           rolling_summary_system_message: summarySettings.rollingSummarySystemMessage,
+          rolling_summary_temperature: summarySettings.rollingSummaryTemperature,
         }),
       });
 
@@ -960,6 +1032,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       speechSettings,
       // Transcript settings
       transcriptSettings,
+      // Audio normalization settings
+      audioNormSettings,
+      // Downsampling filter settings
+      downsampleSettings,
       // Voice settings
       voiceSettings,
       // STT settings
@@ -1927,6 +2003,193 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               />
             </div>
             <p className="text-[10px] text-muted-foreground">Accumulate segments vs replace (default: append)</p>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">VAD Events</Label>
+              <input
+                type="checkbox"
+                checked={transcriptSettings.vadEvents}
+                onChange={(e) => setTranscriptSettings(prev => ({ ...prev, vadEvents: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Enable Voice Activity Detection events (default: on)</p>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Interim Results</Label>
+              <input
+                type="checkbox"
+                checked={transcriptSettings.interimResults}
+                onChange={(e) => setTranscriptSettings(prev => ({ ...prev, interimResults: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Enable interim transcriptions for faster barge-in (default: on)</p>
+          </div>
+        )}
+      </div>
+
+      {/* Audio Normalization Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Volume2 className="h-4 w-4" />
+            Audio Normalization
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAudioNormSettings(!showAudioNormSettings)}
+            className="h-6 text-xs"
+          >
+            {showAudioNormSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          TTS audio normalization and soft clipping parameters
+        </p>
+        {showAudioNormSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Target Peak (%)</Label>
+              <Input
+                type="number"
+                min="0.5"
+                max="1.0"
+                step="0.05"
+                value={audioNormSettings.targetPeakPercent}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, targetPeakPercent: parseFloat(e.target.value) || 0.85 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Target peak as % of full scale (default: 0.85 = 85%)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Min Peak Threshold</Label>
+              <Input
+                type="number"
+                min="0.5"
+                max="1.0"
+                step="0.05"
+                value={audioNormSettings.minPeakThreshold}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, minPeakThreshold: parseFloat(e.target.value) || 0.82 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Min threshold before normalizing (default: 0.82)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Max Gain</Label>
+              <Input
+                type="number"
+                min="1.0"
+                max="10.0"
+                step="0.5"
+                value={audioNormSettings.maxGain}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, maxGain: parseFloat(e.target.value) || 3.0 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Max gain multiplier (default: 3.0x)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Soft Clip Threshold</Label>
+              <Input
+                type="number"
+                min="20000"
+                max="32767"
+                step="1000"
+                value={audioNormSettings.softClipThreshold}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, softClipThreshold: parseInt(e.target.value) || 28000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">PCM value above which soft clipping starts (default: 28000)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Soft Clip Factor</Label>
+              <Input
+                type="number"
+                min="0.1"
+                max="1.0"
+                step="0.1"
+                value={audioNormSettings.softClipFactor}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, softClipFactor: parseFloat(e.target.value) || 0.3 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Compression factor for soft clipping (default: 0.3)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Pre-Mulaw Min Peak</Label>
+              <Input
+                type="number"
+                min="1000"
+                max="16000"
+                step="500"
+                value={audioNormSettings.preMulawMinPeak}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, preMulawMinPeak: parseInt(e.target.value) || 6500 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Below this peak, apply pre-mulaw boost (default: 6500)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Pre-Mulaw Target Peak</Label>
+              <Input
+                type="number"
+                min="8000"
+                max="32767"
+                step="1000"
+                value={audioNormSettings.preMulawTargetPeak}
+                onChange={(e) => setAudioNormSettings(prev => ({ ...prev, preMulawTargetPeak: parseInt(e.target.value) || 16000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Target peak when boosting quiet audio (default: 16000)</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Downsampling Filter Settings */}
+      <div className="border-t border-border/50 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-sm flex items-center gap-2">
+            <Radio className="h-4 w-4" />
+            Downsampling Filter
+          </Label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowDownsampleSettings(!showDownsampleSettings)}
+            className="h-6 text-xs"
+          >
+            {showDownsampleSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          FIR low-pass filter for 24kHz to 8kHz downsampling
+        </p>
+        {showDownsampleSettings && (
+          <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Cutoff Frequency (Hz)</Label>
+              <Input
+                type="number"
+                min="2000"
+                max="3900"
+                step="100"
+                value={downsampleSettings.cutoffHz}
+                onChange={(e) => setDownsampleSettings(prev => ({ ...prev, cutoffHz: parseInt(e.target.value) || 3400 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">FIR filter cutoff (default: 3400 Hz, telephony standard)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Filter Taps</Label>
+              <Input
+                type="number"
+                min="15"
+                max="127"
+                step="2"
+                value={downsampleSettings.numTaps}
+                onChange={(e) => setDownsampleSettings(prev => ({ ...prev, numTaps: parseInt(e.target.value) || 63 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Number of FIR taps (odd values only, default: 63)</p>
+            </div>
           </div>
         )}
       </div>
@@ -2092,6 +2355,19 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 className="min-h-[80px] resize-none text-xs font-mono"
               />
               <p className="text-[10px] text-muted-foreground">Custom system message for rolling summary generation (optional)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Summary Temperature</Label>
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.1"
+                value={summarySettings.rollingSummaryTemperature}
+                onChange={(e) => setSummarySettings(prev => ({ ...prev, rollingSummaryTemperature: parseFloat(e.target.value) || 0.2 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">LLM temperature for summary generation (default: 0.2, lower = more consistent)</p>
             </div>
           </div>
         )}

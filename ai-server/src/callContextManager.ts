@@ -152,6 +152,21 @@ export interface CallContext {
   // Per-call transcript settings (overrides config defaults)
   deepgramEndpointing?: number; // End-of-speech detection ms
   transcriptAppendSegments?: boolean; // Append vs replace segments
+  deepgramVadEvents?: boolean; // Enable VAD events from Deepgram
+  deepgramInterimResults?: boolean; // Enable interim results from Deepgram
+
+  // Per-call audio normalization settings (overrides config defaults)
+  audioNormTargetPeak?: number; // Target peak as % of full scale
+  audioNormMinThreshold?: number; // Min peak threshold before normalizing
+  audioNormMaxGain?: number; // Max gain multiplier
+  audioSoftClipThreshold?: number; // Soft clipping threshold PCM value
+  audioSoftClipFactor?: number; // Soft clip compression factor
+  audioPreMulawMinPeak?: number; // Min peak for pre-mulaw boost
+  audioPreMulawTargetPeak?: number; // Target peak for pre-mulaw boost
+
+  // Per-call downsampling filter settings (overrides config defaults)
+  downsampleCutoffHz?: number; // FIR filter cutoff frequency
+  downsampleNumTaps?: number; // FIR filter taps count
 
   // Per-call barge-in grace period (overrides config default)
   bargeInGracePeriodMs?: number; // Delay before enabling barge-in
@@ -171,6 +186,7 @@ export interface CallContext {
 
   // Per-call rolling summary settings (overrides config defaults)
   rollingSummarySystemMessage?: string; // System message for summary generation
+  rollingSummaryTemperature?: number; // Temperature for summary generation
 }
 
 /**
