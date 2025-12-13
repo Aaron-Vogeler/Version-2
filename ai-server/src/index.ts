@@ -1568,6 +1568,13 @@ wss.on("connection", async (ws) => {
 
       console.log("🗣️ Caller transcript:", userText, `(is_final: ${isFinal}, speech_final: ${speechFinal})`);
 
+      // CRITICAL: Update lastTranscriptAt on ANY transcript (interim or final)
+      // This is the source of truth for silence calculation - it resets whenever
+      // the caller speaks, preventing false hold detection during IVR messages
+      if (callContext.humanDetection) {
+        humanDetection.updateLastTranscriptAt(callContext.humanDetection);
+      }
+
       // Broadcast transcript to live observers
       if (callContext.callControlId) {
         observer.broadcastTranscript(callContext.callControlId, 'caller', userText, isFinal);

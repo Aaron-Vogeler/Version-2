@@ -59,6 +59,8 @@ export interface VadState {
   lastSilenceAt: number;
   silenceDurationMs: number;
   speechDurationMs: number;
+  /** Timestamp of the last transcript received (more reliable than VAD events) */
+  lastTranscriptAt: number;
 }
 
 /**
@@ -242,6 +244,7 @@ export function initializeHumanDetectionState(): HumanDetectionState {
       lastSilenceAt: Date.now(),
       silenceDurationMs: 0,
       speechDurationMs: 0,
+      lastTranscriptAt: 0, // Will be set when first transcript arrives
     },
     justExitedHold: false,
     stateEnteredAt: Date.now(),
@@ -282,6 +285,28 @@ export function updateVadState(
       ? now - vadState.lastSilenceAt
       : now - state.stateEnteredAt;
   }
+}
+
+/**
+ * Update the last transcript timestamp.
+ * This should be called whenever ANY transcript is received (interim or final).
+ * This is more reliable than VAD events for tracking when the caller was last speaking.
+ */
+export function updateLastTranscriptAt(state: HumanDetectionState): void {
+  state.vadState.lastTranscriptAt = Date.now();
+}
+
+/**
+ * Get the actual silence duration since the last transcript.
+ * This is the source of truth for hold silence detection.
+ * Returns 0 if no transcript has been received yet.
+ */
+export function getSilenceSinceLastTranscript(state: HumanDetectionState): number {
+  if (state.vadState.lastTranscriptAt === 0) {
+    // No transcript received yet - don't count initial call setup as silence
+    return 0;
+  }
+  return Date.now() - state.vadState.lastTranscriptAt;
 }
 
 /**
@@ -430,6 +455,7 @@ export function detectHoldIndicators(transcript: string): HoldIndicators {
 
 /**
  * Check if we're likely on hold based on indicators
+ * Uses lastTranscriptAt for silence calculation (more reliable than VAD events)
  */
 export function isLikelyOnHold(
   state: HumanDetectionState,
@@ -438,12 +464,9 @@ export function isLikelyOnHold(
 ): boolean {
   const cfg = getHumanDetectionConfig(perCallSettings);
 
-  // Calculate ACTUAL current silence duration from lastSilenceAt
-  // This is more reliable than the cached silenceDurationMs which may be stale
-  const now = Date.now();
-  const actualSilenceDuration = state.vadState.lastSilenceAt > 0
-    ? now - state.vadState.lastSilenceAt
-    : 0;
+  // Use lastTranscriptAt for silence calculation - this is the source of truth
+  // for when the caller was last actually speaking (more reliable than VAD events)
+  const actualSilenceDuration = getSilenceSinceLastTranscript(state);
 
   // Extended silence is a hold indicator
   const extendedSilence = actualSilenceDuration >= cfg.holdSilenceThresholdMs;
@@ -464,8 +487,10 @@ export function isLikelyOnHold(
 }
 
 /**
- * Check if hold silence threshold has been exceeded since last classification.
+ * Check if hold silence threshold has been exceeded since last transcript.
  * If so, trigger pending classification (next speech will be classified).
+ * Uses lastTranscriptAt (when we last received any transcript) rather than
+ * VAD-based lastSilenceAt, since transcript timing is more reliable.
  * @returns true if classification was triggered
  */
 export function checkHoldSilenceThreshold(
@@ -474,12 +499,9 @@ export function checkHoldSilenceThreshold(
 ): boolean {
   const cfg = getHumanDetectionConfig(perCallSettings);
 
-  // Calculate ACTUAL current silence duration from lastSilenceAt
-  // This is more reliable than the cached silenceDurationMs which may be stale
-  const now = Date.now();
-  const actualSilenceDuration = state.vadState.lastSilenceAt > 0
-    ? now - state.vadState.lastSilenceAt
-    : 0;
+  // Use lastTranscriptAt for silence calculation - this is the source of truth
+  // for when the caller was last actually speaking (more reliable than VAD events)
+  const actualSilenceDuration = getSilenceSinceLastTranscript(state);
 
   const silenceExceeded = actualSilenceDuration >= cfg.holdSilenceThresholdMs;
 
