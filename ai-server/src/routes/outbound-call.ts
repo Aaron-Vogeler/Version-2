@@ -3,6 +3,9 @@ import axios from "axios";
 import config from "../config";
 import { upsertCall, isSupabaseConfigured } from "../utils/supabase";
 
+// Log the stream URL at startup for debugging
+console.log(`[Outbound Call] Stream URL configured: ${config.telnyx.streamUrl}`);
+
 const router = Router();
 
 interface OutboundCallRequest {
@@ -106,6 +109,8 @@ router.post("/", async (req: Request, res: Response) => {
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 
     // Call Telnyx Call Control API
+    // IMPORTANT: Include stream_url at call creation for instant streaming when call connects
+    // This eliminates the delay of waiting for call.answered webhook then calling streaming_start
     const telnyxResponse = await axios.post<TelnyxCallResponse>(
       "https://api.telnyx.com/v2/calls",
       {
@@ -113,6 +118,10 @@ router.post("/", async (req: Request, res: Response) => {
         to: toNumber,
         from: config.telnyx.fromNumber,
         client_state: clientStateBase64,
+        // Enable streaming at call creation for instant audio when call connects
+        stream_url: config.telnyx.streamUrl,
+        stream_track: "both_tracks",
+        stream_bidirectional_mode: "rtp",
         // Telnyx recording disabled - using custom recording pipeline instead
       },
       {
@@ -122,6 +131,8 @@ router.post("/", async (req: Request, res: Response) => {
         },
       }
     );
+
+    console.log(`[Outbound Call] ✅ Call created with instant streaming to ${config.telnyx.streamUrl}`);
 
     // Extract call IDs from Telnyx response (matching Cloudflare worker pattern)
     const responseData = telnyxResponse.data.data;

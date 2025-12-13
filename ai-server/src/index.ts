@@ -1200,34 +1200,10 @@ app.post("/webhooks/telnyx", async (req, res) => {
         }).catch((err) => console.error("[Supabase] Error logging answered:", err));
       }
 
-      try {
-        // Start streaming (Telnyx recording disabled - using custom recording pipeline)
-        await axios.post(
-          `https://api.telnyx.com/v2/calls/${callControlId}/actions/streaming_start`,
-          {
-            stream_url: config.telnyx.streamUrl,
-            stream_track: "both_tracks",
-            stream_bidirectional_mode: "rtp",
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${config.telnyx.apiKey}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-        console.log("✅ Streaming started for call:", callControlId);
-      } catch (error) {
-        console.error("❌ Failed to start streaming:", error instanceof Error ? error.message : error);
-        if (error instanceof Error && "response" in error) {
-          const err = error as any;
-          console.error("📋 Telnyx API Error Details:", {
-            status: err.response?.status,
-            statusText: err.response?.statusText,
-            data: err.response?.data,
-          });
-        }
-      }
+      // NOTE: Streaming is now configured at call creation time (in outbound-call.ts)
+      // This eliminates the delay between call.answered webhook and streaming start
+      // No need to call streaming_start here - audio should already be flowing
+      console.log("✅ Call answered - streaming should already be active (configured at call creation):", callControlId);
     }
   } else if (eventType === "call.speak.started") {
     // TTS playback has started
