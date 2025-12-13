@@ -19,12 +19,13 @@ import { GroqTextChat } from '@/components/dashboard/groq-text-chat';
 import { GroqCall } from '@/components/dashboard/groq-call';
 import { CallsTable } from '@/components/dashboard/calls-table';
 import { RealTimeCallsTable } from '@/components/dashboard/real-time-calls-table';
+import { AIOutboundChecklist } from '@/components/dashboard/ai-outbound-checklist';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings, MessageSquare, PhoneCall } from 'lucide-react';
+import { Phone, DollarSign, LogOut, BarChart3, Send, PhoneOff, Settings, MessageSquare, PhoneCall, ClipboardCheck } from 'lucide-react';
 import { Call, Assistant } from '@/lib/types/database';
 
 export default function DashboardPage() {
@@ -53,6 +54,7 @@ export default function DashboardPage() {
   const [firstName, setFirstName] = useState('');
   const [savingFirstName, setSavingFirstName] = useState(false);
   const [groqSettings, setGroqSettings] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState('delegate');
 
   // Initial load on mount
   useEffect(() => {
@@ -385,8 +387,8 @@ export default function DashboardPage() {
 
       {/* Main Content - Generous Spacing & Clean Layout */}
       <main className="container-custom py-8 lg:py-12">
-        <Tabs defaultValue="delegate" className="space-y-8 lg:space-y-10">
-          <TabsList className="w-full max-w-4xl mx-auto grid grid-cols-5">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8 lg:space-y-10">
+          <TabsList className="w-full max-w-5xl mx-auto grid grid-cols-6">
             <TabsTrigger value="delegate">
               <Send className="h-5 w-5 lg:mr-2" />
               <span className="hidden lg:inline">Delegate A Call</span>
@@ -396,6 +398,11 @@ export default function DashboardPage() {
               <PhoneCall className="h-5 w-5 lg:mr-2" />
               <span className="hidden lg:inline">Groq Call</span>
               <span className="lg:hidden">Call</span>
+            </TabsTrigger>
+            <TabsTrigger value="checklist">
+              <ClipboardCheck className="h-5 w-5 lg:mr-2" />
+              <span className="hidden lg:inline">Call Checklist</span>
+              <span className="lg:hidden">Checklist</span>
             </TabsTrigger>
             <TabsTrigger value="groq-chat">
               <MessageSquare className="h-5 w-5 lg:mr-2" />
@@ -429,6 +436,14 @@ export default function DashboardPage() {
                 // Optionally refresh settings from server
                 checkAuth();
               }}
+            />
+          </TabsContent>
+
+          {/* AI Outbound Call Checklist Tab */}
+          <TabsContent value="checklist" className="animate-fade-in">
+            <AIOutboundChecklist
+              groqSettings={groqSettings}
+              onNavigateToSettings={() => setActiveTab('groq-call')}
             />
           </TabsContent>
 
