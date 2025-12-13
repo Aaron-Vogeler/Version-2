@@ -202,7 +202,8 @@ const IVR_PATTERNS = [
 const HUMAN_PATTERNS = [
   /how (can|may) i help/i,
   /what can i (do|help)/i,
-  /hi,? (this is|my name is|i'm)/i,
+  /(hi|hey|hello),? (this is|my name is|i'm|i am)/i,  // "hi this is", "hey this is", "hello this is"
+  /this is \w+[,.]? how/i,  // "this is jenny, how can i help"
   /speaking/i,
   /let me (check|look|see|find)/i,
   /give me (a )?(moment|second|sec)/i,
@@ -213,6 +214,8 @@ const HUMAN_PATTERNS = [
   /ok,? (so|and|let me)/i,
   /um+|uh+|hmm+/i,
   /actually|basically|honestly/i,
+  /good (morning|afternoon|evening)/i,
+  /thanks for (calling|holding|waiting)/i,  // Human saying thanks, not IVR "thank you for calling"
 ];
 
 /**

@@ -1737,10 +1737,15 @@ wss.on("connection", async (ws) => {
             // Add transcript to detection buffer
             humanDetection.addToTranscriptBuffer(callContext.humanDetection, fullUtterance);
 
-            // Check if we should classify (first segment, UNKNOWN state, CHECKING state, or after hold)
+            // Check if we should classify
+            // - UNKNOWN: First classification
+            // - CHECKING: Waiting for more data after unsure result
+            // - LIKELY_IVR: Re-check in case a human picks up after IVR greeting
+            // - justExitedHold: Re-check after hold ends
             const shouldClassify =
               callContext.receiverState === "UNKNOWN" ||
               callContext.receiverState === "CHECKING" ||
+              callContext.receiverState === "LIKELY_IVR" ||
               callContext.humanDetection.justExitedHold;
 
             if (shouldClassify && humanDetection.canClassify(callContext.humanDetection, callContext)) {
@@ -1912,9 +1917,14 @@ wss.on("connection", async (ws) => {
                 humanDetection.addToTranscriptBuffer(ctx.humanDetection, fullUtterance);
 
                 // Check if we should classify
+                // - UNKNOWN: First classification
+                // - CHECKING: Waiting for more data after unsure result
+                // - LIKELY_IVR: Re-check in case a human picks up after IVR greeting
+                // - justExitedHold: Re-check after hold ends
                 const shouldClassify =
                   ctx.receiverState === "UNKNOWN" ||
                   ctx.receiverState === "CHECKING" ||
+                  ctx.receiverState === "LIKELY_IVR" ||
                   ctx.humanDetection.justExitedHold;
 
                 if (shouldClassify && humanDetection.canClassify(ctx.humanDetection, ctx)) {
