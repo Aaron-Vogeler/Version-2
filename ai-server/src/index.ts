@@ -1835,7 +1835,9 @@ wss.on("connection", async (ws) => {
                   }
                 }).catch((err) => {
                   console.error(`[HUMAN-DETECT] ❌ Classification failed:`, err);
-                  humanDetection.finishGatheringForClassification(ctx.humanDetection);
+                  if (ctx.humanDetection) {
+                    humanDetection.finishGatheringForClassification(ctx.humanDetection);
+                  }
                 });
               }, classificationFlushMs);
             } else {
