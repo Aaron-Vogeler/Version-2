@@ -1784,6 +1784,8 @@ wss.on("connection", async (ws) => {
                     completion_tokens: 0,
                     total_tokens: 0,
                     latency_ms: 0,
+                  }).then(() => {
+                    console.log(`[Supabase] Pattern match logged (receiver_classification, call: ...${ctx.callId?.slice(-8)})`);
                   }).catch((err) => {
                     console.error(`[${ctx.callId}] Failed to log quick pattern match:`, err);
                   });
@@ -1953,6 +1955,8 @@ wss.on("connection", async (ws) => {
                         completion_tokens: 0,
                         total_tokens: 0,
                         latency_ms: 0,
+                      }).then(() => {
+                        console.log(`[Supabase] Pattern match logged (receiver_classification, call: ...${ctx.callId?.slice(-8)})`);
                       }).catch((err) => {
                         console.error(`[${ctx.callId}] Failed to log quick pattern match:`, err);
                       });
