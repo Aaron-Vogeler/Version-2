@@ -1,6 +1,6 @@
 /**
- * Basic webhook integration test test to redploy fly.io worker redeploy again test test
- * Tests the webhook -> event -> DB flow
+ * Basic webhook integration test test to redploy fly.io worker redeploy again test test test
+ * Tests the webhook -> event -> DB flow 
  */
 
 import { describe, it, expect } from '@jest/globals';
