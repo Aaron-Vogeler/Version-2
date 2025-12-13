@@ -1750,6 +1750,16 @@ wss.on("connection", async (ws) => {
               clearTimeout(callContext.classificationTimer);
             }
 
+            // Check if hold silence threshold was exceeded (backup check in case SpeechStarted didn't fire)
+            // This ensures we catch extended silence even if VAD events are unreliable
+            if (!callContext.humanDetection.gatheringForClassification && !callContext.humanDetection.pendingClassification) {
+              const thresholdExceeded = humanDetection.checkHoldSilenceThreshold(callContext.humanDetection, callContext);
+              if (thresholdExceeded) {
+                // Immediately start gathering since speech has already started
+                humanDetection.startGatheringForClassification(callContext.humanDetection);
+              }
+            }
+
             // Get utterance flush setting for classification timing
             const classificationFlushMs = callContext.humanDetectionUtteranceFlushMs
               ?? config.humanDetection?.utteranceFlushMs

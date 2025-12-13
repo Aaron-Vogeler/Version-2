@@ -437,11 +437,19 @@ export function isLikelyOnHold(
   perCallSettings?: PerCallHumanDetectionSettings | null
 ): boolean {
   const cfg = getHumanDetectionConfig(perCallSettings);
+
+  // Calculate ACTUAL current silence duration from lastSilenceAt
+  // This is more reliable than the cached silenceDurationMs which may be stale
+  const now = Date.now();
+  const actualSilenceDuration = state.vadState.lastSilenceAt > 0
+    ? now - state.vadState.lastSilenceAt
+    : 0;
+
   // Extended silence is a hold indicator
-  const extendedSilence = state.vadState.silenceDurationMs >= cfg.holdSilenceThresholdMs;
+  const extendedSilence = actualSilenceDuration >= cfg.holdSilenceThresholdMs;
 
   // Debug logging for hold detection
-  console.log(`[HUMAN-DETECT] 🔍 Hold check: silenceDurationMs=${state.vadState.silenceDurationMs}ms, threshold=${cfg.holdSilenceThresholdMs}ms, extendedSilence=${extendedSilence}`);
+  console.log(`[HUMAN-DETECT] 🔍 Hold check: actualSilence=${actualSilenceDuration}ms, threshold=${cfg.holdSilenceThresholdMs}ms, extendedSilence=${extendedSilence}`);
 
   // Check transcript for hold patterns
   if (transcript) {
@@ -465,10 +473,20 @@ export function checkHoldSilenceThreshold(
   perCallSettings?: PerCallHumanDetectionSettings | null
 ): boolean {
   const cfg = getHumanDetectionConfig(perCallSettings);
-  const silenceExceeded = state.vadState.silenceDurationMs >= cfg.holdSilenceThresholdMs;
+
+  // Calculate ACTUAL current silence duration from lastSilenceAt
+  // This is more reliable than the cached silenceDurationMs which may be stale
+  const now = Date.now();
+  const actualSilenceDuration = state.vadState.lastSilenceAt > 0
+    ? now - state.vadState.lastSilenceAt
+    : 0;
+
+  const silenceExceeded = actualSilenceDuration >= cfg.holdSilenceThresholdMs;
+
+  console.log(`[HUMAN-DETECT] 🔍 Hold threshold check: actualSilence=${actualSilenceDuration}ms, threshold=${cfg.holdSilenceThresholdMs}ms, exceeded=${silenceExceeded}`);
 
   if (silenceExceeded && !state.pendingClassification && !state.gatheringForClassification) {
-    console.log(`[HUMAN-DETECT] ⏰ Hold silence threshold exceeded (${state.vadState.silenceDurationMs}ms >= ${cfg.holdSilenceThresholdMs}ms) - classification pending`);
+    console.log(`[HUMAN-DETECT] ⏰ Hold silence threshold exceeded (${actualSilenceDuration}ms >= ${cfg.holdSilenceThresholdMs}ms) - classification pending`);
     state.pendingClassification = true;
     // Clear buffer to prepare for fresh classification
     clearTranscriptBuffer(state);
