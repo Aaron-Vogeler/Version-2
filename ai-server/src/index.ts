@@ -516,6 +516,7 @@ async function scheduleTtsResponse(
 
     // ============================================================================
     // IVR DETECTION: Analyze transcript for automated system patterns
+    // Only use legacy pattern-based IVR detection if human detection state machine is NOT active
     // ============================================================================
     const ivrAnalysis = ivrUtils.analyzeForIvr(userText);
     if (ivrAnalysis.confidence > 0.3) {
@@ -523,7 +524,11 @@ async function scheduleTtsResponse(
         `isMenu=${ivrAnalysis.isMenu}, expectsInput=${ivrAnalysis.expectsInput}, ` +
         `inputType=${ivrAnalysis.expectedInputType}`);
     }
-    ivrUtils.updateIvrState(callContext, ivrAnalysis);
+    // Only update IVR state via legacy system if human detection is NOT active
+    // When human detection is enabled, it manages isIvrMode via LLM classification
+    if (!callContext.humanDetection) {
+      ivrUtils.updateIvrState(callContext, ivrAnalysis);
+    }
 
     // ============================================================================
     // HOLD DETECTION: Check for hold patterns and update human detection state
