@@ -1766,6 +1766,10 @@ wss.on("connection", async (ws) => {
                 console.log(`[HUMAN-DETECT] 🎯 Classification timer fired (${classificationFlushMs}ms silence)`);
                 const transcript = humanDetection.getRecentTranscript(ctx.humanDetection);
 
+                // Clear transcript buffer BEFORE classification to prevent accumulation
+                // Each classification should only see the current utterance, not previous ones
+                humanDetection.clearTranscriptBuffer(ctx.humanDetection);
+
                 // First try quick pattern check (fast, no LLM call needed)
                 const quickResult = humanDetection.quickPatternCheck(transcript);
                 if (quickResult) {
@@ -1952,6 +1956,10 @@ wss.on("connection", async (ws) => {
                 if (shouldClassify && humanDetection.canClassify(ctx.humanDetection, ctx)) {
                   console.log(`[HUMAN-DETECT] 🎯 Triggering classification (flush timer, state: ${ctx.receiverState})...`);
                   const transcript = humanDetection.getRecentTranscript(ctx.humanDetection);
+
+                  // Clear transcript buffer BEFORE classification to prevent accumulation
+                  // Each classification should only see the current utterance, not previous ones
+                  humanDetection.clearTranscriptBuffer(ctx.humanDetection);
 
                   // First try quick pattern check
                   const quickResult = humanDetection.quickPatternCheck(transcript);
