@@ -98,10 +98,10 @@ export interface PerCallHumanDetectionSettings {
   humanDetectionHumanWaitMs?: number | null;
   humanDetectionIvrWaitMs?: number | null;
   humanDetectionMinUtterances?: number | null;
-  humanDetectionMinTranscriptLength?: number | null;
   humanDetectionHoldSilenceMs?: number | null;
   humanDetectionHumanTurnsAfterHold?: number | null;
   humanDetectionMaxUnsure?: number | null;
+  humanDetectionClassificationPrompt?: string | null;
 }
 
 /**
@@ -119,8 +119,6 @@ export function getHumanDetectionConfig(perCallSettings?: PerCallHumanDetectionS
     ivrWaitMs: perCallSettings?.humanDetectionIvrWaitMs ?? config.humanDetection?.ivrWaitMs ?? 3000,
     /** Minimum utterances needed for initial classification */
     minUtterancesForCheck: perCallSettings?.humanDetectionMinUtterances ?? config.humanDetection?.minUtterancesForCheck ?? 1,
-    /** Minimum transcript length for classification */
-    minTranscriptLength: perCallSettings?.humanDetectionMinTranscriptLength ?? config.humanDetection?.minTranscriptLength ?? 10,
     /** Extended silence threshold for hold detection (ms) */
     holdSilenceThresholdMs: perCallSettings?.humanDetectionHoldSilenceMs ?? config.humanDetection?.holdSilenceThresholdMs ?? 5000,
     /** Human turns required after hold to confirm human */
@@ -129,6 +127,8 @@ export function getHumanDetectionConfig(perCallSettings?: PerCallHumanDetectionS
     maxUnsureBeforeIvr: perCallSettings?.humanDetectionMaxUnsure ?? config.humanDetection?.maxUnsureBeforeIvr ?? 3,
     /** Whether human detection is enabled */
     enabled: perCallSettings?.humanDetectionEnabled ?? config.humanDetection?.enabled ?? true,
+    /** Custom classification prompt (null uses default) */
+    classificationPrompt: perCallSettings?.humanDetectionClassificationPrompt ?? null,
   };
 }
 
@@ -144,8 +144,6 @@ export const HUMAN_DETECTION_CONFIG = {
   ivrWaitMs: 3000,
   /** Minimum utterances needed for initial classification */
   minUtterancesForCheck: 1,
-  /** Minimum transcript length for classification */
-  minTranscriptLength: 10,
   /** Extended silence threshold for hold detection (ms) */
   holdSilenceThresholdMs: 5000,
   /** Human turns required after hold to confirm human */
@@ -328,10 +326,8 @@ export function canClassify(
 ): boolean {
   const cfg = getHumanDetectionConfig(perCallSettings);
   const transcript = getRecentTranscript(state);
-  return (
-    state.utteranceCount >= cfg.minUtterancesForCheck &&
-    transcript.length >= cfg.minTranscriptLength
-  );
+  // Only check utterance count - transcript length check removed
+  return state.utteranceCount >= cfg.minUtterancesForCheck && transcript.length > 0;
 }
 
 /**
@@ -552,14 +548,13 @@ export function shouldStaySilent(state: HumanDetectionState): boolean {
 }
 
 /**
- * Build the LLM prompt for receiver classification
- * Returns a prompt that asks for JSON response: { receiver: human | ivr | unsure }
+ * Default classification prompt template
+ * Uses {{TRANSCRIPT}} as placeholder for the actual transcript
  */
-export function buildClassificationPrompt(transcript: string): string {
-  return `Analyze this phone call transcript to determine if the speaker is a human or an IVR/automated system.
+export const DEFAULT_CLASSIFICATION_PROMPT = `Analyze this phone call transcript to determine if the speaker is a human or an IVR/automated system.
 
 TRANSCRIPT:
-"${transcript}"
+"{{TRANSCRIPT}}"
 
 CLASSIFICATION CRITERIA:
 
@@ -586,6 +581,16 @@ Examples:
 {"receiver": "ivr", "confidence": 0.95, "reason": "menu prompt with press options"}
 {"receiver": "human", "confidence": 0.85, "reason": "natural greeting with personal introduction"}
 {"receiver": "unsure", "confidence": 0.5, "reason": "too short to determine"}`;
+
+/**
+ * Build the LLM prompt for receiver classification
+ * Returns a prompt that asks for JSON response: { receiver: human | ivr | unsure }
+ * @param transcript - The transcript to classify
+ * @param customPrompt - Optional custom prompt template (uses {{TRANSCRIPT}} placeholder)
+ */
+export function buildClassificationPrompt(transcript: string, customPrompt?: string | null): string {
+  const template = customPrompt || DEFAULT_CLASSIFICATION_PROMPT;
+  return template.replace(/\{\{TRANSCRIPT\}\}/g, transcript);
 }
 
 /**

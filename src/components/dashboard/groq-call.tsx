@@ -78,7 +78,7 @@ interface ContextConfig {
 interface LlmLog {
   id: string;
   call_id: string;
-  request_type: 'chat' | 'summary';
+  request_type: 'chat' | 'summary' | 'party_detection' | 'receiver_classification';
   model: string;
   temperature?: number;
   max_tokens?: number;
@@ -176,10 +176,10 @@ interface SavedGroqSettings {
     humanWaitMs?: number;
     ivrWaitMs?: number;
     minUtterances?: number;
-    minTranscriptLength?: number;
     holdSilenceMs?: number;
     humanTurnsAfterHold?: number;
     maxUnsure?: number;
+    classificationPrompt?: string;
   };
 }
 
@@ -259,16 +259,47 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [showIvrSettings, setShowIvrSettings] = useState(false);
 
   // Human Detection settings (IVR vs Human state machine)
+  const DEFAULT_CLASSIFICATION_PROMPT = `Analyze this phone call transcript to determine if the speaker is a human or an IVR/automated system.
+
+TRANSCRIPT:
+"{{TRANSCRIPT}}"
+
+CLASSIFICATION CRITERIA:
+
+IVR/Automated System indicators:
+- Menu prompts: "Press 1 for...", "For sales, press...", "Dial 2"
+- Scripted greetings: "Thank you for calling...", "Your call is important"
+- Hold messages: "Please hold", "Your estimated wait time", "All agents are busy"
+- Input requests: "Enter your account number", "followed by pound"
+- Error responses: "Invalid entry", "I didn't understand that"
+- Robotic/scripted speech with no natural variation
+
+Human indicators:
+- Natural conversational patterns with filler words (um, uh, like, actually)
+- Personal introductions: "Hi, this is John", "How can I help you?"
+- Responsive questions about the caller
+- Natural speech variations and pauses
+- Informal language and varied sentence structure
+- Emotional responses or empathy
+
+Respond with ONLY valid JSON in this exact format:
+{"receiver": "human" | "ivr" | "unsure", "confidence": 0.0-1.0, "reason": "brief explanation"}
+
+Examples:
+{"receiver": "ivr", "confidence": 0.95, "reason": "menu prompt with press options"}
+{"receiver": "human", "confidence": 0.85, "reason": "natural greeting with personal introduction"}
+{"receiver": "unsure", "confidence": 0.5, "reason": "too short to determine"}`;
+
   const [humanDetectionSettings, setHumanDetectionSettings] = useState({
     enabled: true,
     utteranceFlushMs: 500,
     humanWaitMs: 1500,
     ivrWaitMs: 3000,
     minUtterances: 1,
-    minTranscriptLength: 10,
     holdSilenceMs: 5000,
     humanTurnsAfterHold: 1,
     maxUnsure: 3,
+    classificationPrompt: DEFAULT_CLASSIFICATION_PROMPT,
   });
   const [showHumanDetectionSettings, setShowHumanDetectionSettings] = useState(false);
 
@@ -553,10 +584,10 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           human_detection_human_wait_ms: humanDetectionSettings.humanWaitMs,
           human_detection_ivr_wait_ms: humanDetectionSettings.ivrWaitMs,
           human_detection_min_utterances: humanDetectionSettings.minUtterances,
-          human_detection_min_transcript_length: humanDetectionSettings.minTranscriptLength,
           human_detection_hold_silence_ms: humanDetectionSettings.holdSilenceMs,
           human_detection_human_turns_after_hold: humanDetectionSettings.humanTurnsAfterHold,
           human_detection_max_unsure: humanDetectionSettings.maxUnsure,
+          human_detection_classification_prompt: humanDetectionSettings.classificationPrompt,
           // LLM settings
           model: selectedModel,
           temperature: temperature,
@@ -1369,20 +1400,6 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
               />
               <p className="text-[10px] text-muted-foreground">Minimum utterances before first classification (default: 1)</p>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Min Transcript Length</Label>
-              <Input
-                type="number"
-                min="5"
-                max="100"
-                step="5"
-                value={humanDetectionSettings.minTranscriptLength}
-                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, minTranscriptLength: parseInt(e.target.value) || 10 }))}
-                className="text-xs h-8"
-              />
-              <p className="text-[10px] text-muted-foreground">Minimum transcript characters for classification (default: 10)</p>
-            </div>
-
             <div className="border-t border-border/30 pt-3 mt-3">
               <p className="text-xs font-medium text-muted-foreground mb-2">Hold Detection</p>
             </div>
@@ -1424,6 +1441,30 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 className="text-xs h-8"
               />
               <p className="text-[10px] text-muted-foreground">Max consecutive &quot;unsure&quot; before defaulting to IVR behavior (default: 3)</p>
+            </div>
+
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Classification Prompt</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">LLM Classification Prompt</Label>
+              <textarea
+                value={humanDetectionSettings.classificationPrompt}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, classificationPrompt: e.target.value }))}
+                className="w-full h-48 text-xs font-mono p-2 border rounded-md bg-background resize-y"
+                placeholder="Enter custom classification prompt..."
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Customize the LLM prompt for human/IVR classification. Use <code className="bg-muted px-1 rounded">{"{{TRANSCRIPT}}"}</code> as placeholder for the transcript.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setHumanDetectionSettings(prev => ({ ...prev, classificationPrompt: DEFAULT_CLASSIFICATION_PROMPT }))}
+                className="text-xs h-7 mt-1"
+              >
+                Reset to Default
+              </Button>
             </div>
           </div>
         )}
@@ -1821,18 +1862,23 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <Badge
-                      variant={log.request_type === 'summary' ? 'secondary' : 'default'}
-                      className="text-xs"
+                      variant={log.request_type === 'summary' ? 'secondary' : log.request_type === 'receiver_classification' ? 'outline' : 'default'}
+                      className={`text-xs ${log.request_type === 'receiver_classification' ? 'border-purple-500 text-purple-600 dark:text-purple-400' : ''}`}
                     >
                       {log.request_type === 'summary' ? (
                         <>
                           <FileText className="h-3 w-3 mr-1" />
-                          Summary
+                          SUMMARY
+                        </>
+                      ) : log.request_type === 'receiver_classification' || log.request_type === 'party_detection' ? (
+                        <>
+                          <Brain className="h-3 w-3 mr-1" />
+                          DETECT
                         </>
                       ) : (
                         <>
                           <MessageSquare className="h-3 w-3 mr-1" />
-                          Chat
+                          CHAT
                         </>
                       )}
                     </Badge>

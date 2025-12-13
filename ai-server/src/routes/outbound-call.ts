@@ -35,10 +35,10 @@ interface OutboundCallRequest {
   humanDetectionHumanWaitMs?: number;
   humanDetectionIvrWaitMs?: number;
   humanDetectionMinUtterances?: number;
-  humanDetectionMinTranscriptLength?: number;
   humanDetectionHoldSilenceMs?: number;
   humanDetectionHumanTurnsAfterHold?: number;
   humanDetectionMaxUnsure?: number;
+  humanDetectionClassificationPrompt?: string;
   // LLM settings
   model?: string;
   temperature?: number;
@@ -64,7 +64,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionMinTranscriptLength, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
+    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationPrompt, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -112,10 +112,10 @@ router.post("/", async (req: Request, res: Response) => {
       humanDetectionHumanWaitMs: humanDetectionHumanWaitMs || null,
       humanDetectionIvrWaitMs: humanDetectionIvrWaitMs || null,
       humanDetectionMinUtterances: humanDetectionMinUtterances || null,
-      humanDetectionMinTranscriptLength: humanDetectionMinTranscriptLength || null,
       humanDetectionHoldSilenceMs: humanDetectionHoldSilenceMs || null,
       humanDetectionHumanTurnsAfterHold: humanDetectionHumanTurnsAfterHold || null,
       humanDetectionMaxUnsure: humanDetectionMaxUnsure || null,
+      humanDetectionClassificationPrompt: humanDetectionClassificationPrompt || null,
       // LLM settings
       model: model || null,
       temperature: temperature || null,

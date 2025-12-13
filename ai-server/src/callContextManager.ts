@@ -129,10 +129,10 @@ export interface CallContext {
   humanDetectionHumanWaitMs?: number; // Wait time for human receiver before AI responds
   humanDetectionIvrWaitMs?: number; // Wait time for IVR/unsure receiver before AI responds
   humanDetectionMinUtterances?: number; // Minimum utterances before first classification
-  humanDetectionMinTranscriptLength?: number; // Minimum transcript length for classification
   humanDetectionHoldSilenceMs?: number; // Extended silence threshold for hold detection
   humanDetectionHumanTurnsAfterHold?: number; // Human turns required after hold to confirm
   humanDetectionMaxUnsure?: number; // Max consecutive unsure before defaulting to IVR
+  humanDetectionClassificationPrompt?: string; // Custom prompt for receiver classification
 
   // LLM-based party type detection (human vs IVR/robotic)
   detectedPartyType?: "human" | "robotic"; // Result of LLM party detection

@@ -1767,7 +1767,7 @@ wss.on("connection", async (ws) => {
                 humanDetection.transitionState(ctx.humanDetection!, "CHECKING", "awaiting LLM classification");
                 ctx.receiverState = ctx.humanDetection!.receiverState;
 
-                classifyReceiver(transcript, ctx.callId).then((classification) => {
+                classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt).then((classification) => {
                   humanDetection.processClassification(ctx.humanDetection!, classification, ctx);
                   ctx.receiverState = ctx.humanDetection!.receiverState;
 
@@ -1915,7 +1915,7 @@ wss.on("connection", async (ws) => {
                     humanDetection.transitionState(ctx.humanDetection, "CHECKING", "awaiting LLM (flush timer)");
                     ctx.receiverState = ctx.humanDetection.receiverState;
 
-                    classifyReceiver(transcript, ctx.callId).then((classification) => {
+                    classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt).then((classification) => {
                       humanDetection.processClassification(ctx.humanDetection!, classification, ctx);
                       ctx.receiverState = ctx.humanDetection!.receiverState;
                       ctx.partyDetectionComplete = true;
@@ -2072,10 +2072,10 @@ wss.on("connection", async (ws) => {
           managedContext.humanDetectionHumanWaitMs = decoded.humanDetectionHumanWaitMs || null;
           managedContext.humanDetectionIvrWaitMs = decoded.humanDetectionIvrWaitMs || null;
           managedContext.humanDetectionMinUtterances = decoded.humanDetectionMinUtterances || null;
-          managedContext.humanDetectionMinTranscriptLength = decoded.humanDetectionMinTranscriptLength || null;
           managedContext.humanDetectionHoldSilenceMs = decoded.humanDetectionHoldSilenceMs || null;
           managedContext.humanDetectionHumanTurnsAfterHold = decoded.humanDetectionHumanTurnsAfterHold || null;
           managedContext.humanDetectionMaxUnsure = decoded.humanDetectionMaxUnsure || null;
+          managedContext.humanDetectionClassificationPrompt = decoded.humanDetectionClassificationPrompt || null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";

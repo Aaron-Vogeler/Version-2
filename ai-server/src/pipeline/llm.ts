@@ -282,13 +282,15 @@ Respond with ONLY "True" if this sounds like an IVR/AI/robotic system, or "False
  * This is the enhanced version that returns structured classification with confidence.
  * @param transcriptText - The transcript text to analyze
  * @param callId - Optional call ID for logging
+ * @param customPrompt - Optional custom prompt template (uses {{TRANSCRIPT}} placeholder)
  * @returns Classification result with receiver type, confidence, and reason
  */
 export async function classifyReceiver(
   transcriptText: string,
-  callId?: string
+  callId?: string,
+  customPrompt?: string | null
 ): Promise<ReceiverClassification> {
-  const prompt = buildClassificationPrompt(transcriptText);
+  const prompt = buildClassificationPrompt(transcriptText, customPrompt);
 
   const systemPrompt = `You are an expert at analyzing phone call transcripts to determine if the speaker is a human or an automated IVR system. You must respond with ONLY valid JSON in the exact format specified. Do not include any other text.`;
 

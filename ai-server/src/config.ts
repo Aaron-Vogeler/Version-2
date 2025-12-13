@@ -149,8 +149,6 @@ const config = {
     ivrWaitMs: getEnvInt("HUMAN_DETECTION_IVR_WAIT_MS", 3000),
     // Minimum utterances needed before first classification attempt
     minUtterancesForCheck: getEnvInt("HUMAN_DETECTION_MIN_UTTERANCES", 1),
-    // Minimum transcript length (chars) for classification
-    minTranscriptLength: getEnvInt("HUMAN_DETECTION_MIN_TRANSCRIPT_LENGTH", 10),
     // Extended silence threshold for hold detection (ms)
     holdSilenceThresholdMs: getEnvInt("HUMAN_DETECTION_HOLD_SILENCE_MS", 5000),
     // Number of human turns required after hold to confirm human
