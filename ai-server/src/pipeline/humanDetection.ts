@@ -90,6 +90,12 @@ export interface HumanDetectionState {
   pendingClassification: boolean;
   /** Whether we're currently gathering an utterance for classification */
   gatheringForClassification: boolean;
+  /**
+   * Timestamp when hold silence counting should start (after utterance flush).
+   * Set to Date.now() when an utterance flush fires (debounce for caller, speak.ended for AI).
+   * Set to 0 when either party starts speaking (to pause counting).
+   */
+  holdSilenceStartAt: number;
 }
 
 /**
@@ -249,6 +255,8 @@ export function initializeHumanDetectionState(): HumanDetectionState {
     // Start with pendingClassification=true so first utterance gets classified
     pendingClassification: true,
     gatheringForClassification: false,
+    // Start at 0 - will be set when first utterance flush fires
+    holdSilenceStartAt: 0,
   };
 }
 
@@ -438,11 +446,11 @@ export function isLikelyOnHold(
 ): boolean {
   const cfg = getHumanDetectionConfig(perCallSettings);
 
-  // Calculate ACTUAL current silence duration from lastSilenceAt
-  // This is more reliable than the cached silenceDurationMs which may be stale
+  // Calculate silence duration from holdSilenceStartAt (set after utterance flush)
+  // If holdSilenceStartAt is 0, no utterance flush has fired yet, so silence is 0
   const now = Date.now();
-  const actualSilenceDuration = state.vadState.lastSilenceAt > 0
-    ? now - state.vadState.lastSilenceAt
+  const actualSilenceDuration = state.holdSilenceStartAt > 0
+    ? now - state.holdSilenceStartAt
     : 0;
 
   // Extended silence is a hold indicator
@@ -464,7 +472,7 @@ export function isLikelyOnHold(
 }
 
 /**
- * Check if hold silence threshold has been exceeded since last classification.
+ * Check if hold silence threshold has been exceeded since last utterance flush.
  * If so, trigger pending classification (next speech will be classified).
  * @returns true if classification was triggered
  */
@@ -474,11 +482,11 @@ export function checkHoldSilenceThreshold(
 ): boolean {
   const cfg = getHumanDetectionConfig(perCallSettings);
 
-  // Calculate ACTUAL current silence duration from lastSilenceAt
-  // This is more reliable than the cached silenceDurationMs which may be stale
+  // Calculate silence duration from holdSilenceStartAt (set after utterance flush)
+  // If holdSilenceStartAt is 0, no utterance flush has fired yet, so silence is 0
   const now = Date.now();
-  const actualSilenceDuration = state.vadState.lastSilenceAt > 0
-    ? now - state.vadState.lastSilenceAt
+  const actualSilenceDuration = state.holdSilenceStartAt > 0
+    ? now - state.holdSilenceStartAt
     : 0;
 
   const silenceExceeded = actualSilenceDuration >= cfg.holdSilenceThresholdMs;
@@ -522,18 +530,29 @@ export function finishGatheringForClassification(state: HumanDetectionState): vo
 }
 
 /**
- * Reset silence timer after assistant (AI) speech ends.
- * This ensures the hold silence threshold starts counting from when the AI
- * finished speaking, not from the previous caller utterance.
+ * Start the hold silence timer after an utterance flush.
+ * Called when:
+ * - Caller's debounce timer fires (utterance flush)
+ * - AI finishes speaking (call.speak.ended)
  *
- * Without this reset, the silence duration would incorrectly include the time
- * the AI was speaking, leading to premature hold threshold triggers.
+ * This marks the beginning of the silence period that will be measured
+ * for hold detection.
  */
-export function resetSilenceAfterAssistantSpeech(state: HumanDetectionState): void {
-  const now = Date.now();
-  state.vadState.lastSilenceAt = now;
-  state.vadState.silenceDurationMs = 0;
-  // Note: We don't set isSpeaking=false here because that tracks caller speech, not AI speech
+export function startHoldSilenceTimer(state: HumanDetectionState): void {
+  state.holdSilenceStartAt = Date.now();
+}
+
+/**
+ * Reset (pause) the hold silence timer when either party starts speaking.
+ * Called when:
+ * - Caller starts speaking (interim transcript received)
+ * - AI starts speaking (call.speak.started)
+ *
+ * Setting to 0 means the hold silence check will return 0ms of silence,
+ * effectively pausing the hold detection until the next utterance flush.
+ */
+export function resetHoldSilenceTimer(state: HumanDetectionState): void {
+  state.holdSilenceStartAt = 0;
 }
 
 /**

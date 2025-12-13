@@ -1281,10 +1281,10 @@ app.post("/webhooks/telnyx", async (req, res) => {
         ctx.speakStartedAt = now;
         console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
 
-        // Reset silence timer when AI starts speaking
-        // This ensures silence isn't measured during AI speech
+        // Reset hold silence timer when AI starts speaking
+        // This pauses hold detection until the AI finishes speaking
         if (ctx.humanDetection) {
-          humanDetection.resetSilenceAfterAssistantSpeech(ctx.humanDetection);
+          humanDetection.resetHoldSilenceTimer(ctx.humanDetection);
         }
       } else {
         console.log(`[TTS] 🔊 call.speak.started - local context not found, updating Redis only (callControlId: ${callControlId})`);
@@ -1305,10 +1305,10 @@ app.post("/webhooks/telnyx", async (req, res) => {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
 
-        // Reset silence timer so hold threshold counts from when AI stopped speaking
-        // This prevents the silence duration from incorrectly including AI speech time
+        // Start hold silence timer now that AI finished speaking
+        // Hold detection will measure from this point until next speech
         if (ctx.humanDetection) {
-          humanDetection.resetSilenceAfterAssistantSpeech(ctx.humanDetection);
+          humanDetection.startHoldSilenceTimer(ctx.humanDetection);
         }
 
         // Log assistant transcript - estimate actual spoken portion if interrupted
@@ -1692,6 +1692,12 @@ wss.on("connection", async (ws) => {
         } else {
           console.log(`[TRANSCRIPT] Interim transcript (not queuing for LLM): "${userText}"`);
 
+          // Reset hold silence timer when caller starts speaking
+          // This pauses hold detection until the caller finishes their utterance
+          if (callContext.humanDetection) {
+            humanDetection.resetHoldSilenceTimer(callContext.humanDetection);
+          }
+
           // IMPORTANT: Reset the debounce timer if we're receiving interim transcripts
           // This prevents the AI from responding while the caller is still mid-sentence
           // Only reset if AI is not currently speaking (avoid interfering during barge-in scenarios)
@@ -1843,6 +1849,12 @@ wss.on("connection", async (ws) => {
                         const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
                         if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
                           console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+
+                          // Start hold silence timer now that utterance flush has fired
+                          if (ctx.humanDetection) {
+                            humanDetection.startHoldSilenceTimer(ctx.humanDetection);
+                          }
+
                           ctx.lastUserTranscript = completeTurn;
                           scheduleTtsResponse(ctx, wsRef, currentSeq);
                         }
@@ -1911,6 +1923,13 @@ wss.on("connection", async (ws) => {
           const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
           if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
             console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+
+            // Start hold silence timer now that utterance flush has fired
+            // Hold detection will measure from this point until next speech
+            if (ctx.humanDetection) {
+              humanDetection.startHoldSilenceTimer(ctx.humanDetection);
+            }
+
             ctx.lastUserTranscript = completeTurn;
             scheduleTtsResponse(ctx, wsRef, currentSeq);
           }
@@ -2000,6 +2019,12 @@ wss.on("connection", async (ws) => {
                             const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
                             if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
                               console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+
+                              // Start hold silence timer now that utterance flush has fired
+                              if (ctx.humanDetection) {
+                                humanDetection.startHoldSilenceTimer(ctx.humanDetection);
+                              }
+
                               ctx.lastUserTranscript = completeTurn;
                               scheduleTtsResponse(ctx, wsRef, currentSeq);
                             }
@@ -2057,6 +2082,12 @@ wss.on("connection", async (ws) => {
                 const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
                 if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
                   console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+
+                  // Start hold silence timer now that utterance flush has fired
+                  if (ctx.humanDetection) {
+                    humanDetection.startHoldSilenceTimer(ctx.humanDetection);
+                  }
+
                   ctx.lastUserTranscript = completeTurn;
                   scheduleTtsResponse(ctx, wsRef, currentSeq);
                 }
