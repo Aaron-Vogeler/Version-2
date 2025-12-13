@@ -123,6 +123,17 @@ export interface CallContext {
   ivrMaxDtmfRetries?: number; // Custom max DTMF retry attempts
   ivrDisableBargeInGracePeriod?: boolean; // Custom barge-in grace period setting for IVR
 
+  // Per-call Human Detection settings (overrides config defaults if provided)
+  humanDetectionEnabled?: boolean; // Enable/disable human detection state machine
+  humanDetectionUtteranceFlushMs?: number; // Non-speech duration to trigger utterance flush
+  humanDetectionHumanWaitMs?: number; // Wait time for human receiver before AI responds
+  humanDetectionIvrWaitMs?: number; // Wait time for IVR/unsure receiver before AI responds
+  humanDetectionMinUtterances?: number; // Minimum utterances before first classification
+  humanDetectionMinTranscriptLength?: number; // Minimum transcript length for classification
+  humanDetectionHoldSilenceMs?: number; // Extended silence threshold for hold detection
+  humanDetectionHumanTurnsAfterHold?: number; // Human turns required after hold to confirm
+  humanDetectionMaxUnsure?: number; // Max consecutive unsure before defaulting to IVR
+
   // LLM-based party type detection (human vs IVR/robotic)
   detectedPartyType?: "human" | "robotic"; // Result of LLM party detection
   partyDetectionComplete?: boolean; // Whether initial party detection has been done

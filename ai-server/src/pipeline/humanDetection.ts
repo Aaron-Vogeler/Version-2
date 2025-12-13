@@ -89,29 +89,46 @@ export interface HumanDetectionState {
 }
 
 /**
- * Get human detection config from main config or use defaults
- * This function allows dynamic config loading
+ * Per-call human detection settings interface
+ * Matches the fields in CallContext for per-call overrides
  */
-export function getHumanDetectionConfig() {
+export interface PerCallHumanDetectionSettings {
+  humanDetectionEnabled?: boolean | null;
+  humanDetectionUtteranceFlushMs?: number | null;
+  humanDetectionHumanWaitMs?: number | null;
+  humanDetectionIvrWaitMs?: number | null;
+  humanDetectionMinUtterances?: number | null;
+  humanDetectionMinTranscriptLength?: number | null;
+  humanDetectionHoldSilenceMs?: number | null;
+  humanDetectionHumanTurnsAfterHold?: number | null;
+  humanDetectionMaxUnsure?: number | null;
+}
+
+/**
+ * Get human detection config with per-call overrides
+ * @param perCallSettings - Optional per-call settings from CallContext
+ * @returns Merged config with per-call overrides taking precedence
+ */
+export function getHumanDetectionConfig(perCallSettings?: PerCallHumanDetectionSettings | null) {
   return {
     /** Non-speech duration to trigger utterance flush (ms) */
-    utteranceFlushMs: config.humanDetection?.utteranceFlushMs ?? 500,
+    utteranceFlushMs: perCallSettings?.humanDetectionUtteranceFlushMs ?? config.humanDetection?.utteranceFlushMs ?? 500,
     /** Wait time for human receiver before responding (ms) */
-    humanWaitMs: config.humanDetection?.humanWaitMs ?? 1500,
+    humanWaitMs: perCallSettings?.humanDetectionHumanWaitMs ?? config.humanDetection?.humanWaitMs ?? 1500,
     /** Wait time for IVR/unsure receiver before responding (ms) */
-    ivrWaitMs: config.humanDetection?.ivrWaitMs ?? 3000,
+    ivrWaitMs: perCallSettings?.humanDetectionIvrWaitMs ?? config.humanDetection?.ivrWaitMs ?? 3000,
     /** Minimum utterances needed for initial classification */
-    minUtterancesForCheck: config.humanDetection?.minUtterancesForCheck ?? 1,
+    minUtterancesForCheck: perCallSettings?.humanDetectionMinUtterances ?? config.humanDetection?.minUtterancesForCheck ?? 1,
     /** Minimum transcript length for classification */
-    minTranscriptLength: config.humanDetection?.minTranscriptLength ?? 10,
+    minTranscriptLength: perCallSettings?.humanDetectionMinTranscriptLength ?? config.humanDetection?.minTranscriptLength ?? 10,
     /** Extended silence threshold for hold detection (ms) */
-    holdSilenceThresholdMs: config.humanDetection?.holdSilenceThresholdMs ?? 5000,
+    holdSilenceThresholdMs: perCallSettings?.humanDetectionHoldSilenceMs ?? config.humanDetection?.holdSilenceThresholdMs ?? 5000,
     /** Human turns required after hold to confirm human */
-    humanTurnsRequiredAfterHold: config.humanDetection?.humanTurnsRequiredAfterHold ?? 1,
+    humanTurnsRequiredAfterHold: perCallSettings?.humanDetectionHumanTurnsAfterHold ?? config.humanDetection?.humanTurnsRequiredAfterHold ?? 1,
     /** Maximum unsure classifications before defaulting to IVR */
-    maxUnsureBeforeIvr: config.humanDetection?.maxUnsureBeforeIvr ?? 3,
+    maxUnsureBeforeIvr: perCallSettings?.humanDetectionMaxUnsure ?? config.humanDetection?.maxUnsureBeforeIvr ?? 3,
     /** Whether human detection is enabled */
-    enabled: config.humanDetection?.enabled ?? true,
+    enabled: perCallSettings?.humanDetectionEnabled ?? config.humanDetection?.enabled ?? true,
   };
 }
 
@@ -259,9 +276,10 @@ export function updateVadState(
  */
 export function shouldFlushUtterance(
   state: HumanDetectionState,
-  customFlushMs?: number
+  customFlushMs?: number,
+  perCallSettings?: PerCallHumanDetectionSettings | null
 ): boolean {
-  const cfg = getHumanDetectionConfig();
+  const cfg = getHumanDetectionConfig(perCallSettings);
   const flushMs = customFlushMs ?? cfg.utteranceFlushMs;
   return !state.vadState.isSpeaking && state.vadState.silenceDurationMs >= flushMs;
 }
@@ -304,8 +322,11 @@ export function clearTranscriptBuffer(state: HumanDetectionState): void {
 /**
  * Check if we have enough data for classification
  */
-export function canClassify(state: HumanDetectionState): boolean {
-  const cfg = getHumanDetectionConfig();
+export function canClassify(
+  state: HumanDetectionState,
+  perCallSettings?: PerCallHumanDetectionSettings | null
+): boolean {
+  const cfg = getHumanDetectionConfig(perCallSettings);
   const transcript = getRecentTranscript(state);
   return (
     state.utteranceCount >= cfg.minUtterancesForCheck &&
@@ -386,9 +407,10 @@ export function detectHoldIndicators(transcript: string): HoldIndicators {
  */
 export function isLikelyOnHold(
   state: HumanDetectionState,
-  transcript?: string
+  transcript?: string,
+  perCallSettings?: PerCallHumanDetectionSettings | null
 ): boolean {
-  const cfg = getHumanDetectionConfig();
+  const cfg = getHumanDetectionConfig(perCallSettings);
   // Extended silence is a hold indicator
   const extendedSilence = state.vadState.silenceDurationMs >= cfg.holdSilenceThresholdMs;
 
@@ -432,9 +454,10 @@ export function transitionState(
  */
 export function processClassification(
   state: HumanDetectionState,
-  classification: ReceiverClassification
+  classification: ReceiverClassification,
+  perCallSettings?: PerCallHumanDetectionSettings | null
 ): void {
-  const cfg = getHumanDetectionConfig();
+  const cfg = getHumanDetectionConfig(perCallSettings);
   state.lastClassification = classification;
   state.lastReceiverCheckAt = Date.now();
 
@@ -496,8 +519,11 @@ export function exitHold(state: HumanDetectionState): void {
 /**
  * Get appropriate wait time based on current state
  */
-export function getWaitTimeMs(state: HumanDetectionState): number {
-  const cfg = getHumanDetectionConfig();
+export function getWaitTimeMs(
+  state: HumanDetectionState,
+  perCallSettings?: PerCallHumanDetectionSettings | null
+): number {
+  const cfg = getHumanDetectionConfig(perCallSettings);
   switch (state.receiverState) {
     case "LIKELY_HUMAN":
       return cfg.humanWaitMs;

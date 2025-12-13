@@ -29,6 +29,17 @@ interface OutboundCallRequest {
   ivrResponseTimeoutMs?: number;
   ivrMaxDtmfRetries?: number;
   ivrDisableBargeInGracePeriod?: boolean;
+  // Human Detection settings (IVR vs Human state machine)
+  humanDetectionEnabled?: boolean;
+  humanDetectionUtteranceFlushMs?: number;
+  humanDetectionHumanWaitMs?: number;
+  humanDetectionIvrWaitMs?: number;
+  humanDetectionMinUtterances?: number;
+  humanDetectionMinTranscriptLength?: number;
+  humanDetectionHoldSilenceMs?: number;
+  humanDetectionHumanTurnsAfterHold?: number;
+  humanDetectionMaxUnsure?: number;
+  // LLM settings
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -53,7 +64,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
+    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionMinTranscriptLength, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -71,7 +82,7 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName + systemPrompt + additionalContext + rollingSummaryPrompt + call control settings + IVR settings + model + LLM params) in base64
+    // Encode client state (goal + userId + assistantName + userName + systemPrompt + additionalContext + rollingSummaryPrompt + call control settings + IVR settings + human detection settings + model + LLM params) in base64
     const clientStatePayload = JSON.stringify({
       goal,
       additionalContext: additionalContext || null,
@@ -95,6 +106,17 @@ router.post("/", async (req: Request, res: Response) => {
       ivrResponseTimeoutMs: ivrResponseTimeoutMs || null,
       ivrMaxDtmfRetries: ivrMaxDtmfRetries || null,
       ivrDisableBargeInGracePeriod: ivrDisableBargeInGracePeriod ?? null,
+      // Human Detection settings (IVR vs Human state machine)
+      humanDetectionEnabled: humanDetectionEnabled ?? null,
+      humanDetectionUtteranceFlushMs: humanDetectionUtteranceFlushMs || null,
+      humanDetectionHumanWaitMs: humanDetectionHumanWaitMs || null,
+      humanDetectionIvrWaitMs: humanDetectionIvrWaitMs || null,
+      humanDetectionMinUtterances: humanDetectionMinUtterances || null,
+      humanDetectionMinTranscriptLength: humanDetectionMinTranscriptLength || null,
+      humanDetectionHoldSilenceMs: humanDetectionHoldSilenceMs || null,
+      humanDetectionHumanTurnsAfterHold: humanDetectionHumanTurnsAfterHold || null,
+      humanDetectionMaxUnsure: humanDetectionMaxUnsure || null,
+      // LLM settings
       model: model || null,
       temperature: temperature || null,
       maxTokens: maxTokens || null,

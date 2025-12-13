@@ -538,7 +538,7 @@ async function scheduleTtsResponse(
       }
 
       // Check if extended silence suggests hold
-      if (humanDetection.isLikelyOnHold(callContext.humanDetection, userText)) {
+      if (humanDetection.isLikelyOnHold(callContext.humanDetection, userText, callContext)) {
         if (callContext.receiverState !== "HOLD") {
           console.log(`[HUMAN-DETECT] 📞 Entering hold state (extended silence or hold indicators)`);
           humanDetection.enterHold(callContext.humanDetection, "extended silence or hold patterns");
@@ -1738,7 +1738,7 @@ wss.on("connection", async (ws) => {
               callContext.receiverState === "CHECKING" ||
               callContext.humanDetection.justExitedHold;
 
-            if (shouldClassify && humanDetection.canClassify(callContext.humanDetection)) {
+            if (shouldClassify && humanDetection.canClassify(callContext.humanDetection, callContext)) {
               console.log(`[HUMAN-DETECT] 🎯 Triggering receiver classification (state: ${callContext.receiverState})...`);
               const ctx = callContext;
               const transcript = humanDetection.getRecentTranscript(ctx.humanDetection!);
@@ -1751,7 +1751,7 @@ wss.on("connection", async (ws) => {
                   receiver: quickResult,
                   confidence: 0.9,
                   reason: "pattern match",
-                });
+                }, ctx);
                 ctx.receiverState = ctx.humanDetection!.receiverState;
 
                 // Update legacy fields for compatibility
@@ -1768,7 +1768,7 @@ wss.on("connection", async (ws) => {
                 ctx.receiverState = ctx.humanDetection!.receiverState;
 
                 classifyReceiver(transcript, ctx.callId).then((classification) => {
-                  humanDetection.processClassification(ctx.humanDetection!, classification);
+                  humanDetection.processClassification(ctx.humanDetection!, classification, ctx);
                   ctx.receiverState = ctx.humanDetection!.receiverState;
 
                   // Update legacy fields for compatibility
@@ -1805,7 +1805,7 @@ wss.on("connection", async (ws) => {
         // LIKELY_IVR/CHECKING/UNKNOWN: longer wait (~3s) to avoid interrupting menus
         let debounceMs: number;
         if (callContext.humanDetection) {
-          debounceMs = humanDetection.getWaitTimeMs(callContext.humanDetection);
+          debounceMs = humanDetection.getWaitTimeMs(callContext.humanDetection, callContext);
           const stateLabel = callContext.receiverState || "UNKNOWN";
           if (callContext.receiverState === "LIKELY_HUMAN") {
             console.log(`[HUMAN-DETECT] 👤 Using human wait: ${debounceMs}ms (state: ${stateLabel})`);
@@ -1889,7 +1889,7 @@ wss.on("connection", async (ws) => {
                   ctx.receiverState === "CHECKING" ||
                   ctx.humanDetection.justExitedHold;
 
-                if (shouldClassify && humanDetection.canClassify(ctx.humanDetection)) {
+                if (shouldClassify && humanDetection.canClassify(ctx.humanDetection, ctx)) {
                   console.log(`[HUMAN-DETECT] 🎯 Triggering classification (flush timer, state: ${ctx.receiverState})...`);
                   const transcript = humanDetection.getRecentTranscript(ctx.humanDetection);
 
@@ -1901,7 +1901,7 @@ wss.on("connection", async (ws) => {
                       receiver: quickResult,
                       confidence: 0.9,
                       reason: "pattern match",
-                    });
+                    }, ctx);
                     ctx.receiverState = ctx.humanDetection.receiverState;
                     ctx.partyDetectionComplete = true;
                     ctx.detectedPartyType = quickResult === "human" ? "human" : "robotic";
@@ -1916,7 +1916,7 @@ wss.on("connection", async (ws) => {
                     ctx.receiverState = ctx.humanDetection.receiverState;
 
                     classifyReceiver(transcript, ctx.callId).then((classification) => {
-                      humanDetection.processClassification(ctx.humanDetection!, classification);
+                      humanDetection.processClassification(ctx.humanDetection!, classification, ctx);
                       ctx.receiverState = ctx.humanDetection!.receiverState;
                       ctx.partyDetectionComplete = true;
                       ctx.detectedPartyType = classification.receiver === "human" ? "human" : "robotic";
@@ -1944,7 +1944,7 @@ wss.on("connection", async (ws) => {
               // Use human detection state machine for wait times
               let debounceMs: number;
               if (ctx.humanDetection) {
-                debounceMs = humanDetection.getWaitTimeMs(ctx.humanDetection);
+                debounceMs = humanDetection.getWaitTimeMs(ctx.humanDetection, ctx);
                 const stateLabel = ctx.receiverState || "UNKNOWN";
                 if (ctx.receiverState === "LIKELY_HUMAN") {
                   console.log(`[HUMAN-DETECT] 👤 Using human wait (flush): ${debounceMs}ms (state: ${stateLabel})`);
@@ -2066,6 +2066,16 @@ wss.on("connection", async (ws) => {
           managedContext.ivrResponseTimeoutMs = decoded.ivrResponseTimeoutMs || null;
           managedContext.ivrMaxDtmfRetries = decoded.ivrMaxDtmfRetries || null;
           managedContext.ivrDisableBargeInGracePeriod = decoded.ivrDisableBargeInGracePeriod ?? null;
+          // Human Detection settings (IVR vs Human state machine)
+          managedContext.humanDetectionEnabled = decoded.humanDetectionEnabled ?? null;
+          managedContext.humanDetectionUtteranceFlushMs = decoded.humanDetectionUtteranceFlushMs || null;
+          managedContext.humanDetectionHumanWaitMs = decoded.humanDetectionHumanWaitMs || null;
+          managedContext.humanDetectionIvrWaitMs = decoded.humanDetectionIvrWaitMs || null;
+          managedContext.humanDetectionMinUtterances = decoded.humanDetectionMinUtterances || null;
+          managedContext.humanDetectionMinTranscriptLength = decoded.humanDetectionMinTranscriptLength || null;
+          managedContext.humanDetectionHoldSilenceMs = decoded.humanDetectionHoldSilenceMs || null;
+          managedContext.humanDetectionHumanTurnsAfterHold = decoded.humanDetectionHumanTurnsAfterHold || null;
+          managedContext.humanDetectionMaxUnsure = decoded.humanDetectionMaxUnsure || null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";
