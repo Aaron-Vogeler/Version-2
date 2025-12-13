@@ -1819,11 +1819,14 @@ wss.on("connection", async (ws) => {
                     ctx.isIvrMode = false;
                     console.log(`[HUMAN-DETECT] 👤 Classified as HUMAN - using shorter wait times`);
                     // RESCHEDULE debounce timer with shorter human wait time
+                    // Account for time already elapsed since speech ended
                     if (ctx.ttsDebounceTimer) {
                       clearTimeout(ctx.ttsDebounceTimer);
-                      const humanWaitMs = humanDetection.getWaitTimeMs(ctx.humanDetection, ctx);
+                      // Use adjusted wait time that subtracts time already spent on classification
+                      const speechEndedAt = ctx.lastTranscriptAt || Date.now();
+                      const adjustedWaitMs = humanDetection.getAdjustedWaitTimeMs(ctx.humanDetection, speechEndedAt, ctx);
                       const currentSeq = ctx.turnSeq || 0;
-                      console.log(`[HUMAN-DETECT] 👤 Rescheduling debounce timer: ${humanWaitMs}ms`);
+                      console.log(`[HUMAN-DETECT] 👤 Rescheduling debounce timer: ${adjustedWaitMs}ms (adjusted for classification time)`);
                       ctx.ttsDebounceTimer = setTimeout(() => {
                         const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
                         if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
@@ -1831,7 +1834,7 @@ wss.on("connection", async (ws) => {
                           ctx.lastUserTranscript = completeTurn;
                           scheduleTtsResponse(ctx, wsRef, currentSeq);
                         }
-                      }, humanWaitMs);
+                      }, adjustedWaitMs);
                     }
                   } else {
                     console.log(`[HUMAN-DETECT] ❓ Classification unsure - keeping IVR wait times`);
@@ -1973,6 +1976,23 @@ wss.on("connection", async (ws) => {
                       } else if (classification.receiver === "human") {
                         ctx.isIvrMode = false;
                         console.log(`[HUMAN-DETECT] 👤 Classified as HUMAN (flush timer) - using shorter wait times`);
+                        // RESCHEDULE debounce timer with shorter human wait time
+                        // Account for time already elapsed since speech ended
+                        if (ctx.ttsDebounceTimer) {
+                          clearTimeout(ctx.ttsDebounceTimer);
+                          const speechEndedAt = ctx.lastTranscriptAt || Date.now();
+                          const adjustedWaitMs = humanDetection.getAdjustedWaitTimeMs(ctx.humanDetection, speechEndedAt, ctx);
+                          const currentSeq = ctx.turnSeq || 0;
+                          console.log(`[HUMAN-DETECT] 👤 Rescheduling debounce timer (flush): ${adjustedWaitMs}ms (adjusted for classification time)`);
+                          ctx.ttsDebounceTimer = setTimeout(() => {
+                            const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
+                            if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
+                              console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+                              ctx.lastUserTranscript = completeTurn;
+                              scheduleTtsResponse(ctx, wsRef, currentSeq);
+                            }
+                          }, adjustedWaitMs);
+                        }
                       } else {
                         console.log(`[HUMAN-DETECT] ❓ Classification unsure (flush timer) - keeping IVR wait times`);
                       }
