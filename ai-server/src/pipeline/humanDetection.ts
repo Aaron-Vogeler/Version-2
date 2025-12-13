@@ -636,10 +636,9 @@ export function getWaitTimeMs(
  * Check if we should respond (not talk) based on current state
  */
 export function shouldStaySilent(state: HumanDetectionState): boolean {
-  // Don't talk while on hold
-  if (state.receiverState === "HOLD") {
-    return true;
-  }
+  // Note: We no longer stay silent when on HOLD - hold state is only used
+  // for triggering reclassification, not for bypassing LLM responses.
+
   // Don't talk if we're in the middle of checking (wait for classification)
   if (state.receiverState === "CHECKING" && !canClassify(state)) {
     return true;

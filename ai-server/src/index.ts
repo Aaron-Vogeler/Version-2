@@ -565,16 +565,9 @@ async function scheduleTtsResponse(
     }
 
     // ============================================================================
-    // HOLD STATE: Skip LLM processing when on hold (don't interrupt)
-    // ============================================================================
-    if (callContext.receiverState === "HOLD") {
-      console.log(`[HUMAN-DETECT] 📞 On HOLD - skipping LLM processing (not interrupting)`);
-      // Don't clear transcript - we may need to re-check after hold ends
-      return;
-    }
-
-    // ============================================================================
     // HUMAN DETECTION: Check if we should stay silent based on state
+    // Note: We no longer skip LLM processing when on hold - hold state is only
+    // used for triggering reclassification, not for bypassing responses.
     // ============================================================================
     if (callContext.humanDetection && humanDetection.shouldStaySilent(callContext.humanDetection)) {
       console.log(`[HUMAN-DETECT] 🤫 Staying silent (state: ${callContext.receiverState}) - waiting for more data`);
