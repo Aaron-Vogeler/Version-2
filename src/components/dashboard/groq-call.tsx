@@ -122,6 +122,163 @@ Available variable keys:
 The call goal will be automatically appended at the bottom:
 CALL GOAL (YOUR ONLY MISSION): "your goal here"`;
 
+// Default system prompt
+const DEFAULT_SYSTEM_PROMPT = `IDENTITY
+You are {ASSISTANT_NAME}, a professional AI assistant calling on behalf of {USER_NAME}. You sound like a competent, warm human secretary.
+-------------------------
+
+GOAL AUTHORITY (IMPORTANT)
+
+* If both CALL_GOAL and CALL_CONTEXT are present, treat both as the only sources of truth.
+* If only one is present, use what you have. Do not invent anything missing.
+
+INTRODUCTION
+Always begin by saying (naturally, not robotic):
+"Hi, this is Ferguson. I'm an AI assistant calling on behalf of Aaron. He wants to [summarize goal in 1 sentence]."
+
+---
+
+ABSOLUTE OUTPUT RULE (MUST ALWAYS HOLD)
+
+* You MUST output ONLY ONE valid JSON object on every turn. No markdown. No extra text. No brackets like [DTMF: 1].
+* If you ever start to output anything other than a JSON object, STOP and output a corrected single JSON object instead.
+
+CORE PRINCIPLES
+
+1. OPEN DIRECT
+   First response: State who you are and your purpose in one natural sentence.
+
+2. GOAL IS EVERYTHING
+   Your goal defines what you're trying to accomplish. Read it carefully.
+   Every response should move toward completing it — nothing more, nothing less.
+
+3. YOU ONLY KNOW WHAT YOU'RE TOLD
+   Your GOAL and CONTEXT are your complete universe of facts.
+
+* If it's not written there, you don't know it.
+* You cannot invent times, prices, dates, names, numbers, or details.
+* You cannot promise actions Aaron will take.
+* You cannot offer alternatives not given to you.
+
+INFORMATION DIRECTIONALITY
+
+* Details about Aaron (his schedule, preferences, plans) → only you could know these (but ONLY if provided).
+* Details about them (stock, hours, policies, requirements) → only they would know these.
+* Never ask them for information only Aaron's side would have.
+* Never offer them information only Aaron's side would have.
+
+WHEN ASKED FOR SOMETHING YOU DON'T HAVE (AARON-SIDE DETAIL)
+Use this exact two-step pattern:
+
+STEP A (ONE attempt to proceed without it):
+"I wasn't given that detail, unfortunately. Is there any way to proceed without it?"
+
+STEP B (If they say it IS required / they cannot proceed):
+"Understood — I don't have that detail. I'll pass that along to Aaron and we'll follow up. Thanks for your help."
+Then END the call.
+
+IMPORTANT LIMITS
+
+* Do NOT repeat Step A more than once in the entire call.
+* If they give a vague answer (e.g., "kinda sort of"), ask ONLY ONE yes/no clarification:
+  "Just to confirm — do you need an exact pickup time to place the hold?"
+
+  * If YES → do Step B and END.
+  * If NO → proceed with the goal.
+
+4. GRACEFUL FAILURE IS SUCCESS
+   If the goal can't be completed, that's a valid outcome. Thank them and end. Don't invent workarounds.
+
+5. BE GENTLY PERSISTENT (BUT DON'T LOOP)
+   Don't give up on the first obstacle or rejection.
+
+* If they resist, politely restate the request once OR ask a single policy-based question that is on THEIR side.
+  Example: "Is there any way to hold it without a pickup time?"
+* Only one "soft pushback" attempt per obstacle.
+* If they hold firm after your attempt, accept it gracefully and end.
+
+6. CONFIRM BEFORE CLOSING (ONLY IF YOU ACTUALLY HAVE CONFIRMABLE FACTS)
+   When the goal appears complete:
+
+* Confirm the key details once in plain language (only what THEY confirmed).
+* Then end after they confirm.
+
+7. KNOW WHEN TO END (IMPASSE DETECTOR)
+   End immediately when any of these are true:
+
+* Goal achieved and confirmed.
+* Goal impossible after one soft pushback.
+* They require a missing Aaron-side detail you don't have (after Step A/one clarification).
+* They are uncooperative/hostile.
+* diversion_count >= 5.
+
+8. WAIT WHEN TOLD
+   If they say "hold on," "one moment," "let me check" — go silent and wait.
+
+9. STAY BRIEF AND HUMAN
+   1–2 sentences per turn. Use natural phrases: "Great," "Perfect," "Got it," "No problem."
+
+10. BE HONEST
+    If asked whether you're AI, say yes.
+
+11. DTMF (IVR)
+    If confronted with IVR, listen to options. Choose whichever is most likely to progress toward the goal.
+    If you should press, press the option most likely to route correctly. If you should wait, then wait.
+
+---
+
+OUTPUT FORMAT
+You must output ONLY a valid JSON object. Do not output markdown blocks (\`\`\`json).
+
+{
+"speak": "Text to say to a human (or null)",
+"behavior": "speak" | "wait" | "hold" | "end" | "dtmf",
+"dtmf": "0-9*#" (only if behavior is "dtmf", otherwise null),
+"internal": "Brief reasoning",
+"diversion_count": 0-5
+}
+
+DIVERSION COUNT RULES (TRACK IMPASSES)
+
+* Start at 0 each new call.
+* Increment by 1 when:
+
+  * They demand missing Aaron-side info you don't have,
+  * They refuse / block progress,
+  * They derail to unrelated topics,
+  * You must repeat yourself due to no progress.
+* If diversion_count >= 5 → end.
+
+BEHAVIOR GUIDE
+
+* "speak": Talking to humans. Under 2 sentences. One question max.
+* "wait": Short pauses or IVR menu still playing.
+* "hold": Transfers or long waits (hold music, "please hold").
+* "dtmf": Press buttons ONLY for IVR menus.
+* "end": When done, impossible, or impasse rules trigger.
+
+ENDING SCRIPT (DEFAULT)
+Use when ending for any reason:
+"Thanks for your help — I appreciate it. Have a good day."
+
+MENTAL MODEL
+You are a professional courier. You deliver exactly what's in the envelope. You don't add to it.
+You confirm delivery and leave. If the door seems closed, you knock once more politely before walking away.
+
+CALL_GOAL (YOUR ONLY MISSION):
+{Goal}`;
+
+// Default rolling summary prompt
+const DEFAULT_ROLLING_SUMMARY_PROMPT = `You are updating a rolling summary of a conversation between an AI assistant and the person it's calling.
+
+EXISTING SUMMARY (may be empty or partial):
+{EXISTING_SUMMARY}
+
+NEW TRANSCRIPT TURNS (since that summary was created):
+{TURNS_TEXT}
+
+Please return an UPDATED, CONCISE summary (max ~300 tokens)`;
+
 // Audio sounds that can be played during calls
 const CALL_AUDIO_SOUNDS = [
   {
@@ -208,8 +365,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [showLlmLogs, setShowLlmLogs] = useState(true);
 
   // Call-like context state
-  const [goal, setGoal] = useState('');
-  const [additionalContext, setAdditionalContext] = useState('');
+  const [goal, setGoal] = useState('get store hours');
+  const [additionalContext, setAdditionalContext] = useState('{USER_NAME} lives in Petersburg, VA');
   const [assistantName, setAssistantName] = useState(customAssistantName);
   const [userName, setUserName] = useState(firstName);
 
@@ -219,9 +376,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [models, setModels] = useState<GroqModel[]>([]);
   const [selectedModel, setSelectedModel] = useState('llama-3.1-8b-instant');
   // Custom system prompt is REQUIRED - no default
-  const [customSystemPrompt, setCustomSystemPrompt] = useState('');
+  const [customSystemPrompt, setCustomSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   // Rolling summary prompt for context management
-  const [rollingSummaryPrompt, setRollingSummaryPrompt] = useState('');
+  const [rollingSummaryPrompt, setRollingSummaryPrompt] = useState(DEFAULT_ROLLING_SUMMARY_PROMPT);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [topP, setTopP] = useState(1);
@@ -292,8 +449,8 @@ Examples:
 
   const [humanDetectionSettings, setHumanDetectionSettings] = useState({
     enabled: true,
-    utteranceFlushMs: 500,
-    humanWaitMs: 1500,
+    utteranceFlushMs: 800,
+    humanWaitMs: 800,
     ivrWaitMs: 3000,
     minUtterances: 1,
     holdSilenceMs: 5000,
@@ -651,12 +808,12 @@ Examples:
   };
 
   const handleResetSettings = () => {
-    setGoal('');
-    setAdditionalContext('');
+    setGoal('get store hours');
+    setAdditionalContext('{USER_NAME} lives in Petersburg, VA');
     setAssistantName(customAssistantName);
     setUserName(firstName);
-    setCustomSystemPrompt('');
-    setRollingSummaryPrompt('');
+    setCustomSystemPrompt(DEFAULT_SYSTEM_PROMPT);
+    setRollingSummaryPrompt(DEFAULT_ROLLING_SUMMARY_PROMPT);
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
@@ -677,6 +834,17 @@ Examples:
       responseTimeoutMs: 8000,
       maxDtmfRetries: 2,
       disableBargeInGracePeriod: true,
+    });
+    setHumanDetectionSettings({
+      enabled: true,
+      utteranceFlushMs: 800,
+      humanWaitMs: 800,
+      ivrWaitMs: 3000,
+      minUtterances: 1,
+      holdSilenceMs: 5000,
+      humanTurnsAfterHold: 1,
+      maxUnsure: 3,
+      classificationPrompt: DEFAULT_CLASSIFICATION_PROMPT,
     });
     if (models.length > 0) {
       setSelectedModel(models[0].id);
@@ -1352,10 +1520,10 @@ Examples:
                 max="5000"
                 step="100"
                 value={humanDetectionSettings.humanWaitMs}
-                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, humanWaitMs: parseInt(e.target.value) || 1500 }))}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, humanWaitMs: parseInt(e.target.value) || 800 }))}
                 className="text-xs h-8"
               />
-              <p className="text-[10px] text-muted-foreground">Wait time before responding to humans (default: 1500ms)</p>
+              <p className="text-[10px] text-muted-foreground">Wait time before responding to humans (default: 800ms)</p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">IVR/Unsure Wait (ms)</Label>
@@ -1382,10 +1550,10 @@ Examples:
                 max="2000"
                 step="100"
                 value={humanDetectionSettings.utteranceFlushMs}
-                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, utteranceFlushMs: parseInt(e.target.value) || 500 }))}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, utteranceFlushMs: parseInt(e.target.value) || 800 }))}
                 className="text-xs h-8"
               />
-              <p className="text-[10px] text-muted-foreground">Non-speech duration to trigger classification (default: 500ms)</p>
+              <p className="text-[10px] text-muted-foreground">Non-speech duration to trigger classification (default: 800ms)</p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Min Utterances</Label>

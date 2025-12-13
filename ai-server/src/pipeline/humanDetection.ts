@@ -116,9 +116,9 @@ export interface PerCallHumanDetectionSettings {
 export function getHumanDetectionConfig(perCallSettings?: PerCallHumanDetectionSettings | null) {
   return {
     /** Non-speech duration to trigger utterance flush (ms) */
-    utteranceFlushMs: perCallSettings?.humanDetectionUtteranceFlushMs ?? config.humanDetection?.utteranceFlushMs ?? 500,
+    utteranceFlushMs: perCallSettings?.humanDetectionUtteranceFlushMs ?? config.humanDetection?.utteranceFlushMs ?? 800,
     /** Wait time for human receiver before responding (ms) */
-    humanWaitMs: perCallSettings?.humanDetectionHumanWaitMs ?? config.humanDetection?.humanWaitMs ?? 1500,
+    humanWaitMs: perCallSettings?.humanDetectionHumanWaitMs ?? config.humanDetection?.humanWaitMs ?? 800,
     /** Wait time for IVR/unsure receiver before responding (ms) */
     ivrWaitMs: perCallSettings?.humanDetectionIvrWaitMs ?? config.humanDetection?.ivrWaitMs ?? 3000,
     /** Minimum utterances needed for initial classification */
@@ -141,9 +141,9 @@ export function getHumanDetectionConfig(perCallSettings?: PerCallHumanDetectionS
  */
 export const HUMAN_DETECTION_CONFIG = {
   /** Non-speech duration to trigger utterance flush (ms) */
-  utteranceFlushMs: 500,
+  utteranceFlushMs: 800,
   /** Wait time for human receiver before responding (ms) */
-  humanWaitMs: 1500,
+  humanWaitMs: 800,
   /** Wait time for IVR/unsure receiver before responding (ms) */
   ivrWaitMs: 3000,
   /** Minimum utterances needed for initial classification */

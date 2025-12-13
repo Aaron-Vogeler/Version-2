@@ -142,9 +142,9 @@ const config = {
   // =============================================================================
   humanDetection: {
     // Non-speech duration to trigger utterance flush (ms) - from VAD
-    utteranceFlushMs: getEnvInt("HUMAN_DETECTION_UTTERANCE_FLUSH_MS", 500),
+    utteranceFlushMs: getEnvInt("HUMAN_DETECTION_UTTERANCE_FLUSH_MS", 800),
     // Wait time for human receiver before AI responds (ms) - shorter for natural conversation
-    humanWaitMs: getEnvInt("HUMAN_DETECTION_HUMAN_WAIT_MS", 1500),
+    humanWaitMs: getEnvInt("HUMAN_DETECTION_HUMAN_WAIT_MS", 800),
     // Wait time for IVR/unsure receiver before AI responds (ms) - longer to avoid interrupting
     ivrWaitMs: getEnvInt("HUMAN_DETECTION_IVR_WAIT_MS", 3000),
     // Minimum utterances needed before first classification attempt
@@ -171,7 +171,7 @@ const config = {
     // Available placeholders: {EXISTING_SUMMARY}, {TURNS_TEXT}, {MAX_TOKENS}
     rollingSummaryPrompt: getEnv(
       "ROLLING_SUMMARY_PROMPT",
-      `You are updating a rolling summary of a phone call between an AI assistant and a caller.
+      `You are updating a rolling summary of a conversation between an AI assistant and the person it's calling.
 
 EXISTING SUMMARY (may be empty or partial):
 {EXISTING_SUMMARY}
@@ -179,14 +179,7 @@ EXISTING SUMMARY (may be empty or partial):
 NEW TRANSCRIPT TURNS (since that summary was created):
 {TURNS_TEXT}
 
-Please return an UPDATED, CONCISE summary (max ~{MAX_TOKENS} tokens) that preserves:
-- The caller's main goal(s)
-- Key facts (names, dates, constraints, identifiers)
-- Important decisions / outcomes so far
-- Current status (who we're talking to, which department, on hold or not, etc.)
-- Any critical context for continuing the conversation
-
-Be concise and focus on what's most important to continue this call effectively.`
+Please return an UPDATED, CONCISE summary (max ~300 tokens)`
     ),
 
     // ROLLING SUMMARY SYSTEM MESSAGE
