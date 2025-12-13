@@ -86,6 +86,10 @@ export interface HumanDetectionState {
   unsureCount: number;
   /** Last classification result */
   lastClassification?: ReceiverClassification;
+  /** Whether classification is pending (hold silence threshold was exceeded) */
+  pendingClassification: boolean;
+  /** Whether we're currently gathering an utterance for classification */
+  gatheringForClassification: boolean;
 }
 
 /**
@@ -194,6 +198,11 @@ const IVR_PATTERNS = [
   /invalid (entry|selection|input)/i,
   /main menu/i,
   /option (\d+|one|two|three)/i,
+  // IVR greeting patterns (formal "thank you for calling" vs informal "thanks for calling")
+  /thank you for calling/i,
+  /welcome to/i,
+  /your call (is|will be|may be) (important|recorded|monitored)/i,
+  /listen carefully as (our )?menu (options )?ha(s|ve) changed/i,
 ];
 
 /**
@@ -237,6 +246,9 @@ export function initializeHumanDetectionState(): HumanDetectionState {
     justExitedHold: false,
     stateEnteredAt: Date.now(),
     unsureCount: 0,
+    // Start with pendingClassification=true so first utterance gets classified
+    pendingClassification: true,
+    gatheringForClassification: false,
   };
 }
 
@@ -371,6 +383,21 @@ export function quickPatternCheck(transcript: string): ReceiverType | null {
 }
 
 /**
+ * Check if transcript contains ANY IVR pattern (single match is enough)
+ * Used for reclassification when we're already in LIKELY_HUMAN state
+ * and want to detect if the speaker may have changed to IVR
+ */
+export function hasIvrPattern(transcript: string): boolean {
+  const text = transcript.toLowerCase();
+  for (const pattern of IVR_PATTERNS) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Detect hold indicators in transcript
  */
 export function detectHoldIndicators(transcript: string): HoldIndicators {
@@ -410,18 +437,88 @@ export function isLikelyOnHold(
   perCallSettings?: PerCallHumanDetectionSettings | null
 ): boolean {
   const cfg = getHumanDetectionConfig(perCallSettings);
+
+  // Calculate ACTUAL current silence duration from lastSilenceAt
+  // This is more reliable than the cached silenceDurationMs which may be stale
+  const now = Date.now();
+  const actualSilenceDuration = state.vadState.lastSilenceAt > 0
+    ? now - state.vadState.lastSilenceAt
+    : 0;
+
   // Extended silence is a hold indicator
-  const extendedSilence = state.vadState.silenceDurationMs >= cfg.holdSilenceThresholdMs;
+  const extendedSilence = actualSilenceDuration >= cfg.holdSilenceThresholdMs;
+
+  // Debug logging for hold detection
+  console.log(`[HUMAN-DETECT] 🔍 Hold check: actualSilence=${actualSilenceDuration}ms, threshold=${cfg.holdSilenceThresholdMs}ms, extendedSilence=${extendedSilence}`);
 
   // Check transcript for hold patterns
   if (transcript) {
     const indicators = detectHoldIndicators(transcript);
     if (indicators.hasHoldMessage || indicators.hasMusic) {
+      console.log(`[HUMAN-DETECT] 🔍 Hold pattern detected in transcript`);
       return true;
     }
   }
 
   return extendedSilence;
+}
+
+/**
+ * Check if hold silence threshold has been exceeded since last classification.
+ * If so, trigger pending classification (next speech will be classified).
+ * @returns true if classification was triggered
+ */
+export function checkHoldSilenceThreshold(
+  state: HumanDetectionState,
+  perCallSettings?: PerCallHumanDetectionSettings | null
+): boolean {
+  const cfg = getHumanDetectionConfig(perCallSettings);
+
+  // Calculate ACTUAL current silence duration from lastSilenceAt
+  // This is more reliable than the cached silenceDurationMs which may be stale
+  const now = Date.now();
+  const actualSilenceDuration = state.vadState.lastSilenceAt > 0
+    ? now - state.vadState.lastSilenceAt
+    : 0;
+
+  const silenceExceeded = actualSilenceDuration >= cfg.holdSilenceThresholdMs;
+
+  console.log(`[HUMAN-DETECT] 🔍 Hold threshold check: actualSilence=${actualSilenceDuration}ms, threshold=${cfg.holdSilenceThresholdMs}ms, exceeded=${silenceExceeded}`);
+
+  if (silenceExceeded && !state.pendingClassification && !state.gatheringForClassification) {
+    console.log(`[HUMAN-DETECT] ⏰ Hold silence threshold exceeded (${actualSilenceDuration}ms >= ${cfg.holdSilenceThresholdMs}ms) - classification pending`);
+    state.pendingClassification = true;
+    // Clear buffer to prepare for fresh classification
+    clearTranscriptBuffer(state);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Start gathering utterance for classification (called when speech starts after pending)
+ */
+export function startGatheringForClassification(state: HumanDetectionState): void {
+  if (state.pendingClassification) {
+    console.log(`[HUMAN-DETECT] 🎤 Starting to gather utterance for classification`);
+    state.gatheringForClassification = true;
+    state.pendingClassification = false;
+    clearTranscriptBuffer(state);
+  }
+}
+
+/**
+ * Check if we should classify now (have gathered an utterance)
+ */
+export function shouldClassifyAfterGathering(state: HumanDetectionState): boolean {
+  return state.gatheringForClassification && state.transcriptBuffer.length > 0;
+}
+
+/**
+ * Complete the classification gathering phase
+ */
+export function finishGatheringForClassification(state: HumanDetectionState): void {
+  state.gatheringForClassification = false;
 }
 
 /**
@@ -539,10 +636,9 @@ export function getWaitTimeMs(
  * Check if we should respond (not talk) based on current state
  */
 export function shouldStaySilent(state: HumanDetectionState): boolean {
-  // Don't talk while on hold
-  if (state.receiverState === "HOLD") {
-    return true;
-  }
+  // Note: We no longer stay silent when on HOLD - hold state is only used
+  // for triggering reclassification, not for bypassing LLM responses.
+
   // Don't talk if we're in the middle of checking (wait for classification)
   if (state.receiverState === "CHECKING" && !canClassify(state)) {
     return true;
