@@ -1747,11 +1747,21 @@ wss.on("connection", async (ws) => {
               ?? 500;
 
             // Check if we need to classify
-            const shouldClassify =
+            let shouldClassify =
               callContext.receiverState === "UNKNOWN" ||
               callContext.receiverState === "CHECKING" ||
               callContext.receiverState === "LIKELY_IVR" ||
               callContext.humanDetection.justExitedHold;
+
+            // IMPORTANT: Even in LIKELY_HUMAN state, check if the NEW transcript looks like IVR
+            // This handles cases where a human transfers to an IVR or a different speaker responds
+            // Use hasIvrPattern which triggers on a single IVR pattern (more sensitive for reclassification)
+            if (!shouldClassify && callContext.receiverState === "LIKELY_HUMAN") {
+              if (humanDetection.hasIvrPattern(fullUtterance)) {
+                console.log(`[HUMAN-DETECT] 🔄 IVR pattern detected in LIKELY_HUMAN state - forcing reclassification`);
+                shouldClassify = true;
+              }
+            }
 
             if (shouldClassify && humanDetection.canClassify(callContext.humanDetection, callContext)) {
               console.log(`[HUMAN-DETECT] 📝 Buffered transcript, scheduling classification in ${classificationFlushMs}ms`);

@@ -194,6 +194,11 @@ const IVR_PATTERNS = [
   /invalid (entry|selection|input)/i,
   /main menu/i,
   /option (\d+|one|two|three)/i,
+  // IVR greeting patterns (formal "thank you for calling" vs informal "thanks for calling")
+  /thank you for calling/i,
+  /welcome to/i,
+  /your call (is|will be|may be) (important|recorded|monitored)/i,
+  /listen carefully as (our )?menu (options )?ha(s|ve) changed/i,
 ];
 
 /**
@@ -371,6 +376,21 @@ export function quickPatternCheck(transcript: string): ReceiverType | null {
 }
 
 /**
+ * Check if transcript contains ANY IVR pattern (single match is enough)
+ * Used for reclassification when we're already in LIKELY_HUMAN state
+ * and want to detect if the speaker may have changed to IVR
+ */
+export function hasIvrPattern(transcript: string): boolean {
+  const text = transcript.toLowerCase();
+  for (const pattern of IVR_PATTERNS) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Detect hold indicators in transcript
  */
 export function detectHoldIndicators(transcript: string): HoldIndicators {
@@ -413,10 +433,14 @@ export function isLikelyOnHold(
   // Extended silence is a hold indicator
   const extendedSilence = state.vadState.silenceDurationMs >= cfg.holdSilenceThresholdMs;
 
+  // Debug logging for hold detection
+  console.log(`[HUMAN-DETECT] 🔍 Hold check: silenceDurationMs=${state.vadState.silenceDurationMs}ms, threshold=${cfg.holdSilenceThresholdMs}ms, extendedSilence=${extendedSilence}`);
+
   // Check transcript for hold patterns
   if (transcript) {
     const indicators = detectHoldIndicators(transcript);
     if (indicators.hasHoldMessage || indicators.hasMusic) {
+      console.log(`[HUMAN-DETECT] 🔍 Hold pattern detected in transcript`);
       return true;
     }
   }
