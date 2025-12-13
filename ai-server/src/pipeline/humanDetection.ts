@@ -246,7 +246,8 @@ export function initializeHumanDetectionState(): HumanDetectionState {
     justExitedHold: false,
     stateEnteredAt: Date.now(),
     unsureCount: 0,
-    pendingClassification: false,
+    // Start with pendingClassification=true so first utterance gets classified
+    pendingClassification: true,
     gatheringForClassification: false,
   };
 }
