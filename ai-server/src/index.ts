@@ -1528,6 +1528,15 @@ wss.on("connection", async (ws) => {
         humanDetection.exitHold(callContext.humanDetection);
         callContext.receiverState = callContext.humanDetection.receiverState;
       }
+
+      // Check if hold silence threshold was exceeded - if so, we need to classify the next utterance
+      // This happens when there's been extended silence (e.g., after AI speaks, or during hold)
+      humanDetection.checkHoldSilenceThreshold(callContext.humanDetection, callContext);
+
+      // If classification is pending (hold silence threshold was exceeded), start gathering
+      if (callContext.humanDetection.pendingClassification) {
+        humanDetection.startGatheringForClassification(callContext.humanDetection);
+      }
     }
   });
 
@@ -1746,25 +1755,19 @@ wss.on("connection", async (ws) => {
               ?? config.humanDetection?.utteranceFlushMs
               ?? 500;
 
-            // Check if we need to classify
-            let shouldClassify =
-              callContext.receiverState === "UNKNOWN" ||
-              callContext.receiverState === "CHECKING" ||
-              callContext.receiverState === "LIKELY_IVR" ||
-              callContext.humanDetection.justExitedHold;
+            // CLASSIFICATION LOGIC:
+            // Only classify when gatheringForClassification is true
+            // This happens after hold silence threshold is exceeded and speech starts
+            // No initial assumptions - default to IVR wait time until classified
+            const shouldClassify = callContext.humanDetection.gatheringForClassification;
 
-            // IMPORTANT: Even in LIKELY_HUMAN state, check if the NEW transcript looks like IVR
-            // This handles cases where a human transfers to an IVR or a different speaker responds
-            // Use hasIvrPattern which triggers on a single IVR pattern (more sensitive for reclassification)
-            if (!shouldClassify && callContext.receiverState === "LIKELY_HUMAN") {
-              if (humanDetection.hasIvrPattern(fullUtterance)) {
-                console.log(`[HUMAN-DETECT] 🔄 IVR pattern detected in LIKELY_HUMAN state - forcing reclassification`);
-                shouldClassify = true;
+            if (shouldClassify) {
+              console.log(`[HUMAN-DETECT] 📝 Gathering transcript for classification (utterance flush in ${classificationFlushMs}ms)`);
+
+              // Clear existing classification timer
+              if (callContext.classificationTimer) {
+                clearTimeout(callContext.classificationTimer);
               }
-            }
-
-            if (shouldClassify && humanDetection.canClassify(callContext.humanDetection, callContext)) {
-              console.log(`[HUMAN-DETECT] 📝 Buffered transcript, scheduling classification in ${classificationFlushMs}ms`);
 
               // Capture websocket reference for timer rescheduling
               const wsRef = ws;
@@ -1776,36 +1779,48 @@ wss.on("connection", async (ws) => {
                 console.log(`[HUMAN-DETECT] 🎯 Classification timer fired (${classificationFlushMs}ms silence)`);
                 const transcript = humanDetection.getRecentTranscript(ctx.humanDetection);
 
-                // Clear transcript buffer BEFORE classification to prevent accumulation
-                // Each classification should only see the current utterance, not previous ones
+                if (!transcript) {
+                  console.log(`[HUMAN-DETECT] ⚠️ No transcript to classify, skipping`);
+                  humanDetection.finishGatheringForClassification(ctx.humanDetection);
+                  return;
+                }
+
+                // Clear transcript buffer BEFORE classification
                 humanDetection.clearTranscriptBuffer(ctx.humanDetection);
 
-                // First try quick pattern check (fast, no LLM call needed)
-                const quickResult = humanDetection.quickPatternCheck(transcript);
-                if (quickResult) {
-                  console.log(`[HUMAN-DETECT] ⚡ Quick pattern match: ${quickResult.toUpperCase()}`);
-                  humanDetection.processClassification(ctx.humanDetection, {
-                    receiver: quickResult,
-                    confidence: 0.9,
-                    reason: "pattern match",
-                  }, ctx);
+                // Transition to CHECKING state during classification
+                humanDetection.transitionState(ctx.humanDetection, "CHECKING", "awaiting LLM classification");
+                ctx.receiverState = ctx.humanDetection.receiverState;
+
+                // Send to LLM for classification (no pattern assumptions)
+                classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt).then((classification) => {
+                  if (!ctx.humanDetection) return;
+
+                  // Finish gathering phase
+                  humanDetection.finishGatheringForClassification(ctx.humanDetection);
+
+                  // Process classification result
+                  humanDetection.processClassification(ctx.humanDetection, classification, ctx);
                   ctx.receiverState = ctx.humanDetection.receiverState;
 
                   // Update legacy fields for compatibility
                   ctx.partyDetectionComplete = true;
-                  ctx.detectedPartyType = quickResult === "human" ? "human" : "robotic";
+                  ctx.detectedPartyType = classification.receiver === "human" ? "human" : "robotic";
                   ctx.partyDetectionTimestamp = Date.now();
-                  if (quickResult === "ivr") {
+
+                  if (classification.receiver === "ivr") {
                     ctx.isIvrMode = true;
-                    ctx.ivrConfidence = 0.9;
-                  } else if (quickResult === "human") {
+                    ctx.ivrConfidence = classification.confidence ?? 0.8;
+                    console.log(`[HUMAN-DETECT] 🤖 Classified as IVR - using IVR wait times`);
+                  } else if (classification.receiver === "human") {
                     ctx.isIvrMode = false;
+                    console.log(`[HUMAN-DETECT] 👤 Classified as HUMAN - using shorter wait times`);
                     // RESCHEDULE debounce timer with shorter human wait time
                     if (ctx.ttsDebounceTimer) {
                       clearTimeout(ctx.ttsDebounceTimer);
                       const humanWaitMs = humanDetection.getWaitTimeMs(ctx.humanDetection, ctx);
                       const currentSeq = ctx.turnSeq || 0;
-                      console.log(`[HUMAN-DETECT] 👤 Rescheduling debounce timer: ${humanWaitMs}ms (was IVR wait)`);
+                      console.log(`[HUMAN-DETECT] 👤 Rescheduling debounce timer: ${humanWaitMs}ms`);
                       ctx.ttsDebounceTimer = setTimeout(() => {
                         const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
                         if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
@@ -1815,76 +1830,16 @@ wss.on("connection", async (ws) => {
                         }
                       }, humanWaitMs);
                     }
+                  } else {
+                    console.log(`[HUMAN-DETECT] ❓ Classification unsure - keeping IVR wait times`);
                   }
-
-                  // Log quick pattern match to Supabase for dashboard visibility
-                  if (ctx.callId) {
-                    insertLlmLog({
-                      call_id: ctx.callId,
-                      request_type: "receiver_classification",
-                      model: "pattern-match",
-                      temperature: 0,
-                      max_tokens: 0,
-                      system_prompt: "Quick pattern-based classification (no LLM call)",
-                      messages: [],
-                      user_input: transcript,
-                      assistant_response: JSON.stringify({ receiver: quickResult, confidence: 0.9, reason: "pattern match" }),
-                      prompt_tokens: 0,
-                      completion_tokens: 0,
-                      total_tokens: 0,
-                      latency_ms: 0,
-                    }).then(() => {
-                      console.log(`[Supabase] Pattern match logged (receiver_classification, call: ...${ctx.callId?.slice(-8)})`);
-                    }).catch((err) => {
-                      console.error(`[${ctx.callId}] Failed to log quick pattern match:`, err);
-                    });
-                  }
-                } else {
-                  // Need LLM classification - run async
-                  humanDetection.transitionState(ctx.humanDetection, "CHECKING", "awaiting LLM classification");
-                  ctx.receiverState = ctx.humanDetection.receiverState;
-
-                  classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt).then((classification) => {
-                    if (!ctx.humanDetection) return;
-                    humanDetection.processClassification(ctx.humanDetection, classification, ctx);
-                    ctx.receiverState = ctx.humanDetection.receiverState;
-
-                    // Update legacy fields for compatibility
-                    ctx.partyDetectionComplete = true;
-                    ctx.detectedPartyType = classification.receiver === "human" ? "human" : "robotic";
-                    ctx.partyDetectionTimestamp = Date.now();
-
-                    // If IVR detected, also set isIvrMode for backward compatibility
-                    if (classification.receiver === "ivr") {
-                      ctx.isIvrMode = true;
-                      ctx.ivrConfidence = classification.confidence ?? 0.8;
-                      console.log(`[HUMAN-DETECT] 🤖 IVR mode enabled based on LLM classification`);
-                    } else if (classification.receiver === "human") {
-                      ctx.isIvrMode = false;
-                      console.log(`[HUMAN-DETECT] 👤 Human detected - using shorter wait times`);
-                      // RESCHEDULE debounce timer with shorter human wait time
-                      if (ctx.ttsDebounceTimer) {
-                        clearTimeout(ctx.ttsDebounceTimer);
-                        const humanWaitMs = humanDetection.getWaitTimeMs(ctx.humanDetection, ctx);
-                        const currentSeq = ctx.turnSeq || 0;
-                        console.log(`[HUMAN-DETECT] 👤 Rescheduling debounce timer: ${humanWaitMs}ms (was IVR wait)`);
-                        ctx.ttsDebounceTimer = setTimeout(() => {
-                          const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
-                          if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
-                            console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
-                            ctx.lastUserTranscript = completeTurn;
-                            scheduleTtsResponse(ctx, wsRef, currentSeq);
-                          }
-                        }, humanWaitMs);
-                      }
-                    }
-                  }).catch((err) => {
-                    console.error(`[HUMAN-DETECT] ❌ Classification failed:`, err);
-                  });
-                }
+                }).catch((err) => {
+                  console.error(`[HUMAN-DETECT] ❌ Classification failed:`, err);
+                  humanDetection.finishGatheringForClassification(ctx.humanDetection);
+                });
               }, classificationFlushMs);
             } else {
-              console.log(`[HUMAN-DETECT] 📝 Buffered transcript (state: ${callContext.receiverState}, no classification needed)`);
+              console.log(`[HUMAN-DETECT] 📝 Buffered transcript (no classification pending)`);
             }
           }
         }
@@ -1973,100 +1928,55 @@ wss.on("connection", async (ws) => {
               ctx.accumulatedTurnText.push(fullUtterance);
               console.log(`[TRANSCRIPT] Accumulated turn segment #${ctx.accumulatedTurnText.length} (flush timer): "${fullUtterance}"`);
 
-              // HUMAN DETECTION: Enhanced receiver classification using state machine (flush timer path)
+              // HUMAN DETECTION: Buffer transcript for potential classification
+              // Classification only happens after hold silence threshold is exceeded
               if (ctx.humanDetection) {
                 // Add transcript to detection buffer
                 humanDetection.addToTranscriptBuffer(ctx.humanDetection, fullUtterance);
 
-                // Clear any pending classification timer (we're classifying now via flush timer)
-                if (ctx.classificationTimer) {
-                  clearTimeout(ctx.classificationTimer);
-                  ctx.classificationTimer = undefined;
-                }
-
-                // Check if we should classify
-                // - UNKNOWN: First classification
-                // - CHECKING: Waiting for more data after unsure result
-                // - LIKELY_IVR: Re-check in case a human picks up after IVR greeting
-                // - justExitedHold: Re-check after hold ends
-                const shouldClassify =
-                  ctx.receiverState === "UNKNOWN" ||
-                  ctx.receiverState === "CHECKING" ||
-                  ctx.receiverState === "LIKELY_IVR" ||
-                  ctx.humanDetection.justExitedHold;
-
-                if (shouldClassify && humanDetection.canClassify(ctx.humanDetection, ctx)) {
-                  console.log(`[HUMAN-DETECT] 🎯 Triggering classification (flush timer, state: ${ctx.receiverState})...`);
+                // Only classify if we're in gathering mode (hold silence threshold was exceeded)
+                if (ctx.humanDetection.gatheringForClassification) {
+                  console.log(`[HUMAN-DETECT] 🎯 Triggering classification (flush timer, gathering for classification)...`);
                   const transcript = humanDetection.getRecentTranscript(ctx.humanDetection);
 
-                  // Clear transcript buffer BEFORE classification to prevent accumulation
-                  // Each classification should only see the current utterance, not previous ones
-                  humanDetection.clearTranscriptBuffer(ctx.humanDetection);
+                  if (transcript) {
+                    // Clear transcript buffer BEFORE classification
+                    humanDetection.clearTranscriptBuffer(ctx.humanDetection);
 
-                  // First try quick pattern check
-                  const quickResult = humanDetection.quickPatternCheck(transcript);
-                  if (quickResult) {
-                    console.log(`[HUMAN-DETECT] ⚡ Quick pattern match (flush timer): ${quickResult.toUpperCase()}`);
-                    humanDetection.processClassification(ctx.humanDetection, {
-                      receiver: quickResult,
-                      confidence: 0.9,
-                      reason: "pattern match",
-                    }, ctx);
-                    ctx.receiverState = ctx.humanDetection.receiverState;
-                    ctx.partyDetectionComplete = true;
-                    ctx.detectedPartyType = quickResult === "human" ? "human" : "robotic";
-                    ctx.partyDetectionTimestamp = Date.now();
-                    if (quickResult === "ivr") {
-                      ctx.isIvrMode = true;
-                      ctx.ivrConfidence = 0.9;
-                    } else if (quickResult === "human") {
-                      ctx.isIvrMode = false;
-                    }
-
-                    // Log quick pattern match to Supabase for dashboard visibility
-                    if (ctx.callId) {
-                      insertLlmLog({
-                        call_id: ctx.callId,
-                        request_type: "receiver_classification",
-                        model: "pattern-match",
-                        temperature: 0,
-                        max_tokens: 0,
-                        system_prompt: "Quick pattern-based classification (no LLM call)",
-                        messages: [],
-                        user_input: transcript,
-                        assistant_response: JSON.stringify({ receiver: quickResult, confidence: 0.9, reason: "pattern match" }),
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                        latency_ms: 0,
-                      }).then(() => {
-                        console.log(`[Supabase] Pattern match logged (receiver_classification, call: ...${ctx.callId?.slice(-8)})`);
-                      }).catch((err) => {
-                        console.error(`[${ctx.callId}] Failed to log quick pattern match:`, err);
-                      });
-                    }
-                  } else {
-                    // Need LLM classification
+                    // Transition to CHECKING state during classification
                     humanDetection.transitionState(ctx.humanDetection, "CHECKING", "awaiting LLM (flush timer)");
                     ctx.receiverState = ctx.humanDetection.receiverState;
 
+                    // Send to LLM for classification (no pattern assumptions)
                     classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt).then((classification) => {
-                      humanDetection.processClassification(ctx.humanDetection!, classification, ctx);
-                      ctx.receiverState = ctx.humanDetection!.receiverState;
+                      if (!ctx.humanDetection) return;
+
+                      // Finish gathering phase
+                      humanDetection.finishGatheringForClassification(ctx.humanDetection);
+
+                      // Process classification result
+                      humanDetection.processClassification(ctx.humanDetection, classification, ctx);
+                      ctx.receiverState = ctx.humanDetection.receiverState;
                       ctx.partyDetectionComplete = true;
                       ctx.detectedPartyType = classification.receiver === "human" ? "human" : "robotic";
                       ctx.partyDetectionTimestamp = Date.now();
+
                       if (classification.receiver === "ivr") {
                         ctx.isIvrMode = true;
                         ctx.ivrConfidence = classification.confidence ?? 0.8;
-                        console.log(`[HUMAN-DETECT] 🤖 IVR mode enabled (flush timer)`);
+                        console.log(`[HUMAN-DETECT] 🤖 Classified as IVR (flush timer) - using IVR wait times`);
                       } else if (classification.receiver === "human") {
                         ctx.isIvrMode = false;
-                        console.log(`[HUMAN-DETECT] 👤 Human detected (flush timer)`);
+                        console.log(`[HUMAN-DETECT] 👤 Classified as HUMAN (flush timer) - using shorter wait times`);
+                      } else {
+                        console.log(`[HUMAN-DETECT] ❓ Classification unsure (flush timer) - keeping IVR wait times`);
                       }
                     }).catch((err) => {
                       console.error(`[HUMAN-DETECT] ❌ Classification failed (flush timer):`, err);
+                      humanDetection.finishGatheringForClassification(ctx.humanDetection!);
                     });
+                  } else {
+                    humanDetection.finishGatheringForClassification(ctx.humanDetection);
                   }
                 }
               }

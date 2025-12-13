@@ -86,6 +86,10 @@ export interface HumanDetectionState {
   unsureCount: number;
   /** Last classification result */
   lastClassification?: ReceiverClassification;
+  /** Whether classification is pending (hold silence threshold was exceeded) */
+  pendingClassification: boolean;
+  /** Whether we're currently gathering an utterance for classification */
+  gatheringForClassification: boolean;
 }
 
 /**
@@ -242,6 +246,8 @@ export function initializeHumanDetectionState(): HumanDetectionState {
     justExitedHold: false,
     stateEnteredAt: Date.now(),
     unsureCount: 0,
+    pendingClassification: false,
+    gatheringForClassification: false,
   };
 }
 
@@ -446,6 +452,54 @@ export function isLikelyOnHold(
   }
 
   return extendedSilence;
+}
+
+/**
+ * Check if hold silence threshold has been exceeded since last classification.
+ * If so, trigger pending classification (next speech will be classified).
+ * @returns true if classification was triggered
+ */
+export function checkHoldSilenceThreshold(
+  state: HumanDetectionState,
+  perCallSettings?: PerCallHumanDetectionSettings | null
+): boolean {
+  const cfg = getHumanDetectionConfig(perCallSettings);
+  const silenceExceeded = state.vadState.silenceDurationMs >= cfg.holdSilenceThresholdMs;
+
+  if (silenceExceeded && !state.pendingClassification && !state.gatheringForClassification) {
+    console.log(`[HUMAN-DETECT] ⏰ Hold silence threshold exceeded (${state.vadState.silenceDurationMs}ms >= ${cfg.holdSilenceThresholdMs}ms) - classification pending`);
+    state.pendingClassification = true;
+    // Clear buffer to prepare for fresh classification
+    clearTranscriptBuffer(state);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Start gathering utterance for classification (called when speech starts after pending)
+ */
+export function startGatheringForClassification(state: HumanDetectionState): void {
+  if (state.pendingClassification) {
+    console.log(`[HUMAN-DETECT] 🎤 Starting to gather utterance for classification`);
+    state.gatheringForClassification = true;
+    state.pendingClassification = false;
+    clearTranscriptBuffer(state);
+  }
+}
+
+/**
+ * Check if we should classify now (have gathered an utterance)
+ */
+export function shouldClassifyAfterGathering(state: HumanDetectionState): boolean {
+  return state.gatheringForClassification && state.transcriptBuffer.length > 0;
+}
+
+/**
+ * Complete the classification gathering phase
+ */
+export function finishGatheringForClassification(state: HumanDetectionState): void {
+  state.gatheringForClassification = false;
 }
 
 /**
