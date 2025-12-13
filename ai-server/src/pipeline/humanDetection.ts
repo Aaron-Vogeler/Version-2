@@ -522,6 +522,21 @@ export function finishGatheringForClassification(state: HumanDetectionState): vo
 }
 
 /**
+ * Reset silence timer after assistant (AI) speech ends.
+ * This ensures the hold silence threshold starts counting from when the AI
+ * finished speaking, not from the previous caller utterance.
+ *
+ * Without this reset, the silence duration would incorrectly include the time
+ * the AI was speaking, leading to premature hold threshold triggers.
+ */
+export function resetSilenceAfterAssistantSpeech(state: HumanDetectionState): void {
+  const now = Date.now();
+  state.vadState.lastSilenceAt = now;
+  state.vadState.silenceDurationMs = 0;
+  // Note: We don't set isSpeaking=false here because that tracks caller speech, not AI speech
+}
+
+/**
  * Transition to a new receiver state
  */
 export function transitionState(

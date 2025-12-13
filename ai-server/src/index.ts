@@ -1280,6 +1280,12 @@ app.post("/webhooks/telnyx", async (req, res) => {
         ctx.ttsState = "speaking";
         ctx.speakStartedAt = now;
         console.log(`[TTS] 🔊 call.speak.started - ttsState='speaking' (callControlId: ${callControlId})`);
+
+        // Reset silence timer when AI starts speaking
+        // This ensures silence isn't measured during AI speech
+        if (ctx.humanDetection) {
+          humanDetection.resetSilenceAfterAssistantSpeech(ctx.humanDetection);
+        }
       } else {
         console.log(`[TTS] 🔊 call.speak.started - local context not found, updating Redis only (callControlId: ${callControlId})`);
       }
@@ -1298,6 +1304,12 @@ app.post("/webhooks/telnyx", async (req, res) => {
       if (ctx) {
         ctx.ttsState = "idle";
         console.log(`[TTS] ✅ call.speak.ended - ttsState='idle' (callControlId: ${callControlId})`);
+
+        // Reset silence timer so hold threshold counts from when AI stopped speaking
+        // This prevents the silence duration from incorrectly including AI speech time
+        if (ctx.humanDetection) {
+          humanDetection.resetSilenceAfterAssistantSpeech(ctx.humanDetection);
+        }
 
         // Log assistant transcript - estimate actual spoken portion if interrupted
         if (ctx.currentSpeakText && ctx.speakStartedAt) {
