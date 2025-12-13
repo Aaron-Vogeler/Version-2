@@ -11,7 +11,7 @@ import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall, de
 import * as humanDetection from "./pipeline/humanDetection";
 import { synthesizeSpeech, stopSpeaking, hangupCall, sendDtmf } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
-import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording } from "./utils/supabase";
+import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording, insertLlmLog } from "./utils/supabase";
 import * as sharedState from "./sharedState";
 import {
   createMulawStereoWav,
@@ -1767,6 +1767,27 @@ wss.on("connection", async (ws) => {
                   ctx.isIvrMode = true;
                   ctx.ivrConfidence = 0.9;
                 }
+
+                // Log quick pattern match to Supabase for dashboard visibility
+                if (ctx.callId) {
+                  insertLlmLog({
+                    call_id: ctx.callId,
+                    request_type: "receiver_classification",
+                    model: "pattern-match",
+                    temperature: 0,
+                    max_tokens: 0,
+                    system_prompt: "Quick pattern-based classification (no LLM call)",
+                    messages: [],
+                    user_input: transcript,
+                    assistant_response: JSON.stringify({ receiver: quickResult, confidence: 0.9, reason: "pattern match" }),
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    latency_ms: 0,
+                  }).catch((err) => {
+                    console.error(`[${ctx.callId}] Failed to log quick pattern match:`, err);
+                  });
+                }
               } else {
                 // Need LLM classification - run async
                 humanDetection.transitionState(ctx.humanDetection!, "CHECKING", "awaiting LLM classification");
@@ -1914,6 +1935,27 @@ wss.on("connection", async (ws) => {
                     if (quickResult === "ivr") {
                       ctx.isIvrMode = true;
                       ctx.ivrConfidence = 0.9;
+                    }
+
+                    // Log quick pattern match to Supabase for dashboard visibility
+                    if (ctx.callId) {
+                      insertLlmLog({
+                        call_id: ctx.callId,
+                        request_type: "receiver_classification",
+                        model: "pattern-match",
+                        temperature: 0,
+                        max_tokens: 0,
+                        system_prompt: "Quick pattern-based classification (no LLM call)",
+                        messages: [],
+                        user_input: transcript,
+                        assistant_response: JSON.stringify({ receiver: quickResult, confidence: 0.9, reason: "pattern match" }),
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                        latency_ms: 0,
+                      }).catch((err) => {
+                        console.error(`[${ctx.callId}] Failed to log quick pattern match:`, err);
+                      });
                     }
                   } else {
                     // Need LLM classification
