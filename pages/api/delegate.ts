@@ -29,7 +29,7 @@ export default async function handler(
 
   try {
     // Validate request body
-    const { goal, context, to_number, custom_system_prompt, rolling_summary_prompt, tts_debounce_ms, barge_in_cooldown_ms, caller_utterance_flush_ms, hold_check_in_interval_ms, hold_max_check_ins, ivr_debounce_ms, ivr_utterance_flush_ms, ivr_dtmf_min_pause_ms, ivr_dtmf_duration_ms, ivr_auto_detect_threshold, ivr_response_timeout_ms, ivr_max_dtmf_retries, ivr_disable_barge_in_grace_period, model, temperature, max_tokens, top_p, reasoning, stream, json_mode } = req.body;
+    const { goal, context, to_number, custom_system_prompt, rolling_summary_prompt, tts_debounce_ms, barge_in_cooldown_ms, caller_utterance_flush_ms, hold_check_in_interval_ms, hold_max_check_ins, ivr_debounce_ms, ivr_utterance_flush_ms, ivr_dtmf_min_pause_ms, ivr_dtmf_duration_ms, ivr_auto_detect_threshold, ivr_response_timeout_ms, ivr_max_dtmf_retries, ivr_disable_barge_in_grace_period, human_detection_enabled, human_detection_utterance_flush_ms, human_detection_human_wait_ms, human_detection_ivr_wait_ms, human_detection_min_utterances, human_detection_hold_silence_ms, human_detection_human_turns_after_hold, human_detection_max_unsure, human_detection_classification_prompt, model, temperature, max_tokens, top_p, reasoning, stream, json_mode } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
@@ -102,6 +102,17 @@ export default async function handler(
         ivrResponseTimeoutMs: ivr_response_timeout_ms,
         ivrMaxDtmfRetries: ivr_max_dtmf_retries,
         ivrDisableBargeInGracePeriod: ivr_disable_barge_in_grace_period,
+        // Human Detection settings (IVR vs Human state machine)
+        humanDetectionEnabled: human_detection_enabled,
+        humanDetectionUtteranceFlushMs: human_detection_utterance_flush_ms,
+        humanDetectionHumanWaitMs: human_detection_human_wait_ms,
+        humanDetectionIvrWaitMs: human_detection_ivr_wait_ms,
+        humanDetectionMinUtterances: human_detection_min_utterances,
+        humanDetectionHoldSilenceMs: human_detection_hold_silence_ms,
+        humanDetectionHumanTurnsAfterHold: human_detection_human_turns_after_hold,
+        humanDetectionMaxUnsure: human_detection_max_unsure,
+        humanDetectionClassificationPrompt: human_detection_classification_prompt,
+        // LLM settings
         model: model,
         temperature: temperature,
         maxTokens: max_tokens,

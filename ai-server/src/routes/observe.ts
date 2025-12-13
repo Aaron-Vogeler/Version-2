@@ -85,10 +85,6 @@ export function hasObservers(callControlId: string): boolean {
   return (observersByCall.get(callControlId)?.size || 0) > 0;
 }
 
-// Track audio packet count for debug logging (don't spam logs)
-let audioPacketCount = 0;
-let lastAudioLogTime = 0;
-
 /**
  * Broadcast audio data to all observers of a call
  * @param callControlId - The call to broadcast to
@@ -97,15 +93,6 @@ let lastAudioLogTime = 0;
  */
 export function broadcastAudio(callControlId: string, track: 'inbound' | 'outbound', audioData: Buffer): void {
   const observers = observersByCall.get(callControlId);
-
-  // Log periodically (every 5 seconds) to avoid spam
-  audioPacketCount++;
-  const now = Date.now();
-  if (now - lastAudioLogTime > 5000) {
-    console.log(`[Observer DEBUG] broadcastAudio called ${audioPacketCount} times, callControlId: ${callControlId}, observers: ${observers?.size || 0}`);
-    audioPacketCount = 0;
-    lastAudioLogTime = now;
-  }
 
   if (!observers || observers.size === 0) return;
 

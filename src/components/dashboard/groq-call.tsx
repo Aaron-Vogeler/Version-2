@@ -78,7 +78,7 @@ interface ContextConfig {
 interface LlmLog {
   id: string;
   call_id: string;
-  request_type: 'chat' | 'summary';
+  request_type: 'chat' | 'summary' | 'party_detection' | 'receiver_classification';
   model: string;
   temperature?: number;
   max_tokens?: number;
@@ -170,6 +170,17 @@ interface SavedGroqSettings {
     maxDtmfRetries?: number;
     disableBargeInGracePeriod?: boolean;
   };
+  humanDetectionSettings?: {
+    enabled?: boolean;
+    utteranceFlushMs?: number;
+    humanWaitMs?: number;
+    ivrWaitMs?: number;
+    minUtterances?: number;
+    holdSilenceMs?: number;
+    humanTurnsAfterHold?: number;
+    maxUnsure?: number;
+    classificationPrompt?: string;
+  };
 }
 
 interface GroqCallProps {
@@ -247,6 +258,51 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   });
   const [showIvrSettings, setShowIvrSettings] = useState(false);
 
+  // Human Detection settings (IVR vs Human state machine)
+  const DEFAULT_CLASSIFICATION_PROMPT = `Analyze this phone call transcript to determine if the speaker is a human or an IVR/automated system.
+
+TRANSCRIPT:
+"{{TRANSCRIPT}}"
+
+CLASSIFICATION CRITERIA:
+
+IVR/Automated System indicators:
+- Menu prompts: "Press 1 for...", "For sales, press...", "Dial 2"
+- Scripted greetings: "Thank you for calling...", "Your call is important"
+- Hold messages: "Please hold", "Your estimated wait time", "All agents are busy"
+- Input requests: "Enter your account number", "followed by pound"
+- Error responses: "Invalid entry", "I didn't understand that"
+- Robotic/scripted speech with no natural variation
+
+Human indicators:
+- Natural conversational patterns with filler words (um, uh, like, actually)
+- Personal introductions: "Hi, this is John", "How can I help you?"
+- Responsive questions about the caller
+- Natural speech variations and pauses
+- Informal language and varied sentence structure
+- Emotional responses or empathy
+
+Respond with ONLY valid JSON in this exact format:
+{"receiver": "human" | "ivr" | "unsure", "confidence": 0.0-1.0, "reason": "brief explanation"}
+
+Examples:
+{"receiver": "ivr", "confidence": 0.95, "reason": "menu prompt with press options"}
+{"receiver": "human", "confidence": 0.85, "reason": "natural greeting with personal introduction"}
+{"receiver": "unsure", "confidence": 0.5, "reason": "too short to determine"}`;
+
+  const [humanDetectionSettings, setHumanDetectionSettings] = useState({
+    enabled: true,
+    utteranceFlushMs: 500,
+    humanWaitMs: 1500,
+    ivrWaitMs: 3000,
+    minUtterances: 1,
+    holdSilenceMs: 5000,
+    humanTurnsAfterHold: 1,
+    maxUnsure: 3,
+    classificationPrompt: DEFAULT_CLASSIFICATION_PROMPT,
+  });
+  const [showHumanDetectionSettings, setShowHumanDetectionSettings] = useState(false);
+
   // UI state
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [expandedSystemPrompt, setExpandedSystemPrompt] = useState(false);
@@ -293,6 +349,12 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         setIvrSettings(prev => ({
           ...prev,
           ...groqSettings.ivrSettings,
+        }));
+      }
+      if (groqSettings.humanDetectionSettings) {
+        setHumanDetectionSettings(prev => ({
+          ...prev,
+          ...groqSettings.humanDetectionSettings,
         }));
       }
     }
@@ -516,6 +578,17 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
           ivr_response_timeout_ms: ivrSettings.responseTimeoutMs,
           ivr_max_dtmf_retries: ivrSettings.maxDtmfRetries,
           ivr_disable_barge_in_grace_period: ivrSettings.disableBargeInGracePeriod,
+          // Human Detection settings (IVR vs Human state machine)
+          human_detection_enabled: humanDetectionSettings.enabled,
+          human_detection_utterance_flush_ms: humanDetectionSettings.utteranceFlushMs,
+          human_detection_human_wait_ms: humanDetectionSettings.humanWaitMs,
+          human_detection_ivr_wait_ms: humanDetectionSettings.ivrWaitMs,
+          human_detection_min_utterances: humanDetectionSettings.minUtterances,
+          human_detection_hold_silence_ms: humanDetectionSettings.holdSilenceMs,
+          human_detection_human_turns_after_hold: humanDetectionSettings.humanTurnsAfterHold,
+          human_detection_max_unsure: humanDetectionSettings.maxUnsure,
+          human_detection_classification_prompt: humanDetectionSettings.classificationPrompt,
+          // LLM settings
           model: selectedModel,
           temperature: temperature,
           max_tokens: maxTokens,
@@ -628,6 +701,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
       rollingSummaryPrompt,
       callControlSettings,
       ivrSettings,
+      humanDetectionSettings,
     };
 
     try {
@@ -1241,6 +1315,161 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
         )}
       </div>
 
+      {/* Human Detection Settings */}
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => setShowHumanDetectionSettings(!showHumanDetectionSettings)}
+          className="flex items-center justify-between w-full text-sm font-medium hover:text-foreground transition-colors"
+        >
+          <span className="flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            Human Detection Settings
+          </span>
+          {showHumanDetectionSettings ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </button>
+        {showHumanDetectionSettings && (
+          <div className="space-y-3 pl-4 border-l-2 border-border/50">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Enable Human Detection</Label>
+              <input
+                type="checkbox"
+                checked={humanDetectionSettings.enabled}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, enabled: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">State machine to detect if receiver is human or IVR</p>
+
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Response Wait Times</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Human Wait (ms)</Label>
+              <Input
+                type="number"
+                min="500"
+                max="5000"
+                step="100"
+                value={humanDetectionSettings.humanWaitMs}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, humanWaitMs: parseInt(e.target.value) || 1500 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Wait time before responding to humans (default: 1500ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">IVR/Unsure Wait (ms)</Label>
+              <Input
+                type="number"
+                min="1000"
+                max="10000"
+                step="250"
+                value={humanDetectionSettings.ivrWaitMs}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, ivrWaitMs: parseInt(e.target.value) || 3000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Wait time for IVR/unsure receivers - longer to avoid interrupting menus (default: 3000ms)</p>
+            </div>
+
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Classification Thresholds</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Utterance Flush (ms)</Label>
+              <Input
+                type="number"
+                min="200"
+                max="2000"
+                step="100"
+                value={humanDetectionSettings.utteranceFlushMs}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, utteranceFlushMs: parseInt(e.target.value) || 500 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Non-speech duration to trigger classification (default: 500ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Min Utterances</Label>
+              <Input
+                type="number"
+                min="1"
+                max="5"
+                step="1"
+                value={humanDetectionSettings.minUtterances}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, minUtterances: parseInt(e.target.value) || 1 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Minimum utterances before first classification (default: 1)</p>
+            </div>
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Hold Detection</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Hold Silence Threshold (ms)</Label>
+              <Input
+                type="number"
+                min="2000"
+                max="15000"
+                step="1000"
+                value={humanDetectionSettings.holdSilenceMs}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, holdSilenceMs: parseInt(e.target.value) || 5000 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Extended silence duration to detect hold (default: 5000ms)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Human Turns After Hold</Label>
+              <Input
+                type="number"
+                min="1"
+                max="5"
+                step="1"
+                value={humanDetectionSettings.humanTurnsAfterHold}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, humanTurnsAfterHold: parseInt(e.target.value) || 1 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Human turns required after hold to confirm human (default: 1)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Max Unsure Classifications</Label>
+              <Input
+                type="number"
+                min="1"
+                max="10"
+                step="1"
+                value={humanDetectionSettings.maxUnsure}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, maxUnsure: parseInt(e.target.value) || 3 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Max consecutive &quot;unsure&quot; before defaulting to IVR behavior (default: 3)</p>
+            </div>
+
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Classification Prompt</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">LLM Classification Prompt</Label>
+              <textarea
+                value={humanDetectionSettings.classificationPrompt}
+                onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, classificationPrompt: e.target.value }))}
+                className="w-full h-48 text-xs font-mono p-2 border rounded-md bg-background resize-y"
+                placeholder="Enter custom classification prompt..."
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Customize the LLM prompt for human/IVR classification. Use <code className="bg-muted px-1 rounded">{"{{TRANSCRIPT}}"}</code> as placeholder for the transcript.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setHumanDetectionSettings(prev => ({ ...prev, classificationPrompt: DEFAULT_CLASSIFICATION_PROMPT }))}
+                className="text-xs h-7 mt-1"
+              >
+                Reset to Default
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Save & Reset Buttons */}
       <div className="flex gap-2">
         <Button
@@ -1633,18 +1862,23 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <Badge
-                      variant={log.request_type === 'summary' ? 'secondary' : 'default'}
-                      className="text-xs"
+                      variant={log.request_type === 'summary' ? 'secondary' : log.request_type === 'receiver_classification' ? 'outline' : 'default'}
+                      className={`text-xs ${log.request_type === 'receiver_classification' ? 'border-purple-500 text-purple-600 dark:text-purple-400' : ''}`}
                     >
                       {log.request_type === 'summary' ? (
                         <>
                           <FileText className="h-3 w-3 mr-1" />
-                          Summary
+                          SUMMARY
+                        </>
+                      ) : log.request_type === 'receiver_classification' || log.request_type === 'party_detection' ? (
+                        <>
+                          <Brain className="h-3 w-3 mr-1" />
+                          DETECT
                         </>
                       ) : (
                         <>
                           <MessageSquare className="h-3 w-3 mr-1" />
-                          Chat
+                          CHAT
                         </>
                       )}
                     </Badge>

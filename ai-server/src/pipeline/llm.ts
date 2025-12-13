@@ -2,6 +2,11 @@ import OpenAI from "openai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
 import { insertLlmLog } from "../utils/supabase";
+import {
+  buildClassificationPrompt,
+  parseClassificationResponse,
+  type ReceiverClassification,
+} from "./humanDetection";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -269,6 +274,79 @@ Respond with ONLY "True" if this sounds like an IVR/AI/robotic system, or "False
     );
     // Default to human on error (more conservative - use normal timing)
     return false;
+  }
+}
+
+/**
+ * Classify the receiver as human, IVR, or unsure using LLM.
+ * This is the enhanced version that returns structured classification with confidence.
+ * @param transcriptText - The transcript text to analyze
+ * @param callId - Optional call ID for logging
+ * @param customPrompt - Optional custom prompt template (uses {{TRANSCRIPT}} placeholder)
+ * @returns Classification result with receiver type, confidence, and reason
+ */
+export async function classifyReceiver(
+  transcriptText: string,
+  callId?: string,
+  customPrompt?: string | null
+): Promise<ReceiverClassification> {
+  const prompt = buildClassificationPrompt(transcriptText, customPrompt);
+
+  const systemPrompt = `You are an expert at analyzing phone call transcripts to determine if the speaker is a human or an automated IVR system. You must respond with ONLY valid JSON in the exact format specified. Do not include any other text.`;
+
+  const messages: Array<{ role: "system" | "user"; content: string }> = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: prompt },
+  ];
+
+  try {
+    const startTime = Date.now();
+    const response = await groq.chat.completions.create({
+      model: config.groq.model,
+      messages,
+      temperature: 0.1, // Low temperature for consistent classification
+      max_tokens: 100, // Enough for JSON response
+    });
+    const latencyMs = Date.now() - startTime;
+
+    const rawResponse = response.choices[0]?.message?.content?.trim() || "";
+    const classification = parseClassificationResponse(rawResponse);
+
+    console.log(
+      `[RECEIVER-CLASSIFY] 🔍 Classification result: ${classification.receiver.toUpperCase()} ` +
+      `(confidence: ${classification.confidence?.toFixed(2) ?? "N/A"}, ` +
+      `reason: "${classification.reason || "none"}", latency: ${latencyMs}ms)`
+    );
+
+    // Log the LLM interaction for debugging
+    if (callId) {
+      insertLlmLog({
+        call_id: callId,
+        request_type: "receiver_classification",
+        model: config.groq.model,
+        temperature: 0.1,
+        max_tokens: 100,
+        system_prompt: systemPrompt,
+        messages: messages,
+        user_input: transcriptText,
+        assistant_response: rawResponse,
+        prompt_tokens: response.usage?.prompt_tokens,
+        completion_tokens: response.usage?.completion_tokens,
+        total_tokens: response.usage?.total_tokens,
+        latency_ms: latencyMs,
+      }).catch((err) => {
+        console.error(`[${callId}] Failed to log receiver classification:`, err);
+      });
+    }
+
+    return classification;
+  } catch (error) {
+    console.error(
+      `[RECEIVER-CLASSIFY] ❌ Classification failed:`,
+      error instanceof Error ? error.message : error
+    );
+    // Default to unsure on error - this will trigger additional checks
+    return { receiver: "unsure", reason: "LLM call failed" };
   }
 }
 

@@ -412,7 +412,7 @@ export async function uploadCustomCallRecording(
  */
 export interface LlmLogRecord {
   call_id: string;
-  request_type: "chat" | "summary" | "party_detection";
+  request_type: "chat" | "summary" | "party_detection" | "receiver_classification";
   model: string;
   temperature?: number;
   max_tokens?: number;
@@ -445,10 +445,14 @@ export async function insertLlmLog(
   }
 
   // Validate required fields
-  if (!log.call_id || !log.messages || log.messages.length === 0) {
+  // For pattern-match logs, messages can be empty but user_input is required
+  const hasMessages = log.messages && log.messages.length > 0;
+  const isPatternMatch = log.model === "pattern-match" && log.user_input;
+
+  if (!log.call_id || (!hasMessages && !isPatternMatch)) {
     return {
       success: false,
-      error: "Missing required fields: call_id, messages",
+      error: "Missing required fields: call_id, messages (or user_input for pattern-match)",
     };
   }
 
