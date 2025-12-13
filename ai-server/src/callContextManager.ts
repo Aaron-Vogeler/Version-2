@@ -146,6 +146,8 @@ export interface CallContext {
   humanDetection?: HumanDetectionState;
   /** Current receiver state for quick access */
   receiverState?: ReceiverState;
+  /** Timer for classification after utterance flush silence */
+  classificationTimer?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -317,6 +319,10 @@ export function clearContext(callId: string): void {
     // Clean up hold check-in timer
     if (context.holdCheckInTimer) {
       clearTimeout(context.holdCheckInTimer);
+    }
+    // Clean up classification timer
+    if (context.classificationTimer) {
+      clearTimeout(context.classificationTimer);
     }
     // Reset TTS state
     context.ttsState = "idle";
