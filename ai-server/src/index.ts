@@ -1756,8 +1756,8 @@ wss.on("connection", async (ws) => {
             if (shouldClassify && humanDetection.canClassify(callContext.humanDetection, callContext)) {
               console.log(`[HUMAN-DETECT] 📝 Buffered transcript, scheduling classification in ${classificationFlushMs}ms`);
 
-              // Capture context for closure
-              const ctx = callContext;
+              // Capture websocket reference for timer rescheduling
+              const wsRef = ws;
 
               // Schedule classification after utterance flush silence
               callContext.classificationTimer = setTimeout(() => {
@@ -1788,6 +1788,23 @@ wss.on("connection", async (ws) => {
                   if (quickResult === "ivr") {
                     ctx.isIvrMode = true;
                     ctx.ivrConfidence = 0.9;
+                  } else if (quickResult === "human") {
+                    ctx.isIvrMode = false;
+                    // RESCHEDULE debounce timer with shorter human wait time
+                    if (ctx.ttsDebounceTimer) {
+                      clearTimeout(ctx.ttsDebounceTimer);
+                      const humanWaitMs = humanDetection.getWaitTimeMs(ctx.humanDetection, ctx);
+                      const currentSeq = ctx.turnSeq || 0;
+                      console.log(`[HUMAN-DETECT] 👤 Rescheduling debounce timer: ${humanWaitMs}ms (was IVR wait)`);
+                      ctx.ttsDebounceTimer = setTimeout(() => {
+                        const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
+                        if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
+                          console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+                          ctx.lastUserTranscript = completeTurn;
+                          scheduleTtsResponse(ctx, wsRef, currentSeq);
+                        }
+                      }, humanWaitMs);
+                    }
                   }
 
                   // Log quick pattern match to Supabase for dashboard visibility
@@ -1835,6 +1852,21 @@ wss.on("connection", async (ws) => {
                     } else if (classification.receiver === "human") {
                       ctx.isIvrMode = false;
                       console.log(`[HUMAN-DETECT] 👤 Human detected - using shorter wait times`);
+                      // RESCHEDULE debounce timer with shorter human wait time
+                      if (ctx.ttsDebounceTimer) {
+                        clearTimeout(ctx.ttsDebounceTimer);
+                        const humanWaitMs = humanDetection.getWaitTimeMs(ctx.humanDetection, ctx);
+                        const currentSeq = ctx.turnSeq || 0;
+                        console.log(`[HUMAN-DETECT] 👤 Rescheduling debounce timer: ${humanWaitMs}ms (was IVR wait)`);
+                        ctx.ttsDebounceTimer = setTimeout(() => {
+                          const completeTurn = (ctx.accumulatedTurnText || []).join(" ").trim();
+                          if (completeTurn && wsRef.readyState === WebSocket.OPEN) {
+                            console.log(`[TRANSCRIPT] Debounce fired - sending complete turn to LLM (${ctx.accumulatedTurnText?.length || 0} segments): "${completeTurn}"`);
+                            ctx.lastUserTranscript = completeTurn;
+                            scheduleTtsResponse(ctx, wsRef, currentSeq);
+                          }
+                        }, humanWaitMs);
+                      }
                     }
                   }).catch((err) => {
                     console.error(`[HUMAN-DETECT] ❌ Classification failed:`, err);
@@ -1977,6 +2009,8 @@ wss.on("connection", async (ws) => {
                     if (quickResult === "ivr") {
                       ctx.isIvrMode = true;
                       ctx.ivrConfidence = 0.9;
+                    } else if (quickResult === "human") {
+                      ctx.isIvrMode = false;
                     }
 
                     // Log quick pattern match to Supabase for dashboard visibility
