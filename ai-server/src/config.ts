@@ -138,6 +138,30 @@ const config = {
   },
 
   // =============================================================================
+  // HUMAN DETECTION SETTINGS (IVR vs Human State Machine)
+  // =============================================================================
+  humanDetection: {
+    // Non-speech duration to trigger utterance flush (ms) - from VAD
+    utteranceFlushMs: getEnvInt("HUMAN_DETECTION_UTTERANCE_FLUSH_MS", 500),
+    // Wait time for human receiver before AI responds (ms) - shorter for natural conversation
+    humanWaitMs: getEnvInt("HUMAN_DETECTION_HUMAN_WAIT_MS", 1500),
+    // Wait time for IVR/unsure receiver before AI responds (ms) - longer to avoid interrupting
+    ivrWaitMs: getEnvInt("HUMAN_DETECTION_IVR_WAIT_MS", 3000),
+    // Minimum utterances needed before first classification attempt
+    minUtterancesForCheck: getEnvInt("HUMAN_DETECTION_MIN_UTTERANCES", 1),
+    // Minimum transcript length (chars) for classification
+    minTranscriptLength: getEnvInt("HUMAN_DETECTION_MIN_TRANSCRIPT_LENGTH", 10),
+    // Extended silence threshold for hold detection (ms)
+    holdSilenceThresholdMs: getEnvInt("HUMAN_DETECTION_HOLD_SILENCE_MS", 5000),
+    // Number of human turns required after hold to confirm human
+    humanTurnsRequiredAfterHold: getEnvInt("HUMAN_DETECTION_HUMAN_TURNS_AFTER_HOLD", 1),
+    // Maximum consecutive "unsure" classifications before defaulting to IVR behavior
+    maxUnsureBeforeIvr: getEnvInt("HUMAN_DETECTION_MAX_UNSURE", 3),
+    // Enable human detection state machine (set to false to use legacy detection)
+    enabled: getEnv("HUMAN_DETECTION_ENABLED", "true") === "true",
+  },
+
+  // =============================================================================
   // LLM CONFIG
   // =============================================================================
   llm: {

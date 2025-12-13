@@ -412,7 +412,7 @@ export async function uploadCustomCallRecording(
  */
 export interface LlmLogRecord {
   call_id: string;
-  request_type: "chat" | "summary" | "party_detection";
+  request_type: "chat" | "summary" | "party_detection" | "receiver_classification";
   model: string;
   temperature?: number;
   max_tokens?: number;

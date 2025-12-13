@@ -7,7 +7,8 @@ import config from "./config";
 import outboundCallRouter from "./routes/outbound-call";
 import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBeforeMulaw } from "./pipeline/audio";
 import { createDeepgramClient } from "./pipeline/stt";
-import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall, detectPartyType } from "./pipeline/llm";
+import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall, detectPartyType, classifyReceiver } from "./pipeline/llm";
+import * as humanDetection from "./pipeline/humanDetection";
 import { synthesizeSpeech, stopSpeaking, hangupCall, sendDtmf } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording } from "./utils/supabase";
@@ -524,6 +525,28 @@ async function scheduleTtsResponse(
     }
     ivrUtils.updateIvrState(callContext, ivrAnalysis);
 
+    // ============================================================================
+    // HOLD DETECTION: Check for hold patterns and update human detection state
+    // ============================================================================
+    if (callContext.humanDetection) {
+      // Check if this looks like a hold message
+      const holdIndicators = humanDetection.detectHoldIndicators(userText);
+      if (holdIndicators.hasHoldMessage || ivrAnalysis.isHoldMessage) {
+        console.log(`[HUMAN-DETECT] 📞 Hold pattern detected in transcript`);
+        humanDetection.enterHold(callContext.humanDetection, "hold message detected");
+        callContext.receiverState = callContext.humanDetection.receiverState;
+      }
+
+      // Check if extended silence suggests hold
+      if (humanDetection.isLikelyOnHold(callContext.humanDetection, userText)) {
+        if (callContext.receiverState !== "HOLD") {
+          console.log(`[HUMAN-DETECT] 📞 Entering hold state (extended silence or hold indicators)`);
+          humanDetection.enterHold(callContext.humanDetection, "extended silence or hold patterns");
+          callContext.receiverState = callContext.humanDetection.receiverState;
+        }
+      }
+    }
+
     // Append user turn to the call context if callId is available
     if (callContext.callId) {
       contextMgr.appendTurn(callContext.callId, {
@@ -534,6 +557,23 @@ async function scheduleTtsResponse(
 
       // NOTE: User transcript logging is now handled in Deepgram Transcript handler
       // Only final recognized speech (is_final=true) is logged via insertTranscriptSegment()
+    }
+
+    // ============================================================================
+    // HOLD STATE: Skip LLM processing when on hold (don't interrupt)
+    // ============================================================================
+    if (callContext.receiverState === "HOLD") {
+      console.log(`[HUMAN-DETECT] 📞 On HOLD - skipping LLM processing (not interrupting)`);
+      // Don't clear transcript - we may need to re-check after hold ends
+      return;
+    }
+
+    // ============================================================================
+    // HUMAN DETECTION: Check if we should stay silent based on state
+    // ============================================================================
+    if (callContext.humanDetection && humanDetection.shouldStaySilent(callContext.humanDetection)) {
+      console.log(`[HUMAN-DETECT] 🤫 Staying silent (state: ${callContext.receiverState}) - waiting for more data`);
+      return;
     }
 
     // Send to LLM
@@ -1463,10 +1503,35 @@ wss.on("connection", async (ws) => {
   // (triggers on any sound, not just actual words). Instead, barge-in is now
   // handled in the Transcript event handler, which only fires when actual words
   // are detected by Deepgram's speech recognition.
+  //
+  // HUMAN DETECTION: We DO use VAD events to track speech/silence for:
+  // - Utterance flushing (0.5s non-speech → flush utterance)
+  // - Hold detection (extended silence + hold patterns)
   dgLive.on(LiveTranscriptionEvents.SpeechStarted, () => {
     // Log for debugging, but don't trigger barge-in on VAD alone
     if (callContext?.ttsState === "speaking") {
       console.log("[VAD] SpeechStarted detected while AI speaking (waiting for actual words before barge-in)");
+    }
+
+    // Update human detection VAD state
+    if (callContext?.humanDetection) {
+      humanDetection.updateVadState(callContext.humanDetection, true);
+
+      // If we were on HOLD and speech returns, exit hold mode
+      if (callContext.receiverState === "HOLD") {
+        console.log("[VAD] Speech detected - exiting hold mode");
+        humanDetection.exitHold(callContext.humanDetection);
+        callContext.receiverState = callContext.humanDetection.receiverState;
+      }
+    }
+  });
+
+  // Track speech ending for human detection
+  dgLive.on(LiveTranscriptionEvents.UtteranceEnd, () => {
+    // Update human detection VAD state - speech ended
+    if (callContext?.humanDetection) {
+      humanDetection.updateVadState(callContext.humanDetection, false);
+      console.log(`[VAD] UtteranceEnd - silence duration now tracking`);
     }
   });
 
@@ -1661,29 +1726,71 @@ wss.on("connection", async (ws) => {
           callContext.accumulatedTurnText.push(fullUtterance);
           console.log(`[TRANSCRIPT] Accumulated turn segment #${callContext.accumulatedTurnText.length}: "${fullUtterance}"`);
 
-          // PARTY DETECTION: On the first transcript segment, detect if we're talking to a human or IVR
-          if (!callContext.partyDetectionComplete && callContext.accumulatedTurnText.length === 1) {
-            console.log(`[PARTY-DETECT] 🎯 First transcript segment received, triggering party detection...`);
-            // Run detection asynchronously (don't block the response flow)
-            const ctx = callContext;
-            detectPartyType(fullUtterance, ctx.callId).then((isRobotic) => {
-              ctx.partyDetectionComplete = true;
-              ctx.detectedPartyType = isRobotic ? "robotic" : "human";
-              ctx.partyDetectionTimestamp = Date.now();
-              console.log(`[PARTY-DETECT] ✅ Detection complete: ${ctx.detectedPartyType.toUpperCase()}`);
+          // HUMAN DETECTION: Enhanced receiver classification using state machine
+          // Uses the new humanDetection module for more accurate human/IVR detection
+          if (callContext.humanDetection) {
+            // Add transcript to detection buffer
+            humanDetection.addToTranscriptBuffer(callContext.humanDetection, fullUtterance);
 
-              // If robotic was detected, also set isIvrMode for consistency with existing pattern-based detection
-              if (isRobotic) {
-                ctx.isIvrMode = true;
-                ctx.ivrConfidence = 1.0; // High confidence from LLM detection
-                console.log(`[PARTY-DETECT] 🤖 IVR mode enabled based on LLM detection`);
+            // Check if we should classify (first segment, UNKNOWN state, CHECKING state, or after hold)
+            const shouldClassify =
+              callContext.receiverState === "UNKNOWN" ||
+              callContext.receiverState === "CHECKING" ||
+              callContext.humanDetection.justExitedHold;
+
+            if (shouldClassify && humanDetection.canClassify(callContext.humanDetection)) {
+              console.log(`[HUMAN-DETECT] 🎯 Triggering receiver classification (state: ${callContext.receiverState})...`);
+              const ctx = callContext;
+              const transcript = humanDetection.getRecentTranscript(ctx.humanDetection!);
+
+              // First try quick pattern check (fast, no LLM call needed)
+              const quickResult = humanDetection.quickPatternCheck(transcript);
+              if (quickResult) {
+                console.log(`[HUMAN-DETECT] ⚡ Quick pattern match: ${quickResult.toUpperCase()}`);
+                humanDetection.processClassification(ctx.humanDetection!, {
+                  receiver: quickResult,
+                  confidence: 0.9,
+                  reason: "pattern match",
+                });
+                ctx.receiverState = ctx.humanDetection!.receiverState;
+
+                // Update legacy fields for compatibility
+                ctx.partyDetectionComplete = true;
+                ctx.detectedPartyType = quickResult === "human" ? "human" : "robotic";
+                ctx.partyDetectionTimestamp = Date.now();
+                if (quickResult === "ivr") {
+                  ctx.isIvrMode = true;
+                  ctx.ivrConfidence = 0.9;
+                }
+              } else {
+                // Need LLM classification - run async
+                humanDetection.transitionState(ctx.humanDetection!, "CHECKING", "awaiting LLM classification");
+                ctx.receiverState = ctx.humanDetection!.receiverState;
+
+                classifyReceiver(transcript, ctx.callId).then((classification) => {
+                  humanDetection.processClassification(ctx.humanDetection!, classification);
+                  ctx.receiverState = ctx.humanDetection!.receiverState;
+
+                  // Update legacy fields for compatibility
+                  ctx.partyDetectionComplete = true;
+                  ctx.detectedPartyType = classification.receiver === "human" ? "human" : "robotic";
+                  ctx.partyDetectionTimestamp = Date.now();
+
+                  // If IVR detected, also set isIvrMode for backward compatibility
+                  if (classification.receiver === "ivr") {
+                    ctx.isIvrMode = true;
+                    ctx.ivrConfidence = classification.confidence ?? 0.8;
+                    console.log(`[HUMAN-DETECT] 🤖 IVR mode enabled based on LLM classification`);
+                  } else if (classification.receiver === "human") {
+                    ctx.isIvrMode = false;
+                    console.log(`[HUMAN-DETECT] 👤 Human detected - using shorter wait times`);
+                  }
+                }).catch((err) => {
+                  console.error(`[HUMAN-DETECT] ❌ Classification failed:`, err);
+                  // On error, stay in CHECKING state for another attempt
+                });
               }
-            }).catch((err) => {
-              console.error(`[PARTY-DETECT] ❌ Detection failed:`, err);
-              // Mark as complete even on error to prevent repeated attempts
-              ctx.partyDetectionComplete = true;
-              ctx.detectedPartyType = "human"; // Default to human on error
-            });
+            }
           }
         }
 
@@ -1693,14 +1800,30 @@ wss.on("connection", async (ws) => {
           clearTimeout(callContext.ttsDebounceTimer);
         }
 
-        // Use IVR-optimized timing if detected as robotic or in IVR mode
-        const debounceMs = ivrUtils.getDebounceMs(callContext);
-        if (callContext.detectedPartyType === "robotic") {
-          console.log(`[PARTY-DETECT] ⚡ Using fast debounce: ${debounceMs}ms (LLM detected ROBOTIC)`);
-        } else if (callContext.isIvrMode) {
-          console.log(`[IVR] ⚡ Using fast debounce: ${debounceMs}ms (pattern-based IVR mode)`);
+        // Use human detection state machine for wait times
+        // LIKELY_HUMAN: shorter wait (~1.5s) for natural conversation
+        // LIKELY_IVR/CHECKING/UNKNOWN: longer wait (~3s) to avoid interrupting menus
+        let debounceMs: number;
+        if (callContext.humanDetection) {
+          debounceMs = humanDetection.getWaitTimeMs(callContext.humanDetection);
+          const stateLabel = callContext.receiverState || "UNKNOWN";
+          if (callContext.receiverState === "LIKELY_HUMAN") {
+            console.log(`[HUMAN-DETECT] 👤 Using human wait: ${debounceMs}ms (state: ${stateLabel})`);
+          } else if (callContext.receiverState === "LIKELY_IVR") {
+            console.log(`[HUMAN-DETECT] 🤖 Using IVR wait: ${debounceMs}ms (state: ${stateLabel})`);
+          } else {
+            console.log(`[HUMAN-DETECT] ⏳ Using default wait: ${debounceMs}ms (state: ${stateLabel})`);
+          }
         } else {
-          console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (HUMAN mode, per-call: ${callContext.ttsDebounceMs ?? 'default'})`);
+          // Fallback to legacy IVR timing system
+          debounceMs = ivrUtils.getDebounceMs(callContext);
+          if (callContext.detectedPartyType === "robotic") {
+            console.log(`[PARTY-DETECT] ⚡ Using fast debounce: ${debounceMs}ms (legacy ROBOTIC)`);
+          } else if (callContext.isIvrMode) {
+            console.log(`[IVR] ⚡ Using fast debounce: ${debounceMs}ms (legacy pattern-based)`);
+          } else {
+            console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (legacy HUMAN mode)`);
+          }
         }
 
         // Increment turn sequence (invalidates in-flight work from previous turns)
@@ -1755,28 +1878,62 @@ wss.on("connection", async (ws) => {
               ctx.accumulatedTurnText.push(fullUtterance);
               console.log(`[TRANSCRIPT] Accumulated turn segment #${ctx.accumulatedTurnText.length} (flush timer): "${fullUtterance}"`);
 
-              // PARTY DETECTION: On the first transcript segment, detect if we're talking to a human or IVR
-              if (!ctx.partyDetectionComplete && ctx.accumulatedTurnText.length === 1) {
-                console.log(`[PARTY-DETECT] 🎯 First transcript segment received (flush timer path), triggering party detection...`);
-                // Run detection asynchronously (don't block the response flow)
-                detectPartyType(fullUtterance, ctx.callId).then((isRobotic) => {
-                  ctx.partyDetectionComplete = true;
-                  ctx.detectedPartyType = isRobotic ? "robotic" : "human";
-                  ctx.partyDetectionTimestamp = Date.now();
-                  console.log(`[PARTY-DETECT] ✅ Detection complete: ${ctx.detectedPartyType.toUpperCase()}`);
+              // HUMAN DETECTION: Enhanced receiver classification using state machine (flush timer path)
+              if (ctx.humanDetection) {
+                // Add transcript to detection buffer
+                humanDetection.addToTranscriptBuffer(ctx.humanDetection, fullUtterance);
 
-                  // If robotic was detected, also set isIvrMode for consistency with existing pattern-based detection
-                  if (isRobotic) {
-                    ctx.isIvrMode = true;
-                    ctx.ivrConfidence = 1.0; // High confidence from LLM detection
-                    console.log(`[PARTY-DETECT] 🤖 IVR mode enabled based on LLM detection`);
+                // Check if we should classify
+                const shouldClassify =
+                  ctx.receiverState === "UNKNOWN" ||
+                  ctx.receiverState === "CHECKING" ||
+                  ctx.humanDetection.justExitedHold;
+
+                if (shouldClassify && humanDetection.canClassify(ctx.humanDetection)) {
+                  console.log(`[HUMAN-DETECT] 🎯 Triggering classification (flush timer, state: ${ctx.receiverState})...`);
+                  const transcript = humanDetection.getRecentTranscript(ctx.humanDetection);
+
+                  // First try quick pattern check
+                  const quickResult = humanDetection.quickPatternCheck(transcript);
+                  if (quickResult) {
+                    console.log(`[HUMAN-DETECT] ⚡ Quick pattern match (flush timer): ${quickResult.toUpperCase()}`);
+                    humanDetection.processClassification(ctx.humanDetection, {
+                      receiver: quickResult,
+                      confidence: 0.9,
+                      reason: "pattern match",
+                    });
+                    ctx.receiverState = ctx.humanDetection.receiverState;
+                    ctx.partyDetectionComplete = true;
+                    ctx.detectedPartyType = quickResult === "human" ? "human" : "robotic";
+                    ctx.partyDetectionTimestamp = Date.now();
+                    if (quickResult === "ivr") {
+                      ctx.isIvrMode = true;
+                      ctx.ivrConfidence = 0.9;
+                    }
+                  } else {
+                    // Need LLM classification
+                    humanDetection.transitionState(ctx.humanDetection, "CHECKING", "awaiting LLM (flush timer)");
+                    ctx.receiverState = ctx.humanDetection.receiverState;
+
+                    classifyReceiver(transcript, ctx.callId).then((classification) => {
+                      humanDetection.processClassification(ctx.humanDetection!, classification);
+                      ctx.receiverState = ctx.humanDetection!.receiverState;
+                      ctx.partyDetectionComplete = true;
+                      ctx.detectedPartyType = classification.receiver === "human" ? "human" : "robotic";
+                      ctx.partyDetectionTimestamp = Date.now();
+                      if (classification.receiver === "ivr") {
+                        ctx.isIvrMode = true;
+                        ctx.ivrConfidence = classification.confidence ?? 0.8;
+                        console.log(`[HUMAN-DETECT] 🤖 IVR mode enabled (flush timer)`);
+                      } else if (classification.receiver === "human") {
+                        ctx.isIvrMode = false;
+                        console.log(`[HUMAN-DETECT] 👤 Human detected (flush timer)`);
+                      }
+                    }).catch((err) => {
+                      console.error(`[HUMAN-DETECT] ❌ Classification failed (flush timer):`, err);
+                    });
                   }
-                }).catch((err) => {
-                  console.error(`[PARTY-DETECT] ❌ Detection failed:`, err);
-                  // Mark as complete even on error to prevent repeated attempts
-                  ctx.partyDetectionComplete = true;
-                  ctx.detectedPartyType = "human"; // Default to human on error
-                });
+                }
               }
 
               // Clear any existing TTS debounce timer
@@ -1784,14 +1941,28 @@ wss.on("connection", async (ws) => {
                 clearTimeout(ctx.ttsDebounceTimer);
               }
 
-              // Use IVR-optimized timing if detected as robotic or in IVR mode
-              const debounceMs = ivrUtils.getDebounceMs(ctx);
-              if (ctx.detectedPartyType === "robotic") {
-                console.log(`[PARTY-DETECT] ⚡ Setting TTS debounce: ${debounceMs}ms (flush timer, LLM detected ROBOTIC)`);
-              } else if (ctx.isIvrMode) {
-                console.log(`[IVR] ⚡ Setting TTS debounce: ${debounceMs}ms (flush timer, pattern-based IVR mode)`);
+              // Use human detection state machine for wait times
+              let debounceMs: number;
+              if (ctx.humanDetection) {
+                debounceMs = humanDetection.getWaitTimeMs(ctx.humanDetection);
+                const stateLabel = ctx.receiverState || "UNKNOWN";
+                if (ctx.receiverState === "LIKELY_HUMAN") {
+                  console.log(`[HUMAN-DETECT] 👤 Using human wait (flush): ${debounceMs}ms (state: ${stateLabel})`);
+                } else if (ctx.receiverState === "LIKELY_IVR") {
+                  console.log(`[HUMAN-DETECT] 🤖 Using IVR wait (flush): ${debounceMs}ms (state: ${stateLabel})`);
+                } else {
+                  console.log(`[HUMAN-DETECT] ⏳ Using default wait (flush): ${debounceMs}ms (state: ${stateLabel})`);
+                }
               } else {
-                console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (flush timer, HUMAN mode)`);
+                // Fallback to legacy IVR timing
+                debounceMs = ivrUtils.getDebounceMs(ctx);
+                if (ctx.detectedPartyType === "robotic") {
+                  console.log(`[PARTY-DETECT] ⚡ Setting TTS debounce: ${debounceMs}ms (flush timer, legacy ROBOTIC)`);
+                } else if (ctx.isIvrMode) {
+                  console.log(`[IVR] ⚡ Setting TTS debounce: ${debounceMs}ms (flush timer, legacy pattern-based)`);
+                } else {
+                  console.log(`[DEBOUNCE] ⏱️ Setting TTS debounce: ${debounceMs}ms (flush timer, legacy HUMAN mode)`);
+                }
               }
 
               // Increment turn sequence

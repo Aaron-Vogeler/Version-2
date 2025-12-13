@@ -6,6 +6,8 @@
  * No cross-call memory is persisted.
  */
 import config from "./config";
+import type { HumanDetectionState, ReceiverState } from "./pipeline/humanDetection";
+import { initializeHumanDetectionState } from "./pipeline/humanDetection";
 
 /**
  * Represents a single turn in the conversation.
@@ -125,6 +127,14 @@ export interface CallContext {
   detectedPartyType?: "human" | "robotic"; // Result of LLM party detection
   partyDetectionComplete?: boolean; // Whether initial party detection has been done
   partyDetectionTimestamp?: number; // When party detection occurred
+
+  // ============================================================================
+  // ENHANCED HUMAN DETECTION STATE (IVR vs Human State Machine)
+  // ============================================================================
+  /** Human detection state machine */
+  humanDetection?: HumanDetectionState;
+  /** Current receiver state for quick access */
+  receiverState?: ReceiverState;
 }
 
 /**
@@ -177,6 +187,9 @@ export function getOrCreateContext(
       // Party detection initialization
       partyDetectionComplete: false,
       detectedPartyType: undefined,
+      // Human detection state machine
+      humanDetection: initializeHumanDetectionState(),
+      receiverState: "UNKNOWN",
     });
   }
   return callContextStore.get(callId)!;
@@ -306,6 +319,9 @@ export function clearContext(callId: string): void {
     // Reset party detection state
     context.partyDetectionComplete = false;
     context.detectedPartyType = undefined;
+    // Reset human detection state
+    context.humanDetection = initializeHumanDetectionState();
+    context.receiverState = "UNKNOWN";
     // Close Deepgram if needed
     if (context.deepgramSocket) {
       try {
