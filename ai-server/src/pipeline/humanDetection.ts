@@ -633,6 +633,30 @@ export function getWaitTimeMs(
 }
 
 /**
+ * Get adjusted wait time that accounts for time already elapsed since speech ended.
+ * This is useful after classification completes - we don't want to wait the full
+ * wait time again, but rather only the remaining time.
+ *
+ * @param state - Human detection state
+ * @param speechEndedAt - Timestamp when speech ended (e.g., lastTranscriptAt or lastSilenceAt)
+ * @param perCallSettings - Optional per-call settings
+ * @returns Remaining wait time in ms (minimum 0)
+ */
+export function getAdjustedWaitTimeMs(
+  state: HumanDetectionState,
+  speechEndedAt: number,
+  perCallSettings?: PerCallHumanDetectionSettings | null
+): number {
+  const fullWaitMs = getWaitTimeMs(state, perCallSettings);
+  const elapsedMs = Date.now() - speechEndedAt;
+  const remainingMs = Math.max(0, fullWaitMs - elapsedMs);
+
+  console.log(`[HUMAN-DETECT] ⏱️ Adjusted wait time: ${remainingMs}ms (full: ${fullWaitMs}ms, elapsed: ${elapsedMs}ms)`);
+
+  return remainingMs;
+}
+
+/**
  * Check if we should respond (not talk) based on current state
  */
 export function shouldStaySilent(state: HumanDetectionState): boolean {
