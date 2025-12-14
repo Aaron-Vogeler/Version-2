@@ -181,6 +181,15 @@ interface SavedGroqSettings {
     maxUnsure?: number;
     classificationPrompt?: string;
   };
+  musicDetectionSettings?: {
+    enabled?: boolean;
+    windowSize?: number;
+    musicThreshold?: number;
+    silenceThreshold?: number;
+    hysteresisMs?: number;
+    auditLogging?: boolean;
+    useTranscriptPatterns?: boolean;
+  };
 }
 
 interface GroqCallProps {
@@ -303,6 +312,18 @@ Examples:
   });
   const [showHumanDetectionSettings, setShowHumanDetectionSettings] = useState(false);
 
+  // Music Detection settings (Energy Floor detection)
+  const [musicDetectionSettings, setMusicDetectionSettings] = useState({
+    enabled: true,
+    windowSize: 50, // ~1 second at 20ms/packet
+    musicThreshold: 0.035, // Floor above this = music detected
+    silenceThreshold: 0.015, // Floor below this = no music
+    hysteresisMs: 500, // Must be stable for 500ms
+    auditLogging: true,
+    useTranscriptPatterns: true,
+  });
+  const [showMusicDetectionSettings, setShowMusicDetectionSettings] = useState(false);
+
   // UI state
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [expandedSystemPrompt, setExpandedSystemPrompt] = useState(false);
@@ -355,6 +376,12 @@ Examples:
         setHumanDetectionSettings(prev => ({
           ...prev,
           ...groqSettings.humanDetectionSettings,
+        }));
+      }
+      if (groqSettings.musicDetectionSettings) {
+        setMusicDetectionSettings(prev => ({
+          ...prev,
+          ...groqSettings.musicDetectionSettings,
         }));
       }
     }
@@ -588,6 +615,14 @@ Examples:
           human_detection_human_turns_after_hold: humanDetectionSettings.humanTurnsAfterHold,
           human_detection_max_unsure: humanDetectionSettings.maxUnsure,
           human_detection_classification_prompt: humanDetectionSettings.classificationPrompt,
+          // Music Detection settings (Energy Floor)
+          music_detection_enabled: musicDetectionSettings.enabled,
+          music_detection_window_size: musicDetectionSettings.windowSize,
+          music_detection_music_threshold: musicDetectionSettings.musicThreshold,
+          music_detection_silence_threshold: musicDetectionSettings.silenceThreshold,
+          music_detection_hysteresis_ms: musicDetectionSettings.hysteresisMs,
+          music_detection_audit_logging: musicDetectionSettings.auditLogging,
+          music_detection_use_transcript_patterns: musicDetectionSettings.useTranscriptPatterns,
           // LLM settings
           model: selectedModel,
           temperature: temperature,
@@ -1466,6 +1501,120 @@ Examples:
                 Reset to Default
               </Button>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Music Detection Settings */}
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => setShowMusicDetectionSettings(!showMusicDetectionSettings)}
+          className="flex items-center justify-between w-full text-sm font-medium hover:text-foreground transition-colors"
+        >
+          <span className="flex items-center gap-2">
+            <Radio className="h-4 w-4" />
+            Music Detection Settings
+          </span>
+          {showMusicDetectionSettings ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </button>
+        {showMusicDetectionSettings && (
+          <div className="space-y-3 pl-4 border-l-2 border-border/50">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Enable Music Detection</Label>
+              <input
+                type="checkbox"
+                checked={musicDetectionSettings.enabled}
+                onChange={(e) => setMusicDetectionSettings(prev => ({ ...prev, enabled: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Detect when hold music starts and stops using energy floor analysis</p>
+
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Detection Thresholds</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Music Threshold</Label>
+              <Input
+                type="number"
+                min="0.01"
+                max="0.1"
+                step="0.005"
+                value={musicDetectionSettings.musicThreshold}
+                onChange={(e) => setMusicDetectionSettings(prev => ({ ...prev, musicThreshold: parseFloat(e.target.value) || 0.035 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Energy floor above this = music detected (default: 0.035)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Silence Threshold</Label>
+              <Input
+                type="number"
+                min="0.005"
+                max="0.05"
+                step="0.005"
+                value={musicDetectionSettings.silenceThreshold}
+                onChange={(e) => setMusicDetectionSettings(prev => ({ ...prev, silenceThreshold: parseFloat(e.target.value) || 0.015 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Energy floor below this = no music (default: 0.015)</p>
+            </div>
+
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Timing Settings</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Window Size (packets)</Label>
+              <Input
+                type="number"
+                min="20"
+                max="100"
+                step="5"
+                value={musicDetectionSettings.windowSize}
+                onChange={(e) => setMusicDetectionSettings(prev => ({ ...prev, windowSize: parseInt(e.target.value) || 50 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Sliding window for floor calculation (~20ms per packet, default: 50 = ~1 second)</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Hysteresis (ms)</Label>
+              <Input
+                type="number"
+                min="200"
+                max="2000"
+                step="100"
+                value={musicDetectionSettings.hysteresisMs}
+                onChange={(e) => setMusicDetectionSettings(prev => ({ ...prev, hysteresisMs: parseInt(e.target.value) || 500 }))}
+                className="text-xs h-8"
+              />
+              <p className="text-[10px] text-muted-foreground">Minimum time before state change - prevents flickering (default: 500ms)</p>
+            </div>
+
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Additional Options</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Use Transcript Patterns</Label>
+              <input
+                type="checkbox"
+                checked={musicDetectionSettings.useTranscriptPatterns}
+                onChange={(e) => setMusicDetectionSettings(prev => ({ ...prev, useTranscriptPatterns: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Detect [music] and [instrumental] tags from Deepgram transcripts</p>
+
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Enable Audit Logging</Label>
+              <input
+                type="checkbox"
+                checked={musicDetectionSettings.auditLogging}
+                onChange={(e) => setMusicDetectionSettings(prev => ({ ...prev, auditLogging: e.target.checked }))}
+                className="h-4 w-4"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">Log detailed energy floor data for troubleshooting (visible in Fly.io logs)</p>
           </div>
         )}
       </div>

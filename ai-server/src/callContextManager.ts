@@ -8,6 +8,8 @@
 import config from "./config";
 import type { HumanDetectionState, ReceiverState } from "./pipeline/humanDetection";
 import { initializeHumanDetectionState } from "./pipeline/humanDetection";
+import type { MusicDetectionState, EnergyFloorConfig } from "./pipeline/energy-floor";
+import { EnergyFloorTracker } from "./pipeline/energy-floor";
 
 /**
  * Represents a single turn in the conversation.
@@ -148,6 +150,30 @@ export interface CallContext {
   receiverState?: ReceiverState;
   /** Timer for classification after utterance flush silence */
   classificationTimer?: ReturnType<typeof setTimeout>;
+
+  // ============================================================================
+  // MUSIC DETECTION STATE (Energy Floor Detection)
+  // ============================================================================
+  /** Energy floor tracker instance (processes audio packets) */
+  energyFloorTracker?: EnergyFloorTracker;
+  /** Current music detection state (for quick access) */
+  musicDetectionState?: MusicDetectionState;
+  /** Is music currently playing? (shortcut to musicDetectionState.musicDetected) */
+  musicDetected?: boolean;
+  /** Timestamp when music state last changed */
+  musicStateChangedAt?: number;
+  /** Confidence in current music detection (0-1) */
+  musicConfidence?: number;
+
+  // Per-call Music Detection settings (overrides config defaults if provided)
+  musicDetectionEnabled?: boolean;
+  musicDetectionWindowSize?: number;
+  musicDetectionFloorPercentile?: number;
+  musicDetectionMusicThreshold?: number;
+  musicDetectionSilenceThreshold?: number;
+  musicDetectionHysteresisMs?: number;
+  musicDetectionAuditLogging?: boolean;
+  musicDetectionUseTranscriptPatterns?: boolean;
 }
 
 /**
@@ -203,9 +229,57 @@ export function getOrCreateContext(
       // Human detection state machine
       humanDetection: initializeHumanDetectionState(),
       receiverState: "UNKNOWN",
+      // Music detection state (tracker initialized when call starts with audio)
+      musicDetected: false,
+      musicConfidence: 0,
     });
   }
   return callContextStore.get(callId)!;
+}
+
+/**
+ * Initialize music detection tracker for a call.
+ * Called when audio streaming starts and we have per-call settings.
+ */
+export function initializeMusicDetection(
+  callId: string,
+  perCallSettings?: {
+    enabled?: boolean;
+    windowSize?: number;
+    floorPercentile?: number;
+    musicThreshold?: number;
+    silenceThreshold?: number;
+    hysteresisMs?: number;
+    auditLogging?: boolean;
+  }
+): EnergyFloorTracker | null {
+  const context = getOrCreateContext(callId);
+
+  // Check if music detection is enabled (per-call or global config)
+  const enabled = perCallSettings?.enabled ?? config.musicDetection?.enabled ?? true;
+  if (!enabled) {
+    console.log(`[MUSIC-DETECT] [${callId.slice(-8)}] Music detection disabled`);
+    return null;
+  }
+
+  // Build config from per-call settings and global config
+  const trackerConfig: Partial<import("./pipeline/energy-floor").EnergyFloorConfig> = {
+    windowSize: perCallSettings?.windowSize ?? config.musicDetection?.windowSize ?? 50,
+    floorPercentile: perCallSettings?.floorPercentile ?? config.musicDetection?.floorPercentile ?? 0.10,
+    musicThreshold: perCallSettings?.musicThreshold ?? config.musicDetection?.musicThreshold ?? 0.035,
+    silenceThreshold: perCallSettings?.silenceThreshold ?? config.musicDetection?.silenceThreshold ?? 0.015,
+    hysteresisMs: perCallSettings?.hysteresisMs ?? config.musicDetection?.hysteresisMs ?? 500,
+    auditLogging: perCallSettings?.auditLogging ?? config.musicDetection?.auditLogging ?? true,
+    logIntervalPackets: config.musicDetection?.logIntervalPackets ?? 50,
+  };
+
+  // Create tracker
+  const tracker = new EnergyFloorTracker(callId, trackerConfig);
+  context.energyFloorTracker = tracker;
+
+  console.log(`[MUSIC-DETECT] [${callId.slice(-8)}] Tracker initialized with config:`, trackerConfig);
+
+  return tracker;
 }
 
 /**
@@ -339,6 +413,18 @@ export function clearContext(callId: string): void {
     // Reset human detection state
     context.humanDetection = initializeHumanDetectionState();
     context.receiverState = "UNKNOWN";
+    // Reset music detection state
+    if (context.energyFloorTracker) {
+      // Log final audit summary before reset
+      console.log(`[MUSIC-DETECT] [${callId.slice(-8)}] Final audit log (last 10 entries):`);
+      console.log(context.energyFloorTracker.getFormattedAuditLog(10));
+      context.energyFloorTracker.reset();
+      context.energyFloorTracker = undefined;
+    }
+    context.musicDetected = false;
+    context.musicConfidence = 0;
+    context.musicDetectionState = undefined;
+    context.musicStateChangedAt = undefined;
     // Close Deepgram if needed
     if (context.deepgramSocket) {
       try {

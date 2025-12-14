@@ -11,6 +11,7 @@ import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall, de
 import * as humanDetection from "./pipeline/humanDetection";
 import { synthesizeSpeech, stopSpeaking, hangupCall, sendDtmf } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
+import { transcriptContainsMusicIndicator } from "./pipeline/energy-floor";
 import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording, insertLlmLog } from "./utils/supabase";
 import * as sharedState from "./sharedState";
 import {
@@ -1064,6 +1065,9 @@ function cleanupCallState(callContext: CallContext): void {
     sharedState.clearCallMachine(callContext.callControlId).catch((err) => {
       console.error("[SharedState] Error clearing call machine mapping:", err);
     });
+    sharedState.clearMusicState(callContext.callControlId).catch((err) => {
+      console.error("[SharedState] Error clearing music state:", err);
+    });
     // Clear audio smoother state
     clearSmootherState(callContext.callControlId);
   }
@@ -1583,6 +1587,33 @@ wss.on("connection", async (ws) => {
       // Broadcast transcript to live observers
       if (callContext.callControlId) {
         observer.broadcastTranscript(callContext.callControlId, 'caller', userText, isFinal);
+      }
+
+      // ============================================================================
+      // MUSIC DETECTION: Check transcript for music indicators (Deepgram tags)
+      // Deepgram sometimes emits [music], [instrumental], etc. in transcripts
+      // ============================================================================
+      const useTranscriptPatterns = callContext.musicDetectionUseTranscriptPatterns ?? config.musicDetection?.useTranscriptPatterns ?? true;
+      if (useTranscriptPatterns && callContext.energyFloorTracker && transcriptContainsMusicIndicator(userText)) {
+        console.log(`[MUSIC-DETECT] 🎵 Transcript contains music indicator: "${userText}"`);
+        callContext.energyFloorTracker.setMusicFromTranscript(true);
+        // Update call context
+        if (!callContext.musicDetected) {
+          callContext.musicDetected = true;
+          callContext.musicStateChangedAt = Date.now();
+          // Sync to Redis
+          if (callContext.callControlId) {
+            sharedState.updateMusicDetection(
+              callContext.callControlId,
+              true,
+              0.9, // High confidence from transcript
+              callContext.musicDetectionState?.floor || 0,
+              "transcript"
+            ).catch((err) => {
+              console.error("[MUSIC-DETECT] Failed to sync transcript detection to Redis:", err);
+            });
+          }
+        }
       }
 
       // ============================================================================
@@ -2209,6 +2240,26 @@ wss.on("connection", async (ws) => {
             console.log("[CustomRecording] Buffers initialized for call:", callControlId);
           }
 
+          // Initialize music detection tracker with per-call settings
+          // Store per-call settings from decoded client_state
+          managedContext.musicDetectionEnabled = decoded.musicDetectionEnabled ?? null;
+          managedContext.musicDetectionWindowSize = decoded.musicDetectionWindowSize ?? null;
+          managedContext.musicDetectionMusicThreshold = decoded.musicDetectionMusicThreshold ?? null;
+          managedContext.musicDetectionSilenceThreshold = decoded.musicDetectionSilenceThreshold ?? null;
+          managedContext.musicDetectionHysteresisMs = decoded.musicDetectionHysteresisMs ?? null;
+          managedContext.musicDetectionAuditLogging = decoded.musicDetectionAuditLogging ?? null;
+          managedContext.musicDetectionUseTranscriptPatterns = decoded.musicDetectionUseTranscriptPatterns ?? null;
+
+          // Initialize the tracker
+          contextMgr.initializeMusicDetection(callControlId, {
+            enabled: managedContext.musicDetectionEnabled ?? undefined,
+            windowSize: managedContext.musicDetectionWindowSize ?? undefined,
+            musicThreshold: managedContext.musicDetectionMusicThreshold ?? undefined,
+            silenceThreshold: managedContext.musicDetectionSilenceThreshold ?? undefined,
+            hysteresisMs: managedContext.musicDetectionHysteresisMs ?? undefined,
+            auditLogging: managedContext.musicDetectionAuditLogging ?? undefined,
+          });
+
           console.log("📋 Call context initialized:", {
             callId: callContext.callId,
             callControlId: callContext.callControlId,
@@ -2285,6 +2336,66 @@ wss.on("connection", async (ws) => {
         // ============================================================================
         if (callContext?.callControlId && (track === "inbound" || track === "outbound")) {
           observer.broadcastAudio(callContext.callControlId, track, audio);
+        }
+
+        // ============================================================================
+        // MUSIC DETECTION: Process inbound audio through energy floor tracker
+        // This detects music playing (even with speech) by tracking the energy floor
+        // ============================================================================
+        if (track === "inbound" && callContext?.energyFloorTracker) {
+          try {
+            const previousMusicState = callContext.musicDetected;
+            const musicState = callContext.energyFloorTracker.process(audio);
+
+            // Update call context with current music state
+            callContext.musicDetected = musicState.musicDetected;
+            callContext.musicConfidence = musicState.confidence;
+            callContext.musicDetectionState = musicState;
+
+            // Detect state change and sync to Redis
+            if (musicState.musicDetected !== previousMusicState) {
+              callContext.musicStateChangedAt = musicState.musicStateChangedAt;
+
+              // Sync to Redis for multi-instance coordination
+              if (callContext.callControlId) {
+                sharedState.updateMusicDetection(
+                  callContext.callControlId,
+                  musicState.musicDetected,
+                  musicState.confidence,
+                  musicState.floor,
+                  musicState.detectionMethod
+                ).catch((err) => {
+                  console.error("[MUSIC-DETECT] Failed to sync to Redis:", err);
+                });
+              }
+
+              // Log state change with details
+              console.log(`[MUSIC-DETECT] 🎵 State change: ${musicState.musicDetected ? "MUSIC_STARTED" : "MUSIC_STOPPED"}`, {
+                callId: callContext.callId?.slice(-8),
+                floor: musicState.floor.toFixed(4),
+                confidence: musicState.confidence.toFixed(2),
+                method: musicState.detectionMethod,
+                duration: `${musicState.musicStateDurationMs}ms`,
+              });
+
+              // Integrate with human detection - music state changes
+              if (callContext.humanDetection) {
+                if (musicState.musicDetected) {
+                  // Music started - may indicate hold
+                  humanDetection.onMusicStarted(callContext.humanDetection, musicState.confidence);
+                } else {
+                  // Music stopped - trigger reclassification (human may have picked up)
+                  humanDetection.onMusicStopped(callContext.humanDetection, musicState.confidence);
+                }
+              }
+            }
+          } catch (musicError) {
+            // Never throw from music detection - just log and continue
+            console.error(
+              "[MUSIC-DETECT] Error processing audio:",
+              musicError instanceof Error ? musicError.message : musicError
+            );
+          }
         }
 
         // ============================================================================

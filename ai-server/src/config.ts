@@ -138,6 +138,30 @@ const config = {
   },
 
   // =============================================================================
+  // MUSIC DETECTION SETTINGS (Energy Floor Detection)
+  // =============================================================================
+  musicDetection: {
+    // Enable music detection (set to false to disable entirely)
+    enabled: getEnv("MUSIC_DETECTION_ENABLED", "true") === "true",
+    // Number of packets in sliding window (~1 second at 50 packets/sec)
+    windowSize: getEnvInt("MUSIC_DETECTION_WINDOW_SIZE", 50),
+    // Percentile for floor calculation (0.10 = 10th percentile, robust to outliers)
+    floorPercentile: parseFloat(getEnv("MUSIC_DETECTION_FLOOR_PERCENTILE", "0.10")),
+    // Floor above this = music detected (0-1 normalized energy)
+    musicThreshold: parseFloat(getEnv("MUSIC_DETECTION_MUSIC_THRESHOLD", "0.035")),
+    // Floor below this = no music (0-1 normalized energy)
+    silenceThreshold: parseFloat(getEnv("MUSIC_DETECTION_SILENCE_THRESHOLD", "0.015")),
+    // Minimum time before state change (ms) - prevents flickering
+    hysteresisMs: getEnvInt("MUSIC_DETECTION_HYSTERESIS_MS", 500),
+    // Enable detailed audit logging for troubleshooting
+    auditLogging: getEnv("MUSIC_DETECTION_AUDIT_LOGGING", "true") === "true",
+    // Log every N packets (for periodic status logs)
+    logIntervalPackets: getEnvInt("MUSIC_DETECTION_LOG_INTERVAL", 50),
+    // Use transcript patterns as additional signal (Deepgram [music] tags)
+    useTranscriptPatterns: getEnv("MUSIC_DETECTION_USE_TRANSCRIPT", "true") === "true",
+  },
+
+  // =============================================================================
   // HUMAN DETECTION SETTINGS (IVR vs Human State Machine)
   // =============================================================================
   humanDetection: {
