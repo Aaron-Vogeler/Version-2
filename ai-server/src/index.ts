@@ -694,6 +694,8 @@ async function scheduleTtsResponse(
         } catch (dtmfError) {
           console.error("❌ DTMF send failed:", dtmfError instanceof Error ? dtmfError.message : dtmfError);
         }
+      } else {
+        console.error(`❌ DTMF send failed: callControlId is not set (dtmf: ${dtmf})`);
       }
 
       // Clear transcript to avoid reprocessing
