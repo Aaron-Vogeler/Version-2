@@ -646,6 +646,46 @@ export function exitHold(state: HumanDetectionState): void {
   clearTranscriptBuffer(state);
 }
 
+// =============================================================================
+// MUSIC DETECTION INTEGRATION
+// =============================================================================
+
+/**
+ * Handle music start detection from energy floor tracker.
+ * When music is detected, transition to HOLD state.
+ */
+export function onMusicStarted(state: HumanDetectionState, confidence: number): void {
+  if (confidence >= 0.6 && state.receiverState !== "HOLD") {
+    console.log(`[HUMAN-DETECT] 🎵 Music detected (confidence=${confidence.toFixed(2)}) - entering HOLD`);
+    enterHold(state, `music detected (confidence=${confidence.toFixed(2)})`);
+  }
+}
+
+/**
+ * Handle music stop detection from energy floor tracker.
+ * When music stops, trigger re-classification (human may have picked up).
+ */
+export function onMusicStopped(state: HumanDetectionState, confidence: number): void {
+  if (state.receiverState === "HOLD" || confidence >= 0.6) {
+    console.log(`[HUMAN-DETECT] 🔇 Music stopped (confidence=${confidence.toFixed(2)}) - triggering reclassification`);
+    state.pendingClassification = true;
+
+    // If we were in HOLD, exit hold
+    if (state.receiverState === "HOLD") {
+      exitHold(state);
+    }
+  }
+}
+
+/**
+ * Check if music detection should influence hold detection.
+ * This is called from isLikelyOnHold to factor in music state.
+ */
+export function checkMusicBasedHold(musicDetected: boolean, musicConfidence: number): boolean {
+  // If music is detected with high confidence, we're likely on hold
+  return musicDetected && musicConfidence >= 0.6;
+}
+
 /**
  * Get appropriate wait time based on current state
  */

@@ -399,3 +399,135 @@ export async function checkCallMachine(callControlId: string): Promise<{
     return { isLocal: true, machineId: null };
   }
 }
+
+// =============================================================================
+// MUSIC DETECTION STATE SYNC (for multi-instance barge-in coordination)
+// =============================================================================
+
+/**
+ * Music detection state that needs to be synchronized across instances.
+ */
+export interface SyncedMusicState {
+  musicDetected: boolean;
+  musicStateChangedAt: number;
+  confidence: number;
+  floor: number;
+  detectionMethod: "floor_rise" | "floor_drop" | "initial" | "transcript";
+}
+
+/**
+ * Get Redis key for music detection state.
+ */
+function getMusicStateKey(callControlId: string): string {
+  return `music:${callControlId}`;
+}
+
+/**
+ * Get music detection state from Redis.
+ * Returns null if not found or Redis is disabled.
+ */
+export async function getMusicState(callControlId: string): Promise<SyncedMusicState | null> {
+  if (!redisEnabled || !redis) {
+    return null;
+  }
+
+  try {
+    const data = await redis.get<SyncedMusicState>(getMusicStateKey(callControlId));
+    return data;
+  } catch (error) {
+    console.error(
+      "[SharedState] Error reading music state:",
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+}
+
+/**
+ * Set music detection state in Redis.
+ * Does nothing if Redis is disabled.
+ */
+export async function setMusicState(
+  callControlId: string,
+  state: Partial<SyncedMusicState>
+): Promise<void> {
+  if (!redisEnabled || !redis) {
+    return;
+  }
+
+  try {
+    const key = getMusicStateKey(callControlId);
+
+    // Get existing state and merge
+    const existing = await redis.get<SyncedMusicState>(key);
+    const merged: SyncedMusicState = {
+      musicDetected: false,
+      musicStateChangedAt: Date.now(),
+      confidence: 0,
+      floor: 0,
+      detectionMethod: "initial",
+      ...existing,
+      ...state,
+    };
+
+    // Set with TTL
+    await redis.setex(key, KEY_TTL_SECONDS, merged);
+  } catch (error) {
+    console.error(
+      "[SharedState] Error writing music state:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/**
+ * Update music detection state when music starts or stops.
+ * Called from the energy floor tracker when state changes.
+ */
+export async function updateMusicDetection(
+  callControlId: string,
+  musicDetected: boolean,
+  confidence: number,
+  floor: number,
+  detectionMethod: SyncedMusicState["detectionMethod"]
+): Promise<void> {
+  await setMusicState(callControlId, {
+    musicDetected,
+    musicStateChangedAt: Date.now(),
+    confidence,
+    floor,
+    detectionMethod,
+  });
+
+  console.log(
+    `[SharedState] Music state synced: ${musicDetected ? "MUSIC_DETECTED" : "MUSIC_STOPPED"} (confidence=${confidence.toFixed(2)}, floor=${floor.toFixed(4)})`
+  );
+}
+
+/**
+ * Clear music detection state when call ends.
+ */
+export async function clearMusicState(callControlId: string): Promise<void> {
+  if (!redisEnabled || !redis) {
+    return;
+  }
+
+  try {
+    await redis.del(getMusicStateKey(callControlId));
+  } catch (error) {
+    console.error(
+      "[SharedState] Error clearing music state:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/**
+ * Sync local music state from Redis.
+ * Call this before making barge-in decisions to ensure consistency.
+ */
+export async function syncMusicFromRedis(
+  callControlId: string
+): Promise<SyncedMusicState | null> {
+  return getMusicState(callControlId);
+}
