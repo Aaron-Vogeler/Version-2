@@ -182,6 +182,35 @@ export function broadcastCallState(
 }
 
 /**
+ * Broadcast a generic event to all observers
+ * Used for detection events like speaker changes, music detection, etc.
+ */
+export function broadcastEvent(
+  callControlId: string,
+  eventType: string,
+  data: Record<string, any>
+): void {
+  const observers = observersByCall.get(callControlId);
+  if (!observers || observers.size === 0) return;
+
+  const message = JSON.stringify({
+    event: eventType,
+    ...data,
+    timestamp: Date.now(),
+  });
+
+  for (const observer of observers) {
+    if (observer.ws.readyState === WebSocket.OPEN) {
+      try {
+        observer.ws.send(message);
+      } catch (error) {
+        console.error(`[Observer] Error sending ${eventType} event to observer:`, error);
+      }
+    }
+  }
+}
+
+/**
  * Parse the URL path to extract callControlId
  * Expected format: /observe/:callControlId
  */
