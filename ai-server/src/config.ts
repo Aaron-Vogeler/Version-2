@@ -65,6 +65,10 @@ const config = {
     model: getEnv("GROQ_MODEL", "llama-3.1-8b-instant"),
   },
 
+  gemini: {
+    apiKey: getEnv("GEMINI_API_KEY", ""), // Optional - only needed if using Gemini models
+  },
+
   telnyx: {
     apiKey: requireEnv("TELNYX_API_KEY"),
     sipConnectionId: requireEnv("TELNYX_SIP_CONNECTION_ID"),

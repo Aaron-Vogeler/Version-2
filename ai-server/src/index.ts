@@ -575,13 +575,50 @@ async function scheduleTtsResponse(
       return;
     }
 
-    // Send to LLM
+    // Send to LLM (with early TTS callback for streaming models)
     let aiText: string;
+    let earlyTtsTriggered = false;
+    let earlyBehavior: string | null = null;
+
     try {
-      aiText = await generateAssistantReply(userText, callContext);
+      aiText = await generateAssistantReply(
+        userText,
+        callContext,
+        // Early TTS callback - fires when speak text is ready during streaming
+        async (speakText: string, behavior: string) => {
+          // GUARD: Verify turn sequence hasn't changed during streaming
+          if (callContext.turnSeq !== expectedSeq) {
+            console.log(`[STREAM] ⏭️ Turn changed during streaming (expected ${expectedSeq}, current ${callContext.turnSeq}) - skipping early TTS`);
+            return;
+          }
+
+          // GUARD: Verify we can still speak
+          if (!canSpeak(callContext, ws)) {
+            console.log('[STREAM] ⚠️ Call ended during streaming - skipping early TTS');
+            return;
+          }
+
+          console.log(`[STREAM] 🎤 Early TTS triggered (behavior: ${behavior}, ${speakText.length} chars)`);
+          earlyTtsTriggered = true;
+          earlyBehavior = behavior;
+
+          // Add to transcript history
+          callContext.turns.push({
+            speaker: "assistant",
+            text: speakText,
+            timestamp: new Date().toISOString(),
+          });
+
+          // Send TTS immediately
+          await sendTtsResponse(callContext, ws, speakText, expectedSeq);
+
+          // Clear transcript after processing
+          callContext.lastUserTranscript = "";
+        }
+      );
     } catch (groqError) {
       console.error(
-        "❌ Groq API error:",
+        "❌ LLM API error:",
         groqError instanceof Error ? groqError.message : groqError
       );
       if (canSpeak(callContext, ws)) {
@@ -604,7 +641,7 @@ async function scheduleTtsResponse(
     }
 
     if (!aiText) {
-      console.warn("⚠️ Groq returned empty response");
+      console.warn("⚠️ LLM returned empty response");
       if (canSpeak(callContext, ws)) {
         ws.send(
           JSON.stringify({
@@ -616,7 +653,13 @@ async function scheduleTtsResponse(
       return;
     }
 
-    // Extract speech text and behavior from LLM response (handles JSON format)
+    // If early TTS was triggered, we're done (streaming handled everything)
+    if (earlyTtsTriggered) {
+      console.log('[STREAM] ✅ Early TTS completed - skipping buffered processing');
+      return;
+    }
+
+    // Extract speech text and behavior from LLM response (buffered mode fallback)
     const { speakText, behavior, dtmf } = extractSpeechAndBehavior(aiText);
 
     // Log both raw and extracted for debugging
