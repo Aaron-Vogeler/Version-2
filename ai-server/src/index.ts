@@ -1229,10 +1229,9 @@ app.post("/webhooks/telnyx", async (req, res) => {
       }).catch((err) => console.error(`[Supabase] Error logging ${eventType}:`, err));
     }
   } else if (eventType === "call.answered") {
-    console.log(
-      "📦 Telnyx call.answered payload:",
-      JSON.stringify(req.body, null, 2)
-    );
+    // Note: Full payload dump removed to reduce log noise
+    // Call details already captured at initialization
+    console.log(`📞 call.answered - callControlId: ${callControlId || "missing"}`);
     if (!callControlId) {
       console.warn("⚠️ call.answered webhook missing payload.call_control_id");
     }
@@ -1811,7 +1810,8 @@ wss.on("connection", async (ws) => {
         if (bargeInJustOccurred) {
           console.log(`[TRANSCRIPT] Barge-in partial ignored (waiting for final): "${userText}"`);
         } else {
-          console.log(`[TRANSCRIPT] Interim transcript (not queuing for LLM): "${userText}"`);
+          // Note: Interim transcript logs removed to reduce noise
+          // Only speech_final events are logged for transcript analysis
 
           // Reset hold silence timer when caller starts speaking
           // This pauses hold detection until the caller finishes their utterance

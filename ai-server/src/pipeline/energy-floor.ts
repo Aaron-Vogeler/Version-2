@@ -237,16 +237,8 @@ export class EnergyFloorTracker {
     if (this.config.auditLogging) {
       this.addAuditEntry(auditEntry);
 
-      // Periodic status log
-      if (this.packetsProcessed % this.config.logIntervalPackets === 0) {
-        this.log("DEBUG", `Periodic status`, {
-          packets: this.packetsProcessed,
-          floor: floor.toFixed(4),
-          avg: averageEnergy.toFixed(4),
-          music: this.musicDetected,
-          confidence: confidence.toFixed(2),
-        });
-      }
+      // Note: Periodic status logs removed to reduce noise
+      // State changes (MUSIC_STARTED/MUSIC_STOPPED) are still logged below
     }
 
     // 12. Log state changes
