@@ -174,6 +174,30 @@ export interface CallContext {
   musicDetectionHysteresisMs?: number;
   musicDetectionAuditLogging?: boolean;
   musicDetectionUseTranscriptPatterns?: boolean;
+
+  // ============================================================================
+  // DIARIZATION STATE (Speaker Change Detection)
+  // ============================================================================
+  /** Enable diarization for this call (overrides config) */
+  diarizationEnabled?: boolean;
+  /** Primary speaker ID (first speaker detected after call starts) */
+  primarySpeakerId?: number;
+  /** Current speaker ID from latest diarization */
+  currentSpeakerId?: number;
+  /** Previous speaker ID (for change detection) */
+  previousSpeakerId?: number;
+  /** Number of speaker changes detected */
+  speakerChangeCount?: number;
+  /** Timestamp of last speaker change */
+  lastSpeakerChangeAt?: number;
+  /** Debounce timer for speaker change events */
+  speakerChangeDebounceUntil?: number;
+  /** Per-call diarization debounce (ms) */
+  diarizationDebounceMs?: number;
+  /** Per-call diarization confidence threshold */
+  diarizationMinConfidence?: number;
+  /** Per-call audit logging for diarization */
+  diarizationAuditLogging?: boolean;
 }
 
 /**
@@ -232,6 +256,8 @@ export function getOrCreateContext(
       // Music detection state (tracker initialized when call starts with audio)
       musicDetected: false,
       musicConfidence: 0,
+      // Diarization state (speaker change detection)
+      speakerChangeCount: 0,
     });
   }
   return callContextStore.get(callId)!;
@@ -425,6 +451,13 @@ export function clearContext(callId: string): void {
     context.musicConfidence = 0;
     context.musicDetectionState = undefined;
     context.musicStateChangedAt = undefined;
+    // Reset diarization state
+    context.primarySpeakerId = undefined;
+    context.currentSpeakerId = undefined;
+    context.previousSpeakerId = undefined;
+    context.speakerChangeCount = 0;
+    context.lastSpeakerChangeAt = undefined;
+    context.speakerChangeDebounceUntil = undefined;
     // Close Deepgram if needed
     if (context.deepgramSocket) {
       try {

@@ -184,6 +184,22 @@ const config = {
   },
 
   // =============================================================================
+  // DIARIZATION SETTINGS (Speaker Change Detection)
+  // =============================================================================
+  diarization: {
+    // Enable Deepgram diarization for speaker change detection
+    enabled: getEnv("DIARIZATION_ENABLED", "true") === "true",
+    // Minimum time between speaker change events (ms) - prevents false positives from brief fluctuations
+    debounceMs: getEnvInt("DIARIZATION_DEBOUNCE_MS", 2000),
+    // Minimum confidence (0-1) for speaker change to trigger reclassification
+    minConfidence: parseFloat(getEnv("DIARIZATION_MIN_CONFIDENCE", "0.7")),
+    // Enable detailed logging for diarization events
+    auditLogging: getEnv("DIARIZATION_AUDIT_LOGGING", "true") === "true",
+    // Only trigger on speech_final (true) or also on is_final (false)
+    requireSpeechFinal: getEnv("DIARIZATION_REQUIRE_SPEECH_FINAL", "true") === "true",
+  },
+
+  // =============================================================================
   // LLM CONFIG
   // =============================================================================
   llm: {

@@ -1501,6 +1501,8 @@ wss.on("connection", async (ws) => {
   let callContext: CallContext | undefined;
 
   // Create a Deepgram live stream with VAD events enabled for instant barge-in
+  // Diarization is enabled for speaker change detection (transfer detection)
+  const diarizationEnabled = config.diarization?.enabled ?? true;
   const dgLive = await deepgram.listen.live({
     model: config.deepgram.model,
     encoding: "mulaw",
@@ -1509,9 +1511,10 @@ wss.on("connection", async (ws) => {
     endpointing: 100,
     vad_events: true,
     interim_results: true,
+    diarize: diarizationEnabled, // Enable speaker identification for transfer detection
   });
 
-  console.log("🎧 Deepgram stream started");
+  console.log(`🎧 Deepgram stream started (diarization: ${diarizationEnabled ? 'enabled' : 'disabled'})`);
 
   // NOTE: We no longer use SpeechStarted for barge-in because it's too sensitive
   // (triggers on any sound, not just actual words). Instead, barge-in is now
@@ -1582,7 +1585,25 @@ wss.on("connection", async (ws) => {
       const userText = results.transcript.trim();
       if (!userText) return;
 
-      console.log("🗣️ Caller transcript:", userText, `(is_final: ${isFinal}, speech_final: ${speechFinal})`);
+      // ============================================================================
+      // DIARIZATION: Extract speaker ID and detect speaker changes
+      // ============================================================================
+      const diarizationActive = callContext.diarizationEnabled ?? config.diarization?.enabled ?? true;
+      let speakerId: number | undefined;
+      let speakerConfidence: number | undefined;
+
+      // Deepgram diarization puts speaker info in the words array
+      if (diarizationActive && results.words && results.words.length > 0) {
+        const firstWord = results.words[0];
+        if (firstWord.speaker !== undefined) {
+          speakerId = firstWord.speaker;
+          speakerConfidence = firstWord.speaker_confidence ?? firstWord.confidence;
+        }
+      }
+
+      // Log with speaker info if available
+      const speakerInfo = speakerId !== undefined ? ` [speaker: ${speakerId}]` : "";
+      console.log(`🗣️ Caller transcript:${speakerInfo}`, userText, `(is_final: ${isFinal}, speech_final: ${speechFinal})`);
 
       // Broadcast transcript to live observers
       if (callContext.callControlId) {
@@ -1612,6 +1633,73 @@ wss.on("connection", async (ws) => {
             ).catch((err) => {
               console.error("[MUSIC-DETECT] Failed to sync transcript detection to Redis:", err);
             });
+          }
+        }
+      }
+
+      // ============================================================================
+      // DIARIZATION: Detect speaker changes for transfer detection
+      // When a different speaker is detected, trigger reclassification to determine
+      // if the new speaker is human or IVR.
+      // ============================================================================
+      if (diarizationActive && speakerId !== undefined && isFinal) {
+        const auditLog = callContext.diarizationAuditLogging ?? config.diarization?.auditLogging ?? true;
+        const debounceMs = callContext.diarizationDebounceMs ?? config.diarization?.debounceMs ?? 2000;
+        const requireSpeechFinal = config.diarization?.requireSpeechFinal ?? true;
+
+        // Only process speaker changes on speech_final if required, otherwise on any is_final
+        const shouldProcessNow = !requireSpeechFinal || speechFinal;
+
+        if (shouldProcessNow) {
+          // Track primary speaker (first speaker we detect after call starts)
+          if (callContext.primarySpeakerId === undefined) {
+            callContext.primarySpeakerId = speakerId;
+            callContext.currentSpeakerId = speakerId;
+            if (auditLog) {
+              console.log(`[DIARIZATION] 👤 Primary speaker established: ${speakerId}`);
+            }
+          } else if (callContext.currentSpeakerId !== speakerId) {
+            // Check if we should process this speaker change (debouncing)
+            const shouldProcess = humanDetection.shouldProcessSpeakerChange(
+              callContext.currentSpeakerId,
+              speakerId,
+              callContext.lastSpeakerChangeAt,
+              debounceMs
+            );
+
+            if (shouldProcess && callContext.humanDetection) {
+              // Update speaker tracking state
+              callContext.previousSpeakerId = callContext.currentSpeakerId;
+              callContext.currentSpeakerId = speakerId;
+              callContext.speakerChangeCount = (callContext.speakerChangeCount || 0) + 1;
+              callContext.lastSpeakerChangeAt = Date.now();
+
+              if (auditLog) {
+                console.log(`[DIARIZATION] 🔄 Speaker change #${callContext.speakerChangeCount}: ${callContext.previousSpeakerId} -> ${speakerId} (confidence: ${speakerConfidence?.toFixed(2) ?? 'N/A'})`);
+              }
+
+              // Trigger reclassification through human detection module
+              humanDetection.onSpeakerChanged(
+                callContext.humanDetection,
+                speakerId,
+                callContext.previousSpeakerId,
+                speakerConfidence
+              );
+              callContext.receiverState = callContext.humanDetection.receiverState;
+
+              // Broadcast speaker change to live observers
+              if (callContext.callControlId) {
+                observer.broadcastEvent(callContext.callControlId, "speaker_change", {
+                  previousSpeaker: callContext.previousSpeakerId,
+                  newSpeaker: speakerId,
+                  speakerChangeCount: callContext.speakerChangeCount,
+                  confidence: speakerConfidence,
+                });
+              }
+            } else if (auditLog && callContext.currentSpeakerId !== speakerId) {
+              // Log that we detected a change but didn't process (debounced)
+              console.log(`[DIARIZATION] ⏳ Speaker ${speakerId} detected but debounced`);
+            }
           }
         }
       }
@@ -2249,6 +2337,12 @@ wss.on("connection", async (ws) => {
           managedContext.musicDetectionHysteresisMs = decoded.musicDetectionHysteresisMs ?? null;
           managedContext.musicDetectionAuditLogging = decoded.musicDetectionAuditLogging ?? null;
           managedContext.musicDetectionUseTranscriptPatterns = decoded.musicDetectionUseTranscriptPatterns ?? null;
+
+          // Store diarization settings from decoded client_state
+          managedContext.diarizationEnabled = decoded.diarizationEnabled ?? null;
+          managedContext.diarizationDebounceMs = decoded.diarizationDebounceMs ?? null;
+          managedContext.diarizationMinConfidence = decoded.diarizationMinConfidence ?? null;
+          managedContext.diarizationAuditLogging = decoded.diarizationAuditLogging ?? null;
 
           // Initialize the tracker
           contextMgr.initializeMusicDetection(callControlId, {

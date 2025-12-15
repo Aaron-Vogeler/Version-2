@@ -47,6 +47,11 @@ interface OutboundCallRequest {
   musicDetectionHysteresisMs?: number;
   musicDetectionAuditLogging?: boolean;
   musicDetectionUseTranscriptPatterns?: boolean;
+  // Diarization settings (Speaker Change Detection)
+  diarizationEnabled?: boolean;
+  diarizationDebounceMs?: number;
+  diarizationMinConfidence?: number;
+  diarizationAuditLogging?: boolean;
   // LLM settings
   model?: string;
   temperature?: number;
@@ -72,7 +77,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationPrompt, musicDetectionEnabled, musicDetectionWindowSize, musicDetectionMusicThreshold, musicDetectionSilenceThreshold, musicDetectionHysteresisMs, musicDetectionAuditLogging, musicDetectionUseTranscriptPatterns, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
+    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationPrompt, musicDetectionEnabled, musicDetectionWindowSize, musicDetectionMusicThreshold, musicDetectionSilenceThreshold, musicDetectionHysteresisMs, musicDetectionAuditLogging, musicDetectionUseTranscriptPatterns, diarizationEnabled, diarizationDebounceMs, diarizationMinConfidence, diarizationAuditLogging, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -132,6 +137,11 @@ router.post("/", async (req: Request, res: Response) => {
       musicDetectionHysteresisMs: musicDetectionHysteresisMs || null,
       musicDetectionAuditLogging: musicDetectionAuditLogging ?? null,
       musicDetectionUseTranscriptPatterns: musicDetectionUseTranscriptPatterns ?? null,
+      // Diarization settings (Speaker Change Detection)
+      diarizationEnabled: diarizationEnabled ?? null,
+      diarizationDebounceMs: diarizationDebounceMs || null,
+      diarizationMinConfidence: diarizationMinConfidence || null,
+      diarizationAuditLogging: diarizationAuditLogging ?? null,
       // LLM settings
       model: model || null,
       temperature: temperature || null,

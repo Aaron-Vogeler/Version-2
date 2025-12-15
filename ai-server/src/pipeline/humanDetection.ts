@@ -686,6 +686,78 @@ export function checkMusicBasedHold(musicDetected: boolean, musicConfidence: num
   return musicDetected && musicConfidence >= 0.6;
 }
 
+// =============================================================================
+// DIARIZATION / SPEAKER CHANGE INTEGRATION
+// =============================================================================
+
+/**
+ * Handle speaker change detection from Deepgram diarization.
+ * When a new speaker is detected, trigger reclassification to determine
+ * if the new speaker is human or IVR.
+ *
+ * @param state - Human detection state
+ * @param newSpeakerId - The new speaker ID from diarization
+ * @param previousSpeakerId - The previous speaker ID
+ * @param confidence - Confidence in the speaker detection (if available)
+ * @returns true if reclassification was triggered
+ */
+export function onSpeakerChanged(
+  state: HumanDetectionState,
+  newSpeakerId: number,
+  previousSpeakerId: number | undefined,
+  confidence?: number
+): boolean {
+  console.log(`[HUMAN-DETECT] 🔄 Speaker change: ${previousSpeakerId ?? "none"} -> ${newSpeakerId} (confidence=${confidence?.toFixed(2) ?? "N/A"})`);
+
+  // Clear transcript buffer to prepare for fresh classification of new speaker
+  clearTranscriptBuffer(state);
+
+  // Set pending classification flag - next speech will be classified
+  state.pendingClassification = true;
+  state.gatheringForClassification = false;
+
+  // If we're not already in CHECKING state, transition
+  if (state.receiverState !== "CHECKING") {
+    transitionState(state, "CHECKING", `new speaker detected (${previousSpeakerId ?? "none"} -> ${newSpeakerId})`);
+  }
+
+  console.log(`[HUMAN-DETECT] 🎯 Reclassification triggered - waiting for first utterance from new speaker`);
+  return true;
+}
+
+/**
+ * Check if a speaker change should trigger reclassification.
+ * This applies debouncing and validation logic.
+ *
+ * @param currentSpeakerId - Current speaker ID from context
+ * @param newSpeakerId - New speaker ID from diarization
+ * @param lastSpeakerChangeAt - Timestamp of last speaker change
+ * @param debounceMs - Minimum time between speaker changes
+ * @returns true if this speaker change should be processed
+ */
+export function shouldProcessSpeakerChange(
+  currentSpeakerId: number | undefined,
+  newSpeakerId: number,
+  lastSpeakerChangeAt: number | undefined,
+  debounceMs: number
+): boolean {
+  // No change if speaker ID is the same
+  if (currentSpeakerId === newSpeakerId) {
+    return false;
+  }
+
+  // Apply debounce - ignore speaker changes that happen too quickly
+  if (lastSpeakerChangeAt !== undefined) {
+    const timeSinceLastChange = Date.now() - lastSpeakerChangeAt;
+    if (timeSinceLastChange < debounceMs) {
+      console.log(`[HUMAN-DETECT] ⏳ Speaker change debounced (${timeSinceLastChange}ms < ${debounceMs}ms)`);
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Get appropriate wait time based on current state
  */
