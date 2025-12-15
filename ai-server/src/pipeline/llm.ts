@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
 import { insertLlmLog } from "../utils/supabase";
@@ -7,12 +8,26 @@ import {
   parseClassificationResponse,
   type ReceiverClassification,
 } from "./humanDetection";
+import { StreamingJsonParser } from "./streamingJsonParser";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
   apiKey: config.groq.apiKey,
   baseURL: "https://api.groq.com/openai/v1",
 });
+
+// Create Gemini client (lazy initialized when API key is available)
+let gemini: GoogleGenerativeAI | null = null;
+if (config.gemini.apiKey) {
+  gemini = new GoogleGenerativeAI(config.gemini.apiKey);
+}
+
+/**
+ * Check if a model is a Gemini model (requires streaming support)
+ */
+function isGeminiModel(model: string): boolean {
+  return model.includes('gemini') || model.startsWith('models/gemini');
+}
 
 /**
  * Re-export CallContext from the context manager for backward compatibility.
@@ -24,9 +39,10 @@ export type CallContext = contextMgr.CallContext;
  * Uses variable keys: {ASSISTANT_NAME}, {USER_NAME} for placeholder replacement.
  * Goal is always injected at the bottom in format: CALL GOAL (YOUR ONLY MISSION): "{goal}"
  * @param context - Optional call context with goal, assistantName, userName, and systemPrompt
+ * @param useGeminiFormat - If true, adds Gemini-specific JSON format instructions
  * @returns The complete system prompt
  */
-function buildSystemPrompt(context?: CallContext): string {
+function buildSystemPrompt(context?: CallContext, useGeminiFormat = false): string {
   // Use systemPrompt from context (passed from frontend), fall back to config (for backwards compat)
   let prompt = context?.systemPrompt || config.llm.systemPrompt;
 
@@ -66,6 +82,31 @@ ${context.additionalContext}`;
     prompt += `
 
 CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`;
+  }
+
+  // Add Gemini-specific JSON format instructions for streaming optimization
+  if (useGeminiFormat) {
+    prompt += `
+
+CRITICAL RESPONSE FORMAT:
+You MUST respond with valid JSON in this EXACT field order:
+{
+  "behavior": "speak|wait|end|noop|hold|dtmf",
+  "speak": "text to speak to the caller",
+  "internal": "your internal reasoning (optional)"
+}
+
+Behavior types:
+- "speak": Normal conversational response (default, most common)
+- "wait": Stay silent and listen for more input
+- "dtmf": Send phone digits for IVR navigation (include "dtmf" field with digits)
+- "hold": Enter hold mode with periodic check-ins
+- "end": End the call after speaking the text in "speak" field
+- "noop": Do nothing, no speech
+
+The "behavior" field MUST come FIRST in the JSON for optimal processing.
+Always include all three fields (behavior, speak, internal) in every response.
+For "wait", "noop", or "hold" behaviors, set "speak" to null.`;
   }
 
   return prompt;
@@ -350,11 +391,31 @@ export async function classifyReceiver(
   }
 }
 
+/**
+ * Early TTS callback type - called when speak text is ready during streaming
+ */
+export type EarlyTtsCallback = (speakText: string, behavior: string) => Promise<void>;
+
+/**
+ * Generate an assistant reply using either streaming (Gemini) or buffered (Groq/other) mode.
+ * When using Gemini models, enables streaming and calls onSpeakReady as soon as speak text is available.
+ *
+ * @param userText - The user's input text
+ * @param context - Call context with goal, call ID, and other metadata
+ * @param onSpeakReady - Optional callback for early TTS (called during streaming when speak field is complete)
+ * @returns The complete AI-generated response
+ */
 export async function generateAssistantReply(
   userText: string,
-  context?: CallContext
+  context?: CallContext,
+  onSpeakReady?: EarlyTtsCallback
 ): Promise<string> {
-  const systemPrompt = buildSystemPrompt(context);
+  const callContext = context?.callId ? contextMgr.getContext(context.callId) : null;
+  const modelToUse = callContext?.model || config.groq.model;
+  const useStreaming = isGeminiModel(modelToUse);
+
+  // Build system prompt (with Gemini format instructions if using Gemini)
+  const systemPrompt = buildSystemPrompt(context, useStreaming);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemPrompt },
   ];
@@ -364,18 +425,16 @@ export async function generateAssistantReply(
 
   // Add rolling summary if available and non-empty
   if (context?.callId) {
-    const callContext = contextMgr.getContext(context.callId);
-    if (callContext?.rollingSummary) {
-      rollingSummary = callContext.rollingSummary;
+    const contextData = contextMgr.getContext(context.callId);
+    if (contextData?.rollingSummary) {
+      rollingSummary = contextData.rollingSummary;
       messages.push({
         role: "user",
-        content: `CALL CONTEXT SUMMARY:\n${callContext.rollingSummary}`,
+        content: `CALL CONTEXT SUMMARY:\n${contextData.rollingSummary}`,
       });
     }
 
     // Add recent turns from the sliding window
-    // NOTE: The current user turn is already appended to context BEFORE calling this function,
-    // so it will be included in recentTurns. We don't add userText separately to avoid duplicates.
     const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
     recentTurnsCount = recentTurns.length;
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
@@ -386,31 +445,80 @@ export async function generateAssistantReply(
   }
 
   const startTime = Date.now();
-  // Use parameters from context if available, otherwise fall back to defaults
-  const callContext = context?.callId ? contextMgr.getContext(context.callId) : null;
-  const modelToUse = callContext?.model || config.groq.model;
   const temperatureToUse = callContext?.temperature ?? 0.7;
   const maxTokensToUse = callContext?.maxTokens ?? 1024;
   const topPToUse = callContext?.topP ?? 1.0;
   const reasoningToUse = callContext?.reasoning || 'medium';
   const jsonModeToUse = callContext?.jsonMode || false;
 
+  // Route to appropriate provider based on model
+  if (useStreaming && gemini) {
+    return await generateWithGeminiStreaming(
+      modelToUse,
+      messages,
+      temperatureToUse,
+      maxTokensToUse,
+      topPToUse,
+      context,
+      userText,
+      rollingSummary,
+      recentTurnsCount,
+      startTime,
+      onSpeakReady
+    );
+  } else {
+    return await generateWithGroqBuffered(
+      modelToUse,
+      messages,
+      temperatureToUse,
+      maxTokensToUse,
+      topPToUse,
+      reasoningToUse,
+      jsonModeToUse,
+      context,
+      userText,
+      systemPrompt,
+      rollingSummary,
+      recentTurnsCount,
+      startTime
+    );
+  }
+}
+
+/**
+ * Generate response using Groq (buffered mode - existing behavior)
+ */
+async function generateWithGroqBuffered(
+  modelToUse: string,
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  temperature: number,
+  maxTokens: number,
+  topP: number,
+  reasoningEffort: string,
+  jsonMode: boolean,
+  context: CallContext | undefined,
+  userText: string,
+  systemPrompt: string,
+  rollingSummary: string | undefined,
+  recentTurnsCount: number,
+  startTime: number
+): Promise<string> {
   // Build API request parameters
   const apiParams: any = {
     model: modelToUse,
     messages,
-    temperature: temperatureToUse,
-    max_tokens: maxTokensToUse,
-    top_p: topPToUse,
+    temperature,
+    max_tokens: maxTokens,
+    top_p: topP,
   };
 
-  // Add reasoning_effort if model supports it (openai/gpt-oss-20b)
+  // Add reasoning_effort if model supports it
   if (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) {
-    apiParams.reasoning_effort = reasoningToUse;
+    apiParams.reasoning_effort = reasoningEffort;
   }
 
   // Add response_format for JSON mode
-  if (jsonModeToUse) {
+  if (jsonMode) {
     apiParams.response_format = { type: 'json_object' };
   }
 
@@ -425,8 +533,8 @@ export async function generateAssistantReply(
       call_id: context.callId,
       request_type: "chat",
       model: modelToUse,
-      temperature: temperatureToUse,
-      max_tokens: maxTokensToUse,
+      temperature,
+      max_tokens: maxTokens,
       system_prompt: systemPrompt,
       messages: messages,
       user_input: userText,
@@ -443,4 +551,130 @@ export async function generateAssistantReply(
   }
 
   return assistantResponse;
+}
+
+/**
+ * Generate response using Gemini (streaming mode with early TTS)
+ */
+async function generateWithGeminiStreaming(
+  modelToUse: string,
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  temperature: number,
+  maxTokens: number,
+  topP: number,
+  context: CallContext | undefined,
+  userText: string,
+  rollingSummary: string | undefined,
+  recentTurnsCount: number,
+  startTime: number,
+  onSpeakReady?: EarlyTtsCallback
+): Promise<string> {
+  if (!gemini) {
+    throw new Error("Gemini client not initialized - GEMINI_API_KEY not configured");
+  }
+
+  console.log(`[LLM] 🔄 Using Gemini streaming mode for model: ${modelToUse}`);
+
+  const model = gemini.getGenerativeModel({ model: modelToUse });
+
+  // Convert OpenAI-style messages to Gemini format
+  const systemMessage = messages.find(m => m.role === 'system')?.content || '';
+  const conversationHistory = messages
+    .filter(m => m.role !== 'system')
+    .map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+  // Build generation config
+  const generationConfig = {
+    temperature,
+    maxOutputTokens: maxTokens,
+    topP,
+  };
+
+  try {
+    // Start streaming
+    const chat = model.startChat({
+      history: conversationHistory.slice(0, -1), // All but last message
+      systemInstruction: systemMessage,
+      generationConfig,
+    });
+
+    const lastUserMessage = conversationHistory[conversationHistory.length - 1]?.parts[0]?.text || userText;
+    const result = await chat.sendMessageStream(lastUserMessage);
+
+    // Process stream with incremental JSON parsing
+    const parser = new StreamingJsonParser();
+    let fullResponse = '';
+    let ttsCallbackFired = false;
+
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      fullResponse += text;
+      parser.addChunk(text);
+
+      // Check if we can trigger early TTS
+      if (!ttsCallbackFired && parser.canStartTts() && onSpeakReady) {
+        const speakText = parser.getSpeakText();
+        const behavior = parser.getBehavior();
+        if (speakText) {
+          console.log('[STREAM] 🚀 Speak field complete - triggering early TTS');
+          try {
+            await onSpeakReady(speakText, behavior);
+            ttsCallbackFired = true;
+          } catch (callbackError) {
+            console.error('[STREAM] ❌ Early TTS callback failed:', callbackError);
+            // Don't throw - continue processing stream
+          }
+        }
+      }
+
+      // Check if we should stop processing early (skip TTS behaviors)
+      if (parser.shouldSkipTts() && !ttsCallbackFired) {
+        console.log(`[STREAM] ⏭️ Behavior is ${parser.getBehavior()} - no TTS needed, stopping stream processing`);
+        break;
+      }
+    }
+
+    const latencyMs = Date.now() - startTime;
+    const finalResponse = await result.response;
+
+    // Get usage metadata if available
+    const usageMetadata = finalResponse.usageMetadata;
+
+    console.log(`[LLM] ✅ Gemini streaming complete (${latencyMs}ms, ${fullResponse.length} chars)`);
+
+    // Log the LLM interaction
+    if (context?.callId) {
+      insertLlmLog({
+        call_id: context.callId,
+        request_type: "chat",
+        model: modelToUse,
+        temperature,
+        max_tokens: maxTokens,
+        system_prompt: systemMessage,
+        messages: messages,
+        user_input: userText,
+        assistant_response: fullResponse,
+        rolling_summary: rollingSummary,
+        recent_turns_count: recentTurnsCount,
+        prompt_tokens: usageMetadata?.promptTokenCount,
+        completion_tokens: usageMetadata?.candidatesTokenCount,
+        total_tokens: usageMetadata?.totalTokenCount,
+        latency_ms: latencyMs,
+      }).catch((err) => {
+        console.error(`[${context.callId}] Failed to log Gemini chat:`, err);
+      });
+    }
+
+    return fullResponse;
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    console.error(
+      `[LLM] ❌ Gemini streaming error (${latencyMs}ms):`,
+      error instanceof Error ? error.message : error
+    );
+    throw error;
+  }
 }
