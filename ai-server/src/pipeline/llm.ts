@@ -597,7 +597,7 @@ async function generateWithGeminiStreaming(
     // Start streaming
     const chat = model.startChat({
       history: conversationHistory.slice(0, -1), // All but last message
-      systemInstruction: systemMessage,
+      systemInstruction: { parts: [{ text: systemMessage }] },
       generationConfig,
     });
 
