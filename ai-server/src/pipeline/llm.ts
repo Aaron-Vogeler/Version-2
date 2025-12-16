@@ -16,6 +16,15 @@ const groq = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
+// Create xAI client (lazy initialized when API key is available)
+let xai: OpenAI | null = null;
+if (config.xai.apiKey) {
+  xai = new OpenAI({
+    apiKey: config.xai.apiKey,
+    baseURL: config.xai.baseUrl,
+  });
+}
+
 // Create Gemini client (lazy initialized when API key is available)
 let gemini: GoogleGenerativeAI | null = null;
 if (config.gemini.apiKey) {
@@ -27,6 +36,13 @@ if (config.gemini.apiKey) {
  */
 function isGeminiModel(model: string): boolean {
   return model.includes('gemini') || model.startsWith('models/gemini');
+}
+
+/**
+ * Check if a model is a Grok/xAI model
+ */
+function isGrokModel(model: string): boolean {
+  return model.includes('grok');
 }
 
 /**
@@ -466,8 +482,29 @@ export async function generateAssistantReply(
       startTime,
       onSpeakReady
     );
+  } else if (isGrokModel(modelToUse) && xai) {
+    // Route Grok models to xAI API
+    console.log(`[LLM] 🚀 Using xAI for Grok model: ${modelToUse}`);
+    return await generateWithOpenAICompatible(
+      xai,
+      modelToUse,
+      messages,
+      temperatureToUse,
+      maxTokensToUse,
+      topPToUse,
+      reasoningToUse,
+      jsonModeToUse,
+      context,
+      userText,
+      systemPrompt,
+      rollingSummary,
+      recentTurnsCount,
+      startTime
+    );
   } else {
-    return await generateWithGroqBuffered(
+    // Default to Groq
+    return await generateWithOpenAICompatible(
+      groq,
       modelToUse,
       messages,
       temperatureToUse,
@@ -486,9 +523,10 @@ export async function generateAssistantReply(
 }
 
 /**
- * Generate response using Groq (buffered mode - existing behavior)
+ * Generate response using OpenAI-compatible API (Groq, xAI, etc.)
  */
-async function generateWithGroqBuffered(
+async function generateWithOpenAICompatible(
+  client: OpenAI,
   modelToUse: string,
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
   temperature: number,
@@ -512,8 +550,9 @@ async function generateWithGroqBuffered(
     top_p: topP,
   };
 
-  // Add reasoning_effort if model supports it
-  if (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) {
+  // Add reasoning_effort if model supports it (exclude Grok models)
+  const supportsReasoning = (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) && !isGrokModel(modelToUse);
+  if (supportsReasoning) {
     apiParams.reasoning_effort = reasoningEffort;
   }
 
@@ -522,7 +561,7 @@ async function generateWithGroqBuffered(
     apiParams.response_format = { type: 'json_object' };
   }
 
-  const response = await groq.chat.completions.create(apiParams);
+  const response = await client.chat.completions.create(apiParams);
   const latencyMs = Date.now() - startTime;
 
   const assistantResponse = response.choices[0]?.message?.content || "";
@@ -575,8 +614,6 @@ async function generateWithGeminiStreaming(
 
   console.log(`[LLM] 🔄 Using Gemini streaming mode for model: ${modelToUse}`);
 
-  const model = gemini.getGenerativeModel({ model: modelToUse });
-
   // Convert OpenAI-style messages to Gemini format
   const systemMessage = messages.find(m => m.role === 'system')?.content || '';
   const conversationHistory = messages
@@ -585,6 +622,12 @@ async function generateWithGeminiStreaming(
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
     }));
+
+  // Create model with system instruction (must be passed to getGenerativeModel, not startChat)
+  const model = gemini.getGenerativeModel({
+    model: modelToUse,
+    systemInstruction: systemMessage,
+  });
 
   // Build generation config
   const generationConfig = {
@@ -597,7 +640,6 @@ async function generateWithGeminiStreaming(
     // Start streaming
     const chat = model.startChat({
       history: conversationHistory.slice(0, -1), // All but last message
-      systemInstruction: systemMessage,
       generationConfig,
     });
 

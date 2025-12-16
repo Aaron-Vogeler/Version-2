@@ -14,7 +14,18 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEFAULT_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// Available models for selection (Groq + Gemini)
+// xAI API configuration (for Grok models)
+const XAI_API_KEY = process.env.XAI_API_KEY;
+const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
+
+/**
+ * Check if a model is a Grok/xAI model
+ */
+function isGrokModel(model: string): boolean {
+  return model.includes('grok');
+}
+
+// Available models for selection (Groq + Gemini + Grok)
 const GROQ_MODELS = [
   // Groq models
   { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', description: 'Fast, efficient model for quick responses' },
@@ -25,6 +36,9 @@ const GROQ_MODELS = [
   { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'Mixture of experts model' },
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned' },
   { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', description: 'GPT open-source 20B model' },
+
+  // Grok models (xAI)
+  { id: 'grok-4-1-fast-non-reasoning', name: '🚀 Grok 4.1 Fast', description: 'xAI Grok 4.1 - Fast non-reasoning model' },
 
   // Gemini models (with streaming support)
   { id: 'models/gemini-flash-lite-latest', name: '⚡ Gemini Flash Lite (Streaming)', description: 'Google Gemini Flash Lite - Fastest with streaming TTS' },
@@ -200,9 +214,9 @@ function formatTurnsForSummary(turns: Turn[]): string {
 }
 
 /**
- * Call Groq API
+ * Call LLM API (routes to Groq or xAI based on model)
  */
-async function callGroqAPI(
+async function callLLMAPI(
   messages: ChatMessage[],
   model: string,
   temperature: number,
@@ -211,10 +225,19 @@ async function callGroqAPI(
 ): Promise<{ response: GroqResponse; latency_ms: number }> {
   const startTime = Date.now();
 
-  const groqResponse = await fetch(GROQ_API_URL, {
+  // Route to appropriate API based on model
+  const useXAI = isGrokModel(model);
+  const apiUrl = useXAI ? XAI_API_URL : GROQ_API_URL;
+  const apiKey = useXAI ? XAI_API_KEY : GROQ_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(useXAI ? 'XAI_API_KEY not configured' : 'GROQ_API_KEY not configured');
+  }
+
+  const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -228,12 +251,13 @@ async function callGroqAPI(
 
   const endTime = Date.now();
 
-  if (!groqResponse.ok) {
-    const errorData = await groqResponse.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `Groq API error: ${groqResponse.status}`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const provider = useXAI ? 'xAI' : 'Groq';
+    throw new Error(errorData.error?.message || `${provider} API error: ${response.status}`);
   }
 
-  const data: GroqResponse = await groqResponse.json();
+  const data: GroqResponse = await response.json();
   return { response: data, latency_ms: endTime - startTime };
 }
 
@@ -293,7 +317,7 @@ export async function POST(req: NextRequest) {
         { role: 'user', content: summaryPrompt },
       ];
 
-      const { response, latency_ms } = await callGroqAPI(
+      const { response, latency_ms } = await callLLMAPI(
         summaryMessages,
         model,
         0.2, // Lower temperature for consistency
@@ -364,7 +388,7 @@ export async function POST(req: NextRequest) {
     messages.push({ role: 'user', content: userMessage });
 
     // Call Groq API
-    const { response, latency_ms } = await callGroqAPI(
+    const { response, latency_ms } = await callLLMAPI(
       messages,
       model,
       temperature,

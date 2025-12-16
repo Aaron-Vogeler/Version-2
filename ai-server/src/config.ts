@@ -69,6 +69,11 @@ const config = {
     apiKey: getEnv("GEMINI_API_KEY", ""), // Optional - only needed if using Gemini models
   },
 
+  xai: {
+    apiKey: getEnv("XAI_API_KEY", ""), // Optional - only needed if using Grok models
+    baseUrl: getEnv("XAI_BASE_URL", "https://api.x.ai/v1"),
+  },
+
   telnyx: {
     apiKey: requireEnv("TELNYX_API_KEY"),
     sipConnectionId: requireEnv("TELNYX_SIP_CONNECTION_ID"),
