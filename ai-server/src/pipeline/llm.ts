@@ -550,8 +550,9 @@ async function generateWithOpenAICompatible(
     top_p: topP,
   };
 
-  // Add reasoning_effort if model supports it
-  if (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) {
+  // Add reasoning_effort if model supports it (exclude Grok models)
+  const supportsReasoning = (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) && !isGrokModel(modelToUse);
+  if (supportsReasoning) {
     apiParams.reasoning_effort = reasoningEffort;
   }
 
