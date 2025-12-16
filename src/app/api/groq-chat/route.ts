@@ -14,7 +14,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEFAULT_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// Available models for selection (Groq + Gemini)
+// Available models for selection (Groq + Gemini + Grok)
 const GROQ_MODELS = [
   // Groq models
   { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', description: 'Fast, efficient model for quick responses' },
@@ -25,6 +25,9 @@ const GROQ_MODELS = [
   { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'Mixture of experts model' },
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned' },
   { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', description: 'GPT open-source 20B model' },
+
+  // Grok models (xAI)
+  { id: 'grok-4-1-fast-non-reasoning', name: '🚀 Grok 4.1 Fast', description: 'xAI Grok 4.1 - Fast non-reasoning model' },
 
   // Gemini models (with streaming support)
   { id: 'models/gemini-flash-lite-latest', name: '⚡ Gemini Flash Lite (Streaming)', description: 'Google Gemini Flash Lite - Fastest with streaming TTS' },
