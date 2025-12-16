@@ -575,8 +575,6 @@ async function generateWithGeminiStreaming(
 
   console.log(`[LLM] 🔄 Using Gemini streaming mode for model: ${modelToUse}`);
 
-  const model = gemini.getGenerativeModel({ model: modelToUse });
-
   // Convert OpenAI-style messages to Gemini format
   const systemMessage = messages.find(m => m.role === 'system')?.content || '';
   const conversationHistory = messages
@@ -585,6 +583,12 @@ async function generateWithGeminiStreaming(
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
     }));
+
+  // Create model with system instruction (must be passed to getGenerativeModel, not startChat)
+  const model = gemini.getGenerativeModel({
+    model: modelToUse,
+    systemInstruction: systemMessage,
+  });
 
   // Build generation config
   const generationConfig = {
@@ -597,7 +601,6 @@ async function generateWithGeminiStreaming(
     // Start streaming
     const chat = model.startChat({
       history: conversationHistory.slice(0, -1), // All but last message
-      systemInstruction: { parts: [{ text: systemMessage }] },
       generationConfig,
     });
 
