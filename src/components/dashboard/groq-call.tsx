@@ -179,6 +179,7 @@ interface SavedGroqSettings {
     holdSilenceMs?: number;
     humanTurnsAfterHold?: number;
     maxUnsure?: number;
+    classificationModel?: string;
     classificationPrompt?: string;
   };
   musicDetectionSettings?: {
@@ -308,6 +309,7 @@ Examples:
     holdSilenceMs: 5000,
     humanTurnsAfterHold: 1,
     maxUnsure: 3,
+    classificationModel: 'llama-3.1-8b-instant',
     classificationPrompt: DEFAULT_CLASSIFICATION_PROMPT,
   });
   const [showHumanDetectionSettings, setShowHumanDetectionSettings] = useState(false);
@@ -614,6 +616,7 @@ Examples:
           human_detection_hold_silence_ms: humanDetectionSettings.holdSilenceMs,
           human_detection_human_turns_after_hold: humanDetectionSettings.humanTurnsAfterHold,
           human_detection_max_unsure: humanDetectionSettings.maxUnsure,
+          human_detection_classification_model: humanDetectionSettings.classificationModel,
           human_detection_classification_prompt: humanDetectionSettings.classificationPrompt,
           // Music Detection settings (Energy Floor)
           music_detection_enabled: musicDetectionSettings.enabled,
@@ -1160,19 +1163,6 @@ Examples:
         {showCallControlSettings && (
           <div className="space-y-3 bg-muted/30 rounded-md p-3">
             <div className="space-y-1">
-              <Label className="text-xs">TTS Debounce (ms)</Label>
-              <Input
-                type="number"
-                min="100"
-                max="2000"
-                step="50"
-                value={callControlSettings.ttsDebounceMs}
-                onChange={(e) => setCallControlSettings(prev => ({ ...prev, ttsDebounceMs: parseInt(e.target.value) || 500 }))}
-                className="text-xs h-8"
-              />
-              <p className="text-[10px] text-muted-foreground">Silence before AI responds</p>
-            </div>
-            <div className="space-y-1">
               <Label className="text-xs">Barge-In Cooldown (ms)</Label>
               <Input
                 type="number"
@@ -1184,19 +1174,6 @@ Examples:
                 className="text-xs h-8"
               />
               <p className="text-[10px] text-muted-foreground">Time between stop commands</p>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Utterance Flush (ms)</Label>
-              <Input
-                type="number"
-                min="100"
-                max="1000"
-                step="50"
-                value={callControlSettings.callerUtteranceFlushMs}
-                onChange={(e) => setCallControlSettings(prev => ({ ...prev, callerUtteranceFlushMs: parseInt(e.target.value) || 300 }))}
-                className="text-xs h-8"
-              />
-              <p className="text-[10px] text-muted-foreground">Wait before logging utterance</p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Hangup Delay (ms)</Label>
@@ -1479,10 +1456,29 @@ Examples:
             </div>
 
             <div className="border-t border-border/30 pt-3 mt-3">
-              <p className="text-xs font-medium text-muted-foreground mb-2">Classification Prompt</p>
+              <p className="text-xs font-medium text-muted-foreground mb-2">Classification Settings</p>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">LLM Classification Prompt</Label>
+              <Label className="text-xs">Classification Model</Label>
+              <Select
+                value={humanDetectionSettings.classificationModel || 'llama-3.1-8b-instant'}
+                onValueChange={(value) => setHumanDetectionSettings(prev => ({ ...prev, classificationModel: value }))}
+              >
+                <SelectTrigger className="text-xs h-8">
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">Model used for human/IVR classification</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Classification Prompt</Label>
               <textarea
                 value={humanDetectionSettings.classificationPrompt}
                 onChange={(e) => setHumanDetectionSettings(prev => ({ ...prev, classificationPrompt: e.target.value }))}
@@ -1880,10 +1876,6 @@ Examples:
           <div className="flex justify-between">
             <span className="text-muted-foreground">Phone Number:</span>
             <span className="font-mono">{toNumber || '(not set)'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">TTS Debounce:</span>
-            <span className="font-mono">{callControlSettings.ttsDebounceMs}ms</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Hold Check-In:</span>

@@ -55,6 +55,7 @@ export interface CallContext {
   lastTranscriptAt?: number;
   ttsDebounceTimer?: any; // NodeJS.Timeout | ReturnType<typeof setTimeout>
   deepgramSocket?: any;
+  deepgramStartedAt?: number; // Timestamp when Deepgram stream started (for billing)
 
   // TTS playback state (authoritative, driven by Telnyx webhooks)
   ttsState?: "idle" | "speaking" | "stopping";
@@ -134,6 +135,7 @@ export interface CallContext {
   humanDetectionHoldSilenceMs?: number; // Extended silence threshold for hold detection
   humanDetectionHumanTurnsAfterHold?: number; // Human turns required after hold to confirm
   humanDetectionMaxUnsure?: number; // Max consecutive unsure before defaulting to IVR
+  humanDetectionClassificationModel?: string; // Model to use for receiver classification
   humanDetectionClassificationPrompt?: string; // Custom prompt for receiver classification
 
   // LLM-based party type detection (human vs IVR/robotic)
