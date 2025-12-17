@@ -38,6 +38,7 @@ interface OutboundCallRequest {
   humanDetectionHoldSilenceMs?: number;
   humanDetectionHumanTurnsAfterHold?: number;
   humanDetectionMaxUnsure?: number;
+  humanDetectionClassificationModel?: string;
   humanDetectionClassificationPrompt?: string;
   // Music Detection settings (Energy Floor)
   musicDetectionEnabled?: boolean;
@@ -77,7 +78,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationPrompt, musicDetectionEnabled, musicDetectionWindowSize, musicDetectionMusicThreshold, musicDetectionSilenceThreshold, musicDetectionHysteresisMs, musicDetectionAuditLogging, musicDetectionUseTranscriptPatterns, diarizationEnabled, diarizationDebounceMs, diarizationMinConfidence, diarizationAuditLogging, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
+    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationModel, humanDetectionClassificationPrompt, musicDetectionEnabled, musicDetectionWindowSize, musicDetectionMusicThreshold, musicDetectionSilenceThreshold, musicDetectionHysteresisMs, musicDetectionAuditLogging, musicDetectionUseTranscriptPatterns, diarizationEnabled, diarizationDebounceMs, diarizationMinConfidence, diarizationAuditLogging, model, temperature, maxTokens, topP, reasoning, stream, jsonMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -128,6 +129,7 @@ router.post("/", async (req: Request, res: Response) => {
       humanDetectionHoldSilenceMs: humanDetectionHoldSilenceMs || null,
       humanDetectionHumanTurnsAfterHold: humanDetectionHumanTurnsAfterHold || null,
       humanDetectionMaxUnsure: humanDetectionMaxUnsure || null,
+      humanDetectionClassificationModel: humanDetectionClassificationModel || null,
       humanDetectionClassificationPrompt: humanDetectionClassificationPrompt || null,
       // Music Detection settings (Energy Floor)
       musicDetectionEnabled: musicDetectionEnabled ?? null,

@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
-import { insertLlmLog } from "../utils/supabase";
+import { insertLlmLog, insertUsageCostLog, calculateXaiCost, calculateGroqCost } from "../utils/supabase";
 import {
   buildClassificationPrompt,
   parseClassificationResponse,
@@ -340,14 +340,17 @@ Respond with ONLY "True" if this sounds like an IVR/AI/robotic system, or "False
  * @param transcriptText - The transcript text to analyze
  * @param callId - Optional call ID for logging
  * @param customPrompt - Optional custom prompt template (uses {{TRANSCRIPT}} placeholder)
+ * @param customModel - Optional model to use for classification (defaults to config.groq.model)
  * @returns Classification result with receiver type, confidence, and reason
  */
 export async function classifyReceiver(
   transcriptText: string,
   callId?: string,
-  customPrompt?: string | null
+  customPrompt?: string | null,
+  customModel?: string | null
 ): Promise<ReceiverClassification> {
   const prompt = buildClassificationPrompt(transcriptText, customPrompt);
+  const modelToUse = customModel || config.groq.model;
 
   const systemPrompt = `You are an expert at analyzing phone call transcripts to determine if the speaker is a human or an automated IVR system. You must respond with ONLY valid JSON in the exact format specified. Do not include any other text.`;
 
@@ -356,10 +359,15 @@ export async function classifyReceiver(
     { role: "user", content: prompt },
   ];
 
+  // Determine which client to use based on model
+  const useXai = isGrokModel(modelToUse) && xai;
+  const client = useXai ? xai! : groq;
+
   try {
     const startTime = Date.now();
-    const response = await groq.chat.completions.create({
-      model: config.groq.model,
+    console.log(`[RECEIVER-CLASSIFY] 🔍 Using model: ${modelToUse} (${useXai ? 'xAI' : 'Groq'})`);
+    const response = await client.chat.completions.create({
+      model: modelToUse,
       messages,
       temperature: 0.1, // Low temperature for consistent classification
       max_tokens: 100, // Enough for JSON response
@@ -371,29 +379,67 @@ export async function classifyReceiver(
 
     console.log(
       `[RECEIVER-CLASSIFY] 🔍 Classification result: ${classification.receiver.toUpperCase()} ` +
-      `(confidence: ${classification.confidence?.toFixed(2) ?? "N/A"}, ` +
+      `(model: ${modelToUse}, confidence: ${classification.confidence?.toFixed(2) ?? "N/A"}, ` +
       `reason: "${classification.reason || "none"}", latency: ${latencyMs}ms)`
     );
+
+    // Extract token usage
+    const usage = response.usage;
+    const promptTokens = usage?.prompt_tokens || 0;
+    const completionTokens = usage?.completion_tokens || 0;
+    const totalTokens = usage?.total_tokens || 0;
+    const cachedTokens = (usage as any)?.prompt_tokens_details?.cached_tokens || 0;
+
+    // Log detailed token usage for Grok models
+    if (useXai && usage) {
+      console.log(
+        `[RECEIVER-CLASSIFY] 🤖 Grok usage: prompt=${promptTokens}, completion=${completionTokens}, ` +
+        `total=${totalTokens}, cached=${cachedTokens}`
+      );
+    }
 
     // Log the LLM interaction for debugging
     if (callId) {
       insertLlmLog({
         call_id: callId,
         request_type: "receiver_classification",
-        model: config.groq.model,
+        model: modelToUse,
         temperature: 0.1,
         max_tokens: 100,
         system_prompt: systemPrompt,
         messages: messages,
         user_input: transcriptText,
         assistant_response: rawResponse,
-        prompt_tokens: response.usage?.prompt_tokens,
-        completion_tokens: response.usage?.completion_tokens,
-        total_tokens: response.usage?.total_tokens,
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: totalTokens,
         latency_ms: latencyMs,
       }).catch((err) => {
         console.error(`[${callId}] Failed to log receiver classification:`, err);
       });
+
+      // Log usage cost
+      if (usage) {
+        const cost = useXai
+          ? calculateXaiCost(promptTokens, completionTokens, modelToUse, cachedTokens)
+          : calculateGroqCost(promptTokens, completionTokens, modelToUse);
+
+        insertUsageCostLog({
+          call_id: callId,
+          provider: useXai ? "xai" : "groq",
+          service_type: "llm",
+          model: modelToUse,
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: totalTokens,
+          cached_tokens: cachedTokens > 0 ? cachedTokens : undefined,
+          cost_usd: cost,
+          request_type: "receiver_classification",
+          metadata: cachedTokens > 0 ? { cached_tokens: cachedTokens } : undefined,
+        }).catch((err) => {
+          console.error(`[${callId}] Failed to log classification cost:`, err);
+        });
+      }
     }
 
     return classification;
@@ -566,6 +612,27 @@ async function generateWithOpenAICompatible(
 
   const assistantResponse = response.choices[0]?.message?.content || "";
 
+  // Extract token usage - xAI provides detailed usage including cache info
+  const usage = response.usage;
+  const promptTokens = usage?.prompt_tokens || 0;
+  const completionTokens = usage?.completion_tokens || 0;
+  const totalTokens = usage?.total_tokens || 0;
+
+  // xAI provides cache details in usage_details (if available)
+  const usageDetails = (usage as any)?.prompt_tokens_details;
+  const cachedTokens = usageDetails?.cached_tokens || 0;
+
+  // Determine if this is xAI/Grok for detailed logging
+  const isXai = isGrokModel(modelToUse);
+
+  // Log detailed token usage for Grok models
+  if (isXai && usage) {
+    console.log(
+      `[LLM] 🤖 Grok usage: prompt=${promptTokens}, completion=${completionTokens}, ` +
+      `total=${totalTokens}, cached=${cachedTokens}`
+    );
+  }
+
   // Log the LLM interaction to database for live visibility
   if (context?.callId) {
     insertLlmLog({
@@ -580,13 +647,36 @@ async function generateWithOpenAICompatible(
       assistant_response: assistantResponse,
       rolling_summary: rollingSummary,
       recent_turns_count: recentTurnsCount,
-      prompt_tokens: response.usage?.prompt_tokens,
-      completion_tokens: response.usage?.completion_tokens,
-      total_tokens: response.usage?.total_tokens,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens,
       latency_ms: latencyMs,
     }).catch((err) => {
       console.error(`[${context.callId}] Failed to log LLM chat:`, err);
     });
+
+    // Log usage cost
+    if (usage) {
+      const cost = isXai
+        ? calculateXaiCost(promptTokens, completionTokens, modelToUse, cachedTokens)
+        : calculateGroqCost(promptTokens, completionTokens, modelToUse);
+
+      insertUsageCostLog({
+        call_id: context.callId,
+        provider: isXai ? "xai" : "groq",
+        service_type: "llm",
+        model: modelToUse,
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: totalTokens,
+        cached_tokens: cachedTokens > 0 ? cachedTokens : undefined,
+        cost_usd: cost,
+        request_type: "chat",
+        metadata: cachedTokens > 0 ? { cached_tokens: cachedTokens } : undefined,
+      }).catch((err) => {
+        console.error(`[${context.callId}] Failed to log LLM cost:`, err);
+      });
+    }
   }
 
   return assistantResponse;

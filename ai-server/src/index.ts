@@ -12,7 +12,7 @@ import * as humanDetection from "./pipeline/humanDetection";
 import { synthesizeSpeech, stopSpeaking, hangupCall, sendDtmf } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 import { transcriptContainsMusicIndicator } from "./pipeline/energy-floor";
-import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording, insertLlmLog } from "./utils/supabase";
+import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording, insertLlmLog, insertUsageCostLog, calculateDeepgramCost } from "./utils/supabase";
 import * as sharedState from "./sharedState";
 import {
   createMulawStereoWav,
@@ -1077,6 +1077,25 @@ function cleanupCallState(callContext: CallContext): void {
 
   // Close the Deepgram WebSocket if it exists and is open
   if (callContext.deepgramSocket) {
+    // Log Deepgram cost before closing
+    if (callContext.deepgramStartedAt && callContext.callControlId) {
+      const durationSec = (Date.now() - callContext.deepgramStartedAt) / 1000;
+      const deepgramCost = calculateDeepgramCost(durationSec, config.deepgram.model || "nova-2");
+      console.log(`[DEEPGRAM] 🎤 Audio processed: ${durationSec.toFixed(2)}s, cost: $${deepgramCost.toFixed(6)}`);
+
+      insertUsageCostLog({
+        call_id: callContext.callControlId,
+        provider: "deepgram",
+        service_type: "stt",
+        model: config.deepgram.model || "nova-2",
+        audio_duration_sec: durationSec,
+        cost_usd: deepgramCost,
+        request_type: "live_transcription",
+      }).catch((err) => {
+        console.error("[DEEPGRAM] Failed to log STT cost:", err);
+      });
+    }
+
     try {
       // Try to send CloseStream if the SDK requires it
       if (typeof callContext.deepgramSocket.finish === "function") {
@@ -1094,6 +1113,7 @@ function cleanupCallState(callContext: CallContext): void {
       );
     }
     callContext.deepgramSocket = undefined;
+    callContext.deepgramStartedAt = undefined;
   }
 
   // Clean up the CallContext from the context manager
@@ -1978,7 +1998,7 @@ wss.on("connection", async (ws) => {
                 ctx.receiverState = ctx.humanDetection.receiverState;
 
                 // Send to LLM for classification (no pattern assumptions)
-                classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt).then((classification) => {
+                classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt, ctx.humanDetectionClassificationModel).then((classification) => {
                   if (!ctx.humanDetection) return;
 
                   // Finish gathering phase
@@ -2151,7 +2171,7 @@ wss.on("connection", async (ws) => {
                     ctx.receiverState = ctx.humanDetection.receiverState;
 
                     // Send to LLM for classification (no pattern assumptions)
-                    classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt).then((classification) => {
+                    classifyReceiver(transcript, ctx.callId, ctx.humanDetectionClassificationPrompt, ctx.humanDetectionClassificationModel).then((classification) => {
                       if (!ctx.humanDetection) return;
 
                       // Finish gathering phase
@@ -2352,12 +2372,14 @@ wss.on("connection", async (ws) => {
           managedContext.humanDetectionHoldSilenceMs = decoded.humanDetectionHoldSilenceMs || null;
           managedContext.humanDetectionHumanTurnsAfterHold = decoded.humanDetectionHumanTurnsAfterHold || null;
           managedContext.humanDetectionMaxUnsure = decoded.humanDetectionMaxUnsure || null;
+          managedContext.humanDetectionClassificationModel = decoded.humanDetectionClassificationModel || null;
           managedContext.humanDetectionClassificationPrompt = decoded.humanDetectionClassificationPrompt || null;
           managedContext.initiatedAt = decoded.initiatedAt;
           managedContext.isCallActive = true;
           managedContext.lastUserTranscript = "";
           managedContext.lastTranscriptAt = 0;
           managedContext.deepgramSocket = dgLive;
+          managedContext.deepgramStartedAt = Date.now(); // Track Deepgram start for billing
 
           // Create the local callContext reference for backward compatibility
           callContext = managedContext;

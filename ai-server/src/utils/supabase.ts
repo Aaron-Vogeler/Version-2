@@ -506,6 +506,177 @@ export async function insertLlmLog(
 }
 
 /**
+ * Usage cost log record interface for tracking per-call API costs
+ * Logs costs for DeepGram (STT), Grok/xAI (LLM), and other providers
+ */
+export interface UsageCostLog {
+  call_id: string;
+  provider: "deepgram" | "groq" | "xai" | "gemini" | "openai" | "telnyx";
+  service_type: "stt" | "llm" | "tts" | "telephony";
+  model?: string;
+  // For LLM providers
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cached_tokens?: number;
+  // For audio providers
+  audio_duration_sec?: number;
+  // Cost calculation
+  cost_usd: number;
+  // Additional metadata
+  request_type?: string;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * DeepGram pricing per minute (Nova-2 model)
+ * See: https://deepgram.com/pricing
+ */
+export const DEEPGRAM_PRICING = {
+  "nova-2": 0.0043, // $0.0043/minute = $0.00007167/second
+  "nova-2-meeting": 0.0043,
+  "nova-2-phonecall": 0.0043,
+  "nova-2-conversationalai": 0.0043,
+  default: 0.0043,
+};
+
+/**
+ * xAI (Grok) pricing per 1M tokens (as of Dec 2024)
+ * See: https://docs.x.ai/docs/models#models-and-pricing
+ */
+export const XAI_PRICING = {
+  "grok-beta": { input: 5.00, output: 15.00 }, // $5/1M input, $15/1M output
+  "grok-2-latest": { input: 2.00, output: 10.00 }, // $2/1M input, $10/1M output
+  "grok-2": { input: 2.00, output: 10.00 },
+  "grok-2-1212": { input: 2.00, output: 10.00 },
+  "grok-vision-beta": { input: 5.00, output: 15.00 },
+  default: { input: 2.00, output: 10.00 },
+};
+
+/**
+ * Groq pricing per 1M tokens (as of Dec 2024)
+ */
+export const GROQ_PRICING: Record<string, { input: number; output: number }> = {
+  "llama-3.1-8b-instant": { input: 0.05, output: 0.08 },
+  "llama-3.1-70b-versatile": { input: 0.59, output: 0.79 },
+  "llama-3.2-90b-vision-preview": { input: 0.90, output: 0.90 },
+  "mixtral-8x7b-32768": { input: 0.24, output: 0.24 },
+  "gemma2-9b-it": { input: 0.20, output: 0.20 },
+  default: { input: 0.05, output: 0.08 },
+};
+
+/**
+ * Calculate DeepGram cost based on audio duration
+ * @param durationSec - Audio duration in seconds
+ * @param model - DeepGram model (defaults to nova-2)
+ * @returns Cost in USD
+ */
+export function calculateDeepgramCost(durationSec: number, model: string = "nova-2"): number {
+  const durationMin = durationSec / 60;
+  const pricePerMin = DEEPGRAM_PRICING[model as keyof typeof DEEPGRAM_PRICING] || DEEPGRAM_PRICING.default;
+  return durationMin * pricePerMin;
+}
+
+/**
+ * Calculate xAI (Grok) cost based on token usage
+ * @param promptTokens - Number of input tokens
+ * @param completionTokens - Number of output tokens
+ * @param model - Grok model
+ * @param cachedTokens - Optional cached tokens (billed at reduced rate)
+ * @returns Cost in USD
+ */
+export function calculateXaiCost(
+  promptTokens: number,
+  completionTokens: number,
+  model: string,
+  cachedTokens: number = 0
+): number {
+  const pricing = XAI_PRICING[model as keyof typeof XAI_PRICING] || XAI_PRICING.default;
+  // Cached tokens are typically billed at 25% of input rate (0 for xAI currently)
+  const effectiveInputTokens = promptTokens - cachedTokens;
+  const inputCost = (effectiveInputTokens / 1_000_000) * pricing.input;
+  const cachedCost = (cachedTokens / 1_000_000) * (pricing.input * 0.25); // 25% rate for cached
+  const outputCost = (completionTokens / 1_000_000) * pricing.output;
+  return inputCost + cachedCost + outputCost;
+}
+
+/**
+ * Calculate Groq cost based on token usage
+ */
+export function calculateGroqCost(
+  promptTokens: number,
+  completionTokens: number,
+  model: string
+): number {
+  const pricing = GROQ_PRICING[model as keyof typeof GROQ_PRICING] || GROQ_PRICING.default;
+  const inputCost = (promptTokens / 1_000_000) * pricing.input;
+  const outputCost = (completionTokens / 1_000_000) * pricing.output;
+  return inputCost + outputCost;
+}
+
+/**
+ * Insert a usage cost log entry for a call
+ * @param log - The usage cost log record to insert
+ * @returns Success/error result
+ */
+export async function insertUsageCostLog(
+  log: UsageCostLog
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    console.log("[Supabase] Not configured, skipping usage cost log insert");
+    return { success: true };
+  }
+
+  if (!log.call_id) {
+    return { success: false, error: "Missing required field: call_id" };
+  }
+
+  try {
+    const insertRecord = {
+      call_id: log.call_id,
+      provider: log.provider,
+      service_type: log.service_type,
+      model: log.model,
+      prompt_tokens: log.prompt_tokens,
+      completion_tokens: log.completion_tokens,
+      total_tokens: log.total_tokens,
+      cached_tokens: log.cached_tokens,
+      audio_duration_sec: log.audio_duration_sec,
+      cost_usd: log.cost_usd,
+      request_type: log.request_type,
+      metadata: log.metadata,
+      created_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from("call_usage_costs").insert(insertRecord);
+
+    if (error) {
+      // Table might not exist - log warning but don't fail
+      if (error.code === "42P01") {
+        console.warn("[Supabase] call_usage_costs table does not exist - skipping cost log");
+        return { success: true };
+      }
+      console.error("[Supabase] Error inserting usage cost log:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    const callIdSuffix = log.call_id.substring(Math.max(0, log.call_id.length - 8));
+    console.log(
+      `[COST] 💰 ${log.provider}/${log.service_type}: $${log.cost_usd.toFixed(6)} ` +
+      `(${log.total_tokens ? `${log.total_tokens} tokens` : `${log.audio_duration_sec?.toFixed(2)}s audio`}, call: ...${callIdSuffix})`
+    );
+    return { success: true };
+  } catch (error) {
+    console.error("[Supabase] Exception inserting usage cost log:", error instanceof Error ? error.message : error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
  * Terminal status check - prevents status regressions
  */
 export function isTerminalStatus(status: string | undefined): boolean {
