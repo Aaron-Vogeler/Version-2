@@ -138,18 +138,37 @@ For "wait", "noop", or "hold" behaviors, set "speak" to null.`;
 
 /**
  * Build dynamic input for cached Gemini calls.
- * Combines conversation context (rolling summary, recent turns, current input) into a single string.
+ * Combines dynamic variables, conversation context (rolling summary, recent turns) into a single string.
  * The system prompt is cached separately, so this only includes the dynamic parts.
  *
  * @param messages - The full message array (includes system, summary, turns)
  * @param currentUserText - The current user input
+ * @param context - Call context with goal, assistantName, userName
  * @returns Formatted dynamic input string
  */
 function buildDynamicInputForCache(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-  currentUserText: string
+  currentUserText: string,
+  context?: CallContext
 ): string {
   const parts: string[] = [];
+
+  // Add dynamic variables and introduction template (these are NOT in the cached system prompt)
+  const assistantName = context?.assistantName || "Alex";
+  const userName = context?.userName || "your owner";
+  const goal = context?.goal || "assist with your request";
+
+  parts.push(`VARIABLES (FOR THIS CALL)
+
+Your name: ${assistantName}
+Your owner's name: ${userName}
+
+INTRODUCTION TEMPLATE
+Always begin calls with:
+"Hi, this is [your name]. I'm an AI assistant calling on behalf of [owner's name]. He wants to [summarize goal in 1 sentence]."
+
+GOAL FOR THIS CALL
+${goal}`);
 
   // Skip system message (index 0) - it's cached
   for (let i = 1; i < messages.length; i++) {
@@ -565,8 +584,8 @@ export async function generateAssistantReply(
     if (isGeminiCacheConfigured()) {
       console.log(`[LLM] 🔄 Using cached Gemini streaming for model: ${modelToUse}`);
 
-      // Build dynamic input from conversation context
-      const dynamicInput = buildDynamicInputForCache(messages, userText);
+      // Build dynamic input from conversation context (includes dynamic variables, intro template, goal)
+      const dynamicInput = buildDynamicInputForCache(messages, userText, context);
 
       try {
         const response = await generateStreamingWithCachedSystem(
