@@ -174,7 +174,7 @@ Your name: ${assistantName}
 Your owner's name: ${userName}
 
 INTRODUCTION TEMPLATE
-Assuming you haven't been prompted by an IVR to say a keyword or to press something, begin calls with:
+If an IVR answers and requests a keyword or DMTF, do it. Otherwise, begin with:
 "Hi, this is [your name]. I'm an AI assistant calling on behalf of [owner's name]. He wants to [summarize goal in 1 sentence]."
 
 GOAL FOR THIS CALL
