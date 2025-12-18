@@ -16,6 +16,7 @@ import {
   stripCodeFences,
   type EarlyTtsCallback as CacheEarlyTtsCallback,
 } from "../lib/geminiCache";
+import { LatencyTracker } from "../lib/latencyLogger";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -495,8 +496,13 @@ export async function classifyReceiver(
 
 /**
  * Early TTS callback type - called when speak text is ready during streaming
+ * Includes optional latency tracker for end-to-end timing measurements
  */
-export type EarlyTtsCallback = (speakText: string, behavior: string) => Promise<void>;
+export type EarlyTtsCallback = (
+  speakText: string,
+  behavior: string,
+  latencyTracker?: LatencyTracker
+) => Promise<void>;
 
 /**
  * Generate an assistant reply using either streaming (Gemini) or buffered (Groq/other) mode.
@@ -566,7 +572,8 @@ export async function generateAssistantReply(
         const response = await generateStreamingWithCachedSystem(
           dynamicInput,
           systemPrompt,
-          onSpeakReady
+          onSpeakReady,
+          context?.callId  // Pass callId for latency tracking
         );
 
         const latencyMs = Date.now() - startTime;

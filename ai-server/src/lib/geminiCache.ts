@@ -18,6 +18,7 @@ import { GoogleGenAI, createUserContent, createPartFromText, Type } from "@googl
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import config from "../config";
 import { StreamingJsonParser } from "../pipeline/streamingJsonParser";
+import { LatencyTracker } from "./latencyLogger";
 
 // =============================================================================
 // CONSTANTS
@@ -461,8 +462,13 @@ async function generateWithoutCache(
 
 /**
  * Early TTS callback type - called when speak text is ready during streaming
+ * Now includes optional latency tracker for marking TTS queued time
  */
-export type EarlyTtsCallback = (speakText: string, behavior: string) => Promise<void>;
+export type EarlyTtsCallback = (
+  speakText: string,
+  behavior: string,
+  latencyTracker?: LatencyTracker
+) => Promise<void>;
 
 /**
  * Generate JSON response using Gemini with cached system prompt AND streaming.
@@ -474,12 +480,14 @@ export type EarlyTtsCallback = (speakText: string, behavior: string) => Promise<
  * @param dynamicInput - The dynamic user input/context for this generation
  * @param customSystemPrompt - Optional custom system prompt (defaults to SYSTEM_PROMPT)
  * @param onSpeakReady - Optional callback for early TTS (called when speak field is complete)
+ * @param callId - Optional call ID for latency tracking
  * @returns The generated JSON response as a string
  */
 export async function generateStreamingWithCachedSystem(
   dynamicInput: string,
   customSystemPrompt?: string,
-  onSpeakReady?: EarlyTtsCallback
+  onSpeakReady?: EarlyTtsCallback,
+  callId?: string
 ): Promise<string> {
   const genai = getGeminiClient();
   if (!genai) {
@@ -498,11 +506,14 @@ export async function generateStreamingWithCachedSystem(
       if (!cacheName) {
         // Fallback to non-cached streaming if cache creation fails
         console.warn("[GeminiCache] Cache unavailable, falling back to non-cached streaming");
-        return await generateStreamingWithoutCache(genai, systemPrompt, dynamicInput, onSpeakReady);
+        return await generateStreamingWithoutCache(genai, systemPrompt, dynamicInput, onSpeakReady, callId);
       }
 
       // Generate with cached content + streaming
       debugLog(`Streaming with cache: ${cacheName}`);
+
+      // Initialize latency tracker for this stream
+      const latencyTracker = new LatencyTracker(MODEL_NAME, true, callId);
 
       // Use type assertion for cachedContent (SDK types don't include it yet)
       const response = await genai.models.generateContentStream({
@@ -520,20 +531,35 @@ export async function generateStreamingWithCachedSystem(
       const parser = new StreamingJsonParser();
       let fullResponse = '';
       let ttsCallbackFired = false;
+      let behaviorLogged = false;
 
       for await (const chunk of response) {
         const text = chunk.text || '';
+
+        // Track first chunk (TTFT - time to first token)
+        latencyTracker.markFirstChunk();
+        latencyTracker.addChars(text.length);
+
         fullResponse += text;
         parser.addChunk(text);
+
+        // Track behavior detection
+        if (!behaviorLogged && parser.hasBehavior()) {
+          latencyTracker.markBehaviorDetected(parser.getBehavior());
+          behaviorLogged = true;
+        }
 
         // Check if we can trigger early TTS
         if (!ttsCallbackFired && parser.canStartTts() && onSpeakReady) {
           const speakText = parser.getSpeakText();
           const behavior = parser.getBehavior();
           if (speakText) {
+            // Track speak ready
+            latencyTracker.markSpeakReady(speakText.length);
+
             console.log('[GeminiCache:STREAM] 🚀 Speak field complete - triggering early TTS');
             try {
-              await onSpeakReady(speakText, behavior);
+              await onSpeakReady(speakText, behavior, latencyTracker);
               ttsCallbackFired = true;
             } catch (callbackError) {
               console.error('[GeminiCache:STREAM] ❌ Early TTS callback failed:', callbackError);
@@ -548,6 +574,10 @@ export async function generateStreamingWithCachedSystem(
           break;
         }
       }
+
+      // Track stream completion and log summary
+      latencyTracker.markComplete(fullResponse.length);
+      latencyTracker.logSummary();
 
       debugLog(`Streaming response complete (${fullResponse.length} chars)`);
 
@@ -591,9 +621,13 @@ async function generateStreamingWithoutCache(
   genai: GoogleGenAI,
   systemPrompt: string,
   dynamicInput: string,
-  onSpeakReady?: EarlyTtsCallback
+  onSpeakReady?: EarlyTtsCallback,
+  callId?: string
 ): Promise<string> {
   debugLog("Streaming without cache (fallback mode)");
+
+  // Initialize latency tracker for non-cached stream
+  const latencyTracker = new LatencyTracker(MODEL_NAME, false, callId);
 
   const response = await genai.models.generateContentStream({
     model: MODEL_NAME,
@@ -608,18 +642,33 @@ async function generateStreamingWithoutCache(
   const parser = new StreamingJsonParser();
   let fullResponse = '';
   let ttsCallbackFired = false;
+  let behaviorLogged = false;
 
   for await (const chunk of response) {
     const text = chunk.text || '';
+
+    // Track first chunk (TTFT)
+    latencyTracker.markFirstChunk();
+    latencyTracker.addChars(text.length);
+
     fullResponse += text;
     parser.addChunk(text);
+
+    // Track behavior detection
+    if (!behaviorLogged && parser.hasBehavior()) {
+      latencyTracker.markBehaviorDetected(parser.getBehavior());
+      behaviorLogged = true;
+    }
 
     if (!ttsCallbackFired && parser.canStartTts() && onSpeakReady) {
       const speakText = parser.getSpeakText();
       const behavior = parser.getBehavior();
       if (speakText) {
+        // Track speak ready
+        latencyTracker.markSpeakReady(speakText.length);
+
         try {
-          await onSpeakReady(speakText, behavior);
+          await onSpeakReady(speakText, behavior, latencyTracker);
           ttsCallbackFired = true;
         } catch (callbackError) {
           console.error('[GeminiCache:STREAM] ❌ Early TTS callback failed:', callbackError);
@@ -631,6 +680,10 @@ async function generateStreamingWithoutCache(
       break;
     }
   }
+
+  // Track completion and log summary
+  latencyTracker.markComplete(fullResponse.length);
+  latencyTracker.logSummary();
 
   return stripCodeFences(fullResponse);
 }
