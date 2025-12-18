@@ -9,6 +9,13 @@ import {
   type ReceiverClassification,
 } from "./humanDetection";
 import { StreamingJsonParser } from "./streamingJsonParser";
+import {
+  generateJsonWithCachedSystem,
+  generateStreamingWithCachedSystem,
+  isGeminiCacheConfigured,
+  stripCodeFences,
+  type EarlyTtsCallback as CacheEarlyTtsCallback,
+} from "../lib/geminiCache";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -126,6 +133,39 @@ For "wait", "noop", or "hold" behaviors, set "speak" to null.`;
   }
 
   return prompt;
+}
+
+/**
+ * Build dynamic input for cached Gemini calls.
+ * Combines conversation context (rolling summary, recent turns, current input) into a single string.
+ * The system prompt is cached separately, so this only includes the dynamic parts.
+ *
+ * @param messages - The full message array (includes system, summary, turns)
+ * @param currentUserText - The current user input
+ * @returns Formatted dynamic input string
+ */
+function buildDynamicInputForCache(
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  currentUserText: string
+): string {
+  const parts: string[] = [];
+
+  // Skip system message (index 0) - it's cached
+  for (let i = 1; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role === "user") {
+      // Check if this is the rolling summary
+      if (msg.content.startsWith("CALL CONTEXT SUMMARY:")) {
+        parts.push(msg.content);
+      } else {
+        parts.push(`Caller: ${msg.content}`);
+      }
+    } else if (msg.role === "assistant") {
+      parts.push(`Assistant: ${msg.content}`);
+    }
+  }
+
+  return parts.join("\n\n");
 }
 
 /**
@@ -515,6 +555,51 @@ export async function generateAssistantReply(
 
   // Route to appropriate provider based on model
   if (useStreaming && gemini) {
+    // Check if Gemini caching is available - use cached streaming for cost savings
+    if (isGeminiCacheConfigured()) {
+      console.log(`[LLM] 🔄 Using cached Gemini streaming for model: ${modelToUse}`);
+
+      // Build dynamic input from conversation context
+      const dynamicInput = buildDynamicInputForCache(messages, userText);
+
+      try {
+        const response = await generateStreamingWithCachedSystem(
+          dynamicInput,
+          systemPrompt,
+          onSpeakReady
+        );
+
+        const latencyMs = Date.now() - startTime;
+        console.log(`[LLM] ✅ Cached Gemini streaming complete (${latencyMs}ms, ${response.length} chars)`);
+
+        // Log the interaction
+        if (context?.callId) {
+          insertLlmLog({
+            call_id: context.callId,
+            request_type: "chat",
+            model: config.gemini.cacheModel,
+            temperature: temperatureToUse,
+            max_tokens: maxTokensToUse,
+            system_prompt: "[CACHED]",
+            messages: messages.slice(0, 3), // Truncate for logging
+            user_input: userText.substring(0, 500),
+            assistant_response: response,
+            rolling_summary: rollingSummary,
+            recent_turns_count: recentTurnsCount,
+            latency_ms: latencyMs,
+          }).catch((err) => {
+            console.error(`[${context.callId}] Failed to log cached Gemini call:`, err);
+          });
+        }
+
+        return response;
+      } catch (cacheError) {
+        // Fallback to regular streaming if cache fails
+        console.warn(`[LLM] ⚠️ Cached streaming failed, falling back to regular: ${cacheError instanceof Error ? cacheError.message : cacheError}`);
+      }
+    }
+
+    // Use regular Gemini streaming (no cache or cache failed)
     return await generateWithGeminiStreaming(
       modelToUse,
       messages,
@@ -809,4 +894,72 @@ async function generateWithGeminiStreaming(
     );
     throw error;
   }
+}
+
+/**
+ * Generate JSON response using Gemini with cached system prompt.
+ *
+ * This function uses the Gemini caching API to efficiently reuse system prompts
+ * across multiple calls. The cache metadata is stored in Supabase for sharing
+ * across Fly.io instances.
+ *
+ * @param dynamicInput - The user input/context for this generation
+ * @param context - Optional call context for logging
+ * @param customSystemPrompt - Optional custom system prompt (uses default Ferguson prompt if not provided)
+ * @returns The generated JSON response
+ */
+export async function generateWithCachedGemini(
+  dynamicInput: string,
+  context?: CallContext,
+  customSystemPrompt?: string
+): Promise<string> {
+  if (!isGeminiCacheConfigured()) {
+    throw new Error("Gemini cache not configured - requires GEMINI_API_KEY, SUPABASE_URL, and SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  const startTime = Date.now();
+
+  try {
+    console.log("[LLM] 🔄 Using cached Gemini generation");
+
+    const response = await generateJsonWithCachedSystem(dynamicInput, customSystemPrompt);
+    const latencyMs = Date.now() - startTime;
+
+    console.log(`[LLM] ✅ Cached Gemini response (${latencyMs}ms, ${response.length} chars)`);
+
+    // Log the LLM interaction if context is provided
+    if (context?.callId) {
+      insertLlmLog({
+        call_id: context.callId,
+        request_type: "chat",
+        model: config.gemini.cacheModel,
+        temperature: undefined, // Not configurable for cached calls
+        max_tokens: undefined,
+        system_prompt: "[CACHED]", // Don't log full prompt
+        messages: [{ role: "user", content: dynamicInput.substring(0, 500) }], // Truncate for logging
+        user_input: dynamicInput.substring(0, 500),
+        assistant_response: response,
+        latency_ms: latencyMs,
+      }).catch((err) => {
+        console.error(`[${context.callId}] Failed to log cached Gemini call:`, err);
+      });
+    }
+
+    return response;
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    console.error(
+      `[LLM] ❌ Cached Gemini error (${latencyMs}ms):`,
+      error instanceof Error ? error.message : error
+    );
+    throw error;
+  }
+}
+
+/**
+ * Check if Gemini caching is available.
+ * Useful for callers to decide whether to use cached vs streaming generation.
+ */
+export function isCachedGeminiAvailable(): boolean {
+  return isGeminiCacheConfigured();
 }
