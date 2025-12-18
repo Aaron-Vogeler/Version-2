@@ -571,7 +571,6 @@ export async function generateAssistantReply(
       try {
         const response = await generateStreamingWithCachedSystem(
           dynamicInput,
-          systemPrompt,
           onSpeakReady,
           context?.callId  // Pass callId for latency tracking
         );
@@ -929,7 +928,7 @@ export async function generateWithCachedGemini(
   try {
     console.log("[LLM] 🔄 Using cached Gemini generation");
 
-    const response = await generateJsonWithCachedSystem(dynamicInput, customSystemPrompt);
+    const response = await generateJsonWithCachedSystem(dynamicInput);
     const latencyMs = Date.now() - startTime;
 
     console.log(`[LLM] ✅ Cached Gemini response (${latencyMs}ms, ${response.length} chars)`);
