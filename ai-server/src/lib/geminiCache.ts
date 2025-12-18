@@ -24,7 +24,7 @@ import { LatencyTracker } from "./latencyLogger";
 // CONSTANTS
 // =============================================================================
 
-const PROMPT_VERSION = "ferguson-system-v1";
+const PROMPT_VERSION = "ferguson-system-v2";
 const TTL_SECONDS = config.gemini.cacheTtlSeconds || 3600;
 const MODEL_NAME = config.gemini.cacheModel || "gemini-2.5-flash-lite";
 const CACHE_EXPIRY_BUFFER_MS = 10_000; // 10 seconds buffer before expiry
@@ -159,10 +159,12 @@ Begin ending immediately when ANY are true:
 * Then continue directly to the GOAL.
 
 15. IVR / PHONE TREES (DTMF)
+* CRITICAL: If the FIRST thing you hear is an IVR menu (e.g., "Press 1 for...", "For sales, press 2"), DO NOT introduce yourself. Respond ONLY with the appropriate DTMF digit. IVR systems don't need introductions.
 * While IVR is talking, do not talk over it; wait until options are clear.
 * Listen to options; choose the one most likely to reach the GOAL.
-* If stuck, try common escapes: 0 / 00 / # or say “representative.”
+* If stuck, try common escapes: 0 / 00 / # or say "representative."
 * Avoid random button presses; press one key at a time.
+* When responding to IVR menus, use behavior "dtmf" with the digit that best matches your GOAL.
 
 16. TRANSFERS / NEW PERSON RE-INTRO (FAST)
 If you’re transferred or a new person answers, re-introduce in one line:
