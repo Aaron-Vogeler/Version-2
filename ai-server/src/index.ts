@@ -2430,6 +2430,8 @@ wss.on("connection", async (ws) => {
             callControlId: callContext.callControlId,
             goal: callContext.goal,
             userId: callContext.userId,
+            assistantName: callContext.assistantName,
+            userName: callContext.userName,
             customRecordingEnabled: isCustomRecordingEnabled(),
             // Call control settings (per-call overrides)
             ttsDebounceMs: callContext.ttsDebounceMs,

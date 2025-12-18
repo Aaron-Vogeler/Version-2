@@ -154,9 +154,19 @@ function buildDynamicInputForCache(
   const parts: string[] = [];
 
   // Add dynamic variables and introduction template (these are NOT in the cached system prompt)
-  const assistantName = context?.assistantName || "Alex";
-  const userName = context?.userName || "your owner";
+  // These should come from the dashboard - warn if using defaults
+  const assistantName = context?.assistantName;
+  const userName = context?.userName;
   const goal = context?.goal || "assist with your request";
+
+  if (!assistantName) {
+    console.warn("[LLM] ⚠️ assistantName not provided in context - AI may not introduce itself correctly");
+  }
+  if (!userName) {
+    console.warn("[LLM] ⚠️ userName not provided in context - AI may not mention owner correctly");
+  }
+
+  console.log(`[LLM] 📝 Dynamic variables: assistantName="${assistantName}", userName="${userName}", goal="${goal}"`);
 
   parts.push(`VARIABLES (FOR THIS CALL)
 
