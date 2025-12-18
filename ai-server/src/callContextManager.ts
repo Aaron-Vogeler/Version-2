@@ -42,6 +42,7 @@ export interface CallContext {
   reasoning?: 'low' | 'medium' | 'high'; // Reasoning effort for LLM calls
   stream?: boolean; // Enable streaming for LLM calls
   jsonMode?: boolean; // Enable JSON mode for LLM calls
+  chunkFirstTurnByPunctuation?: boolean; // Split first AI response at punctuation for faster TTS
   initiatedAt?: string;
 
   // Rolling summary and turn tracking

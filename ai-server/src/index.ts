@@ -897,17 +897,26 @@ async function sendTtsResponse(
     // Sync TTS state to Redis for multi-instance support
     await sharedState.markTtsSpeaking(callContext.callControlId, aiText);
 
-    // Split text at first punctuation for faster initial response
-    // This reduces perceived latency by starting TTS playback sooner
-    const [firstChunk, remainingText] = splitAtFirstPunctuation(aiText);
+    // Check if punctuation chunking is enabled (defaults to true for faster TTS)
+    const useChunking = callContext.chunkFirstTurnByPunctuation !== false;
 
-    // Send first chunk immediately
-    await synthesizeSpeech(firstChunk, callContext.callControlId, callContext.ttsVoiceId);
+    if (useChunking) {
+      // Split text at first punctuation for faster initial response
+      // This reduces perceived latency by starting TTS playback sooner
+      const [firstChunk, remainingText] = splitAtFirstPunctuation(aiText);
 
-    // If there's remaining text, queue it immediately (Telnyx will play it after first chunk)
-    if (remainingText) {
-      console.log(`[TTS] 📤 Queuing remaining text (${remainingText.length} chars)`);
-      await synthesizeSpeech(remainingText, callContext.callControlId, callContext.ttsVoiceId);
+      // Send first chunk immediately
+      await synthesizeSpeech(firstChunk, callContext.callControlId, callContext.ttsVoiceId);
+
+      // If there's remaining text, queue it immediately (Telnyx will play it after first chunk)
+      if (remainingText) {
+        console.log(`[TTS] 📤 Queuing remaining text (${remainingText.length} chars)`);
+        await synthesizeSpeech(remainingText, callContext.callControlId, callContext.ttsVoiceId);
+      }
+    } else {
+      // Send full text without chunking
+      console.log(`[TTS] 📤 Sending full text without chunking (${aiText.length} chars)`);
+      await synthesizeSpeech(aiText, callContext.callControlId, callContext.ttsVoiceId);
     }
 
     // Log what TTS will actually speak (only logged after successful TTS API call)
@@ -2364,6 +2373,7 @@ wss.on("connection", async (ws) => {
           managedContext.reasoning = decoded.reasoning || null;
           managedContext.stream = decoded.stream || null;
           managedContext.jsonMode = decoded.jsonMode || null;
+          managedContext.chunkFirstTurnByPunctuation = decoded.chunkFirstTurnByPunctuation ?? true; // Default to true for faster TTS
           // Call control settings
           managedContext.ttsDebounceMs = decoded.ttsDebounceMs || null;
           managedContext.bargeInCooldownMs = decoded.bargeInCooldownMs || null;
