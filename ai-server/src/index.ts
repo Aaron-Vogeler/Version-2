@@ -9,7 +9,7 @@ import { downsample24kHzTo8kHz, pcmToMulaw, chunkAudio, normalizePcm, boostBefor
 import { createDeepgramClient } from "./pipeline/stt";
 import { generateAssistantReply, type CallContext, maybeUpdateSummaryForCall, detectPartyType, classifyReceiver } from "./pipeline/llm";
 import * as humanDetection from "./pipeline/humanDetection";
-import { synthesizeSpeech, stopSpeaking, hangupCall, sendDtmf } from "./pipeline/tts";
+import { synthesizeSpeech, stopSpeaking, hangupCall, sendDtmf, splitAtFirstPunctuation } from "./pipeline/tts";
 import * as contextMgr from "./callContextManager";
 import { transcriptContainsMusicIndicator } from "./pipeline/energy-floor";
 import { upsertCall, safeUpdateStatus, updateCall, isSupabaseConfigured, insertTranscriptSegment, uploadCustomCallRecording, insertLlmLog, insertUsageCostLog, calculateDeepgramCost } from "./utils/supabase";
@@ -897,7 +897,18 @@ async function sendTtsResponse(
     // Sync TTS state to Redis for multi-instance support
     await sharedState.markTtsSpeaking(callContext.callControlId, aiText);
 
-    await synthesizeSpeech(aiText, callContext.callControlId);
+    // Split text at first punctuation for faster initial response
+    // This reduces perceived latency by starting TTS playback sooner
+    const [firstChunk, remainingText] = splitAtFirstPunctuation(aiText);
+
+    // Send first chunk immediately
+    await synthesizeSpeech(firstChunk, callContext.callControlId, callContext.ttsVoiceId);
+
+    // If there's remaining text, queue it immediately (Telnyx will play it after first chunk)
+    if (remainingText) {
+      console.log(`[TTS] 📤 Queuing remaining text (${remainingText.length} chars)`);
+      await synthesizeSpeech(remainingText, callContext.callControlId, callContext.ttsVoiceId);
+    }
 
     // Log what TTS will actually speak (only logged after successful TTS API call)
     console.log("🤖 AI (speaking):", aiText);
@@ -2345,6 +2356,7 @@ wss.on("connection", async (ws) => {
           managedContext.userName = decoded.userName || null;
           managedContext.systemPrompt = decoded.systemPrompt || null;
           managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
+          managedContext.ttsVoiceId = decoded.ttsVoiceId || null;
           managedContext.model = decoded.model || null;
           managedContext.temperature = decoded.temperature || null;
           managedContext.maxTokens = decoded.maxTokens || null;
@@ -2433,6 +2445,8 @@ wss.on("connection", async (ws) => {
             assistantName: callContext.assistantName,
             userName: callContext.userName,
             customRecordingEnabled: isCustomRecordingEnabled(),
+            // TTS settings (per-call overrides)
+            ttsVoiceId: callContext.ttsVoiceId,
             // Call control settings (per-call overrides)
             ttsDebounceMs: callContext.ttsDebounceMs,
             bargeInCooldownMs: callContext.bargeInCooldownMs,
