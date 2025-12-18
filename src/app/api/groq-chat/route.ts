@@ -36,6 +36,7 @@ const GROQ_MODELS = [
   { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'Mixture of experts model' },
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned' },
   { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', description: 'GPT open-source 20B model' },
+  { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B (128k)', description: 'GPT open-source 120B MoE model with 128k context' },
 
   // Grok models (xAI)
   { id: 'grok-4-1-fast-non-reasoning', name: '🚀 Grok 4.1 Fast', description: 'xAI Grok 4.1 - Fast non-reasoning model' },
