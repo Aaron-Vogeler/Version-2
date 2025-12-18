@@ -36,6 +36,7 @@ const GROQ_MODELS = [
   { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'Mixture of experts model' },
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned' },
   { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', description: 'GPT open-source 20B model' },
+  { id: 'openai/gpt-oss-120b-128k', name: '🧠 GPT OSS 120B 128k (Prompt Cache)', description: 'GPT open-source 120B with 128k context - supports prompt caching' },
 
   // Grok models (xAI) - with automatic prompt caching
   { id: 'grok-3', name: '🧠 Grok 3 (Prompt Cache)', description: 'xAI flagship model with automatic prompt caching - best for research' },
