@@ -11,11 +11,13 @@
  * - 2048 token minimum workaround via deterministic padding
  * - JSON-only output via responseMimeType
  * - Retry logic for cache expiry edge cases
+ * - Streaming support with early TTS callback for low latency
  */
 
 import { GoogleGenAI, createUserContent, createPartFromText, Type } from "@google/genai";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import config from "../config";
+import { StreamingJsonParser } from "../pipeline/streamingJsonParser";
 
 // =============================================================================
 // CONSTANTS
@@ -450,6 +452,185 @@ async function generateWithoutCache(
 
   const text = response.text || "";
   return stripCodeFences(text);
+}
+
+// =============================================================================
+// STREAMING WITH CACHE
+// =============================================================================
+
+/**
+ * Early TTS callback type - called when speak text is ready during streaming
+ */
+export type EarlyTtsCallback = (speakText: string, behavior: string) => Promise<void>;
+
+/**
+ * Generate JSON response using Gemini with cached system prompt AND streaming.
+ *
+ * This function combines the cost savings of caching with the latency benefits
+ * of streaming. It uses generateContentStream with cachedContent to get the
+ * best of both worlds.
+ *
+ * @param dynamicInput - The dynamic user input/context for this generation
+ * @param customSystemPrompt - Optional custom system prompt (defaults to SYSTEM_PROMPT)
+ * @param onSpeakReady - Optional callback for early TTS (called when speak field is complete)
+ * @returns The generated JSON response as a string
+ */
+export async function generateStreamingWithCachedSystem(
+  dynamicInput: string,
+  customSystemPrompt?: string,
+  onSpeakReady?: EarlyTtsCallback
+): Promise<string> {
+  const genai = getGeminiClient();
+  if (!genai) {
+    throw new Error("Gemini client not configured - GEMINI_API_KEY not set");
+  }
+
+  const systemPrompt = customSystemPrompt || SYSTEM_PROMPT;
+  let retryCount = 0;
+  const maxRetries = 1;
+
+  while (retryCount <= maxRetries) {
+    try {
+      // Get or create cache
+      const cacheName = await getOrCreateCache(systemPrompt);
+
+      if (!cacheName) {
+        // Fallback to non-cached streaming if cache creation fails
+        console.warn("[GeminiCache] Cache unavailable, falling back to non-cached streaming");
+        return await generateStreamingWithoutCache(genai, systemPrompt, dynamicInput, onSpeakReady);
+      }
+
+      // Generate with cached content + streaming
+      debugLog(`Streaming with cache: ${cacheName}`);
+
+      const response = await genai.models.generateContentStream({
+        model: MODEL_NAME,
+        contents: [
+          createUserContent([createPartFromText(dynamicInput)]),
+        ],
+        config: {
+          cachedContent: cacheName,
+          responseMimeType: "application/json",
+        },
+      });
+
+      // Process stream with incremental JSON parsing
+      const parser = new StreamingJsonParser();
+      let fullResponse = '';
+      let ttsCallbackFired = false;
+
+      for await (const chunk of response) {
+        const text = chunk.text || '';
+        fullResponse += text;
+        parser.addChunk(text);
+
+        // Check if we can trigger early TTS
+        if (!ttsCallbackFired && parser.canStartTts() && onSpeakReady) {
+          const speakText = parser.getSpeakText();
+          const behavior = parser.getBehavior();
+          if (speakText) {
+            console.log('[GeminiCache:STREAM] 🚀 Speak field complete - triggering early TTS');
+            try {
+              await onSpeakReady(speakText, behavior);
+              ttsCallbackFired = true;
+            } catch (callbackError) {
+              console.error('[GeminiCache:STREAM] ❌ Early TTS callback failed:', callbackError);
+              // Don't throw - continue processing stream
+            }
+          }
+        }
+
+        // Check if we should stop processing early (skip TTS behaviors)
+        if (parser.shouldSkipTts() && !ttsCallbackFired) {
+          debugLog(`Behavior is ${parser.getBehavior()} - no TTS needed`);
+          break;
+        }
+      }
+
+      debugLog(`Streaming response complete (${fullResponse.length} chars)`);
+
+      // Strip markdown fences if present
+      return stripCodeFences(fullResponse);
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+
+      // Check if error is due to cache expiry/not found
+      const isCacheError = errorMessage.includes("cache") &&
+        (errorMessage.includes("expired") || errorMessage.includes("not found") || errorMessage.includes("invalid"));
+
+      if (isCacheError && retryCount < maxRetries) {
+        console.warn(`[GeminiCache] Cache error detected, refreshing cache (attempt ${retryCount + 1})`);
+        retryCount++;
+
+        // Force cache refresh by creating new cache
+        const newCache = await createGeminiCache(systemPrompt);
+        if (newCache) {
+          await upsertCacheMetadata(PROMPT_VERSION, newCache.cacheName, newCache.expiresAt, null);
+        }
+        continue;
+      }
+
+      // Non-retryable error or max retries reached
+      console.error("[GeminiCache] Streaming generation failed:", errorMessage);
+      await updateCacheError(PROMPT_VERSION, errorMessage);
+      throw err;
+    }
+  }
+
+  // Should never reach here, but TypeScript needs this
+  throw new Error("Unexpected end of retry loop");
+}
+
+/**
+ * Fallback: Stream without cache when caching is unavailable.
+ */
+async function generateStreamingWithoutCache(
+  genai: GoogleGenAI,
+  systemPrompt: string,
+  dynamicInput: string,
+  onSpeakReady?: EarlyTtsCallback
+): Promise<string> {
+  debugLog("Streaming without cache (fallback mode)");
+
+  const response = await genai.models.generateContentStream({
+    model: MODEL_NAME,
+    contents: [
+      createUserContent([createPartFromText(`${systemPrompt}\n\n${dynamicInput}`)]),
+    ],
+    config: {
+      responseMimeType: "application/json",
+    },
+  });
+
+  const parser = new StreamingJsonParser();
+  let fullResponse = '';
+  let ttsCallbackFired = false;
+
+  for await (const chunk of response) {
+    const text = chunk.text || '';
+    fullResponse += text;
+    parser.addChunk(text);
+
+    if (!ttsCallbackFired && parser.canStartTts() && onSpeakReady) {
+      const speakText = parser.getSpeakText();
+      const behavior = parser.getBehavior();
+      if (speakText) {
+        try {
+          await onSpeakReady(speakText, behavior);
+          ttsCallbackFired = true;
+        } catch (callbackError) {
+          console.error('[GeminiCache:STREAM] ❌ Early TTS callback failed:', callbackError);
+        }
+      }
+    }
+
+    if (parser.shouldSkipTts() && !ttsCallbackFired) {
+      break;
+    }
+  }
+
+  return stripCodeFences(fullResponse);
 }
 
 // =============================================================================
