@@ -108,31 +108,6 @@ ${context.additionalContext}`;
 CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`;
   }
 
-  // Add Gemini-specific JSON format instructions for streaming optimization
-  if (useGeminiFormat) {
-    prompt += `
-
-CRITICAL RESPONSE FORMAT:
-You MUST respond with valid JSON in this EXACT field order:
-{
-  "behavior": "speak|wait|end|noop|hold|dtmf",
-  "speak": "text to speak to the caller",
-  "internal": "your internal reasoning (optional)"
-}
-
-Behavior types:
-- "speak": Normal conversational response (default, most common)
-- "wait": Stay silent and listen for more input
-- "dtmf": Send phone digits for IVR navigation (include "dtmf" field with digits)
-- "hold": Enter hold mode with periodic check-ins
-- "end": End the call after speaking the text in "speak" field
-- "noop": Do nothing, no speech
-
-The "behavior" field MUST come FIRST in the JSON for optimal processing.
-Always include all three fields (behavior, speak, internal) in every response.
-For "wait", "noop", or "hold" behaviors, set "speak" to null.`;
-  }
-
   return prompt;
 }
 
