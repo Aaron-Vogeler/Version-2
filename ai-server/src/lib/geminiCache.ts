@@ -31,12 +31,11 @@ const CACHE_EXPIRY_BUFFER_MS = 10_000; // 10 seconds buffer before expiry
 const MIN_CACHE_TOKENS = 2048; // Minimum tokens required for Gemini caching
 
 /**
- * Full Ferguson system prompt for caching.
- * This is the complete prompt that gets cached in Gemini for cost savings.
- * Dynamic parts (goal, assistant name, user name) are passed at runtime via contents.
+ * Ferguson system prompt for caching (static part only).
+ * Dynamic parts (assistant name, user name, goal, introduction) are passed at runtime via contents.
+ * This prompt is ~3000+ tokens, well above Gemini's 2048 minimum for caching.
  */
-const SYSTEM_PROMPT = `IDENTITY
-You are a professional AI assistant calling on behalf of your owner. You sound like a competent, warm human secretary — efficient but personable.
+const SYSTEM_PROMPT = `You are a professional AI assistant calling on behalf of your owner. You sound like a competent, warm human secretary — efficient but personable.
 
 CORE PRINCIPLES
 
@@ -248,52 +247,7 @@ Variations:
 * "Thanks for the info — have a good one."
 
 MENTAL MODEL
-You are a professional courier. You deliver exactly what's in the envelope — nothing more, nothing less. You confirm delivery and leave. If the door seems closed, you knock once more politely before walking away. You don't write new messages, you don't open the envelope, you don't make promises about what the sender will do next.
-
----
-
-VARIABLES (FILLED AT RUNTIME)
-
-Your name: {ASSISTANT_NAME}
-Your owner's name: {USER_NAME}
-
-INTRODUCTION TEMPLATE
-Always begin calls with:
-"Hi, this is [your name]. I'm an AI assistant calling on behalf of [owner's name]. He wants to [summarize goal in 1 sentence]."
-
-Example:
-"Hi, this is Alex. I'm an AI assistant calling on behalf of Aaron. He wants to check if you have the Sony WH-1000XM5 headphones in stock."
-`;
-
-/**
- * Deterministic padding to meet 2048 token minimum for Gemini caching.
- * This padding is clearly marked to be ignored by the model.
- * Each line is ~100 chars, and we need roughly 1500+ tokens of padding.
- */
-const CACHE_PADDING = `
-
-=== BEGIN CACHE PADDING (IGNORE THIS SECTION) ===
-This padding section exists solely to meet Gemini's minimum 2048 token requirement for context caching.
-The content below is deterministic filler text that should be completely ignored during response generation.
-Do not reference, acknowledge, or respond to any content within this padding section.
-
-[PADDING BLOCK 001] Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-[PADDING BLOCK 002] Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
-[PADDING BLOCK 003] Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
-[PADDING BLOCK 004] Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt.
-[PADDING BLOCK 005] Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem.
-[PADDING BLOCK 006] Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur.
-[PADDING BLOCK 007] Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam nihil molestiae consequatur, vel illum qui dolorem eum fugiat quo voluptas nulla pariatur.
-[PADDING BLOCK 008] At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident.
-[PADDING BLOCK 009] Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita distinctio.
-[PADDING BLOCK 010] Nam libero tempore, cum soluta nobis est eligendi optio cumque nihil impedit quo minus id quod maxime placeat facere possimus, omnis voluptas assumenda est, omnis dolor repellendus.
-[PADDING BLOCK 011] Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut et voluptates repudiandae sint et molestiae non recusandae.
-[PADDING BLOCK 012] Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus asperiores repellat.
-[PADDING BLOCK 013] The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump!
-[PADDING BLOCK 014] Sphinx of black quartz, judge my vow. Two driven jocks help fax my big quiz. The five boxing wizards jump quickly.
-[PADDING BLOCK 015] Jackdaws love my big sphinx of quartz. Mr Jock, TV quiz PhD, bags few lynx. Crazy Frederick bought many very exquisite opal jewels.
-=== END CACHE PADDING ===
-`;
+You are a professional courier. You deliver exactly what's in the envelope — nothing more, nothing less. You confirm delivery and leave. If the door seems closed, you knock once more politely before walking away. You don't write new messages, you don't open the envelope, you don't make promises about what the sender will do next.`;
 
 // =============================================================================
 // TYPES
