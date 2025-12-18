@@ -16,6 +16,7 @@ import {
   stripCodeFences,
   type EarlyTtsCallback as CacheEarlyTtsCallback,
 } from "../lib/geminiCache";
+import { LatencyTracker } from "../lib/latencyLogger";
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -137,18 +138,47 @@ For "wait", "noop", or "hold" behaviors, set "speak" to null.`;
 
 /**
  * Build dynamic input for cached Gemini calls.
- * Combines conversation context (rolling summary, recent turns, current input) into a single string.
+ * Combines dynamic variables, conversation context (rolling summary, recent turns) into a single string.
  * The system prompt is cached separately, so this only includes the dynamic parts.
  *
  * @param messages - The full message array (includes system, summary, turns)
  * @param currentUserText - The current user input
+ * @param context - Call context with goal, assistantName, userName
  * @returns Formatted dynamic input string
  */
 function buildDynamicInputForCache(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-  currentUserText: string
+  currentUserText: string,
+  context?: CallContext
 ): string {
   const parts: string[] = [];
+
+  // Add dynamic variables and introduction template (these are NOT in the cached system prompt)
+  // These should come from the dashboard - warn if using defaults
+  const assistantName = context?.assistantName;
+  const userName = context?.userName;
+  const goal = context?.goal || "assist with your request";
+
+  if (!assistantName) {
+    console.warn("[LLM] ⚠️ assistantName not provided in context - AI may not introduce itself correctly");
+  }
+  if (!userName) {
+    console.warn("[LLM] ⚠️ userName not provided in context - AI may not mention owner correctly");
+  }
+
+  console.log(`[LLM] 📝 Dynamic variables: assistantName="${assistantName}", userName="${userName}", goal="${goal}"`);
+
+  parts.push(`VARIABLES (FOR THIS CALL)
+
+Your name: ${assistantName}
+Your owner's name: ${userName}
+
+INTRODUCTION TEMPLATE
+Always begin calls with:
+"Hi, this is [your name]. I'm an AI assistant calling on behalf of [owner's name]. He wants to [summarize goal in 1 sentence]."
+
+GOAL FOR THIS CALL
+${goal}`);
 
   // Skip system message (index 0) - it's cached
   for (let i = 1; i < messages.length; i++) {
@@ -495,8 +525,13 @@ export async function classifyReceiver(
 
 /**
  * Early TTS callback type - called when speak text is ready during streaming
+ * Includes optional latency tracker for end-to-end timing measurements
  */
-export type EarlyTtsCallback = (speakText: string, behavior: string) => Promise<void>;
+export type EarlyTtsCallback = (
+  speakText: string,
+  behavior: string,
+  latencyTracker?: LatencyTracker
+) => Promise<void>;
 
 /**
  * Generate an assistant reply using either streaming (Gemini) or buffered (Groq/other) mode.
@@ -559,14 +594,14 @@ export async function generateAssistantReply(
     if (isGeminiCacheConfigured()) {
       console.log(`[LLM] 🔄 Using cached Gemini streaming for model: ${modelToUse}`);
 
-      // Build dynamic input from conversation context
-      const dynamicInput = buildDynamicInputForCache(messages, userText);
+      // Build dynamic input from conversation context (includes dynamic variables, intro template, goal)
+      const dynamicInput = buildDynamicInputForCache(messages, userText, context);
 
       try {
         const response = await generateStreamingWithCachedSystem(
           dynamicInput,
-          systemPrompt,
-          onSpeakReady
+          onSpeakReady,
+          context?.callId  // Pass callId for latency tracking
         );
 
         const latencyMs = Date.now() - startTime;
@@ -922,7 +957,7 @@ export async function generateWithCachedGemini(
   try {
     console.log("[LLM] 🔄 Using cached Gemini generation");
 
-    const response = await generateJsonWithCachedSystem(dynamicInput, customSystemPrompt);
+    const response = await generateJsonWithCachedSystem(dynamicInput);
     const latencyMs = Date.now() - startTime;
 
     console.log(`[LLM] ✅ Cached Gemini response (${latencyMs}ms, ${response.length} chars)`);

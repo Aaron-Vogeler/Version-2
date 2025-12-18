@@ -24,6 +24,7 @@ import {
 import * as ivrUtils from "./pipeline/ivr";
 import * as observer from "./routes/observe";
 import { smoothAudio, clearSmootherState } from "./pipeline/audio-smoother";
+import { LatencyTracker } from "./lib/latencyLogger";
 
 // Call control settings are now in config.callControl
 // TTS_DEBOUNCE_MS, BARGE_IN_COOLDOWN_MS, CALLER_UTTERANCE_FLUSH_MS, HANGUP_DELAY_MS
@@ -585,7 +586,7 @@ async function scheduleTtsResponse(
         userText,
         callContext,
         // Early TTS callback - fires when speak text is ready during streaming
-        async (speakText: string, behavior: string) => {
+        async (speakText: string, behavior: string, latencyTracker?: LatencyTracker) => {
           // GUARD: Verify turn sequence hasn't changed during streaming
           if (callContext.turnSeq !== expectedSeq) {
             console.log(`[STREAM] ⏭️ Turn changed during streaming (expected ${expectedSeq}, current ${callContext.turnSeq}) - skipping early TTS`);
@@ -611,6 +612,9 @@ async function scheduleTtsResponse(
 
           // Send TTS immediately
           await sendTtsResponse(callContext, ws, speakText, expectedSeq);
+
+          // Mark TTS as queued in latency tracker (after Telnyx API call completes)
+          latencyTracker?.markTtsQueued();
 
           // Clear transcript after processing
           callContext.lastUserTranscript = "";
@@ -2426,6 +2430,8 @@ wss.on("connection", async (ws) => {
             callControlId: callContext.callControlId,
             goal: callContext.goal,
             userId: callContext.userId,
+            assistantName: callContext.assistantName,
+            userName: callContext.userName,
             customRecordingEnabled: isCustomRecordingEnabled(),
             // Call control settings (per-call overrides)
             ttsDebounceMs: callContext.ttsDebounceMs,
