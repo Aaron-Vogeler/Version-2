@@ -37,8 +37,12 @@ const GROQ_MODELS = [
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT', description: 'Google Gemma 2 instruction-tuned' },
   { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', description: 'GPT open-source 20B model' },
 
-  // Grok models (xAI)
-  { id: 'grok-4-1-fast-non-reasoning', name: '🚀 Grok 4.1 Fast', description: 'xAI Grok 4.1 - Fast non-reasoning model' },
+  // Grok models (xAI) - with automatic prompt caching
+  { id: 'grok-3', name: '🧠 Grok 3 (Prompt Cache)', description: 'xAI flagship model with automatic prompt caching - best for research' },
+  { id: 'grok-3-fast', name: '🚀 Grok 3 Fast (Prompt Cache)', description: 'xAI Grok 3 fast variant with prompt caching - optimized latency' },
+  { id: 'grok-3-mini', name: '⚡ Grok 3 Mini (Prompt Cache)', description: 'xAI Grok 3 mini with prompt caching - cost efficient' },
+  { id: 'grok-3-mini-fast', name: '⚡ Grok 3 Mini Fast (Prompt Cache)', description: 'xAI Grok 3 mini fast with prompt caching - fastest & cheapest' },
+  { id: 'grok-2-latest', name: '🔬 Grok 2 Latest (Prompt Cache)', description: 'xAI Grok 2 latest with prompt caching' },
 
   // Gemini models (with streaming support)
   { id: 'models/gemini-flash-lite-latest', name: '⚡ Gemini Flash Lite (Streaming)', description: 'Google Gemini Flash Lite - Fastest with streaming TTS' },
