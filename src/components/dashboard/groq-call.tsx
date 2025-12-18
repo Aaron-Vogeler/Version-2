@@ -152,6 +152,7 @@ interface SavedGroqSettings {
   jsonMode?: boolean;
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
+  ttsVoiceId?: string; // Custom Telnyx TTS voice ID
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
@@ -232,6 +233,8 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [customSystemPrompt, setCustomSystemPrompt] = useState('');
   // Rolling summary prompt for context management
   const [rollingSummaryPrompt, setRollingSummaryPrompt] = useState('');
+  // Custom TTS voice ID for Telnyx (e.g., "Telnyx.KokoroTTS.bm_george")
+  const [ttsVoiceId, setTtsVoiceId] = useState('');
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [topP, setTopP] = useState(1);
@@ -362,6 +365,7 @@ Examples:
       if (groqSettings.jsonMode !== undefined) setJsonMode(groqSettings.jsonMode);
       if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
       if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
+      if (groqSettings.ttsVoiceId !== undefined) setTtsVoiceId(groqSettings.ttsVoiceId);
       if (groqSettings.callControlSettings) {
         setCallControlSettings(prev => ({
           ...prev,
@@ -592,6 +596,8 @@ Examples:
           to_number: toNumber,
           custom_system_prompt: customSystemPrompt,
           rolling_summary_prompt: rollingSummaryPrompt,
+          // TTS settings
+          tts_voice_id: ttsVoiceId || null,
           // Call control settings
           tts_debounce_ms: callControlSettings.ttsDebounceMs,
           barge_in_cooldown_ms: callControlSettings.bargeInCooldownMs,
@@ -695,6 +701,7 @@ Examples:
     setUserName(firstName);
     setCustomSystemPrompt('');
     setRollingSummaryPrompt('');
+    setTtsVoiceId('');
     setTemperature(0.7);
     setMaxTokens(1024);
     setTopP(1);
@@ -737,6 +744,7 @@ Examples:
       jsonMode,
       customSystemPrompt,
       rollingSummaryPrompt,
+      ttsVoiceId,
       callControlSettings,
       ivrSettings,
       humanDetectionSettings,
@@ -1162,6 +1170,25 @@ Examples:
         </div>
         {showCallControlSettings && (
           <div className="space-y-3 bg-muted/30 rounded-md p-3">
+            <div className="space-y-1">
+              <Label className="text-xs flex items-center gap-1">
+                <Volume2 className="h-3 w-3" />
+                TTS Voice ID
+              </Label>
+              <Input
+                type="text"
+                placeholder="Telnyx.KokoroTTS.bm_george"
+                value={ttsVoiceId}
+                onChange={(e) => setTtsVoiceId(e.target.value)}
+                className="text-xs h-8 font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Custom Telnyx voice ID (leave empty for default). Examples: Telnyx.KokoroTTS.af_nicole, Telnyx.KokoroTTS.bm_george
+              </p>
+            </div>
+            <div className="border-t border-border/30 pt-3 mt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Timing Settings</p>
+            </div>
             <div className="space-y-1">
               <Label className="text-xs">Barge-In Cooldown (ms)</Label>
               <Input

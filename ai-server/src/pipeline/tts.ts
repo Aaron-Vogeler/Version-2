@@ -85,20 +85,61 @@ export async function stopSpeaking(callControlId: string): Promise<void> {
 }
 
 /**
+ * Splits text at the first punctuation mark for faster initial TTS response.
+ * Returns an array with [firstChunk, remainingText] or just [fullText] if no punctuation found.
+ * Punctuation marks: . , ! ? ; :
+ *
+ * @param text - The full text to potentially split
+ * @param minFirstChunkLength - Minimum characters before looking for punctuation (default: 10)
+ * @returns Array with first chunk and optionally remaining text
+ */
+export function splitAtFirstPunctuation(
+  text: string,
+  minFirstChunkLength: number = 10
+): [string, string | null] {
+  // Punctuation marks that indicate a natural break point
+  const punctuationRegex = /[.,!?;:]/;
+
+  // Search for first punctuation after minimum length
+  const searchStart = Math.min(minFirstChunkLength, text.length);
+  const searchArea = text.slice(searchStart);
+  const match = searchArea.match(punctuationRegex);
+
+  if (match && match.index !== undefined) {
+    // Found punctuation - split at that point (include the punctuation in first chunk)
+    const splitIndex = searchStart + match.index + 1;
+    const firstChunk = text.slice(0, splitIndex).trim();
+    const remaining = text.slice(splitIndex).trim();
+
+    // Only split if remaining text is meaningful (more than just whitespace)
+    if (remaining.length > 0) {
+      console.log(`[TTS] 🔀 Splitting text at first punctuation: "${firstChunk.slice(0, 50)}..." + "${remaining.slice(0, 50)}..."`);
+      return [firstChunk, remaining];
+    }
+  }
+
+  // No suitable split point found, return full text
+  return [text, null];
+}
+
+/**
  * Speaks text on an active Telnyx call using the speak endpoint.
  * Telnyx handles TTS synthesis and streaming directly.
  *
  * @param aiText - The text to synthesize and speak
  * @param callControlId - The Telnyx call control ID
+ * @param voiceId - Optional custom voice ID (overrides config default)
  */
 export async function synthesizeSpeech(
   aiText: string,
-  callControlId: string
+  callControlId: string,
+  voiceId?: string
 ): Promise<void> {
   const startTime = Date.now();
+  const effectiveVoiceId = voiceId || config.telnyx.ttsVoiceId;
   console.log("[TTS] 🎤 ========== TTS SYNTHESIS START ==========");
   console.log(`[TTS] 📝 Text to synthesize (callControlId: ${callControlId}):`, aiText);
-  console.log("[TTS] 🗣️ TTS Voice:", config.telnyx.ttsVoiceId);
+  console.log("[TTS] 🗣️ TTS Voice:", effectiveVoiceId);
   console.log("[TTS] 📤 Calling Telnyx Speak API...");
 
   try {
@@ -109,7 +150,7 @@ export async function synthesizeSpeech(
       `https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`,
       {
         payload: aiText,
-        voice: config.telnyx.ttsVoiceId,
+        voice: effectiveVoiceId,
       },
       {
         headers: {

@@ -57,6 +57,9 @@ export interface CallContext {
   deepgramSocket?: any;
   deepgramStartedAt?: number; // Timestamp when Deepgram stream started (for billing)
 
+  // TTS settings
+  ttsVoiceId?: string; // Custom Telnyx TTS voice ID (overrides config default)
+
   // TTS playback state (authoritative, driven by Telnyx webhooks)
   ttsState?: "idle" | "speaking" | "stopping";
   // Turn sequence number for cancelling stale LLM/TTS responses
