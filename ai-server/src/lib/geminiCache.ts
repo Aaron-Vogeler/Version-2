@@ -383,16 +383,17 @@ export async function generateJsonWithCachedSystem(
       // Generate with cached content
       debugLog(`Generating with cache: ${cacheName}`);
 
+      // Use type assertion for cachedContent (SDK types don't include it yet)
       const response = await genai.models.generateContent({
         model: MODEL_NAME,
-        cachedContent: cacheName,
         contents: [
           createUserContent([createPartFromText(dynamicInput)]),
         ],
         config: {
+          cachedContent: cacheName,
           responseMimeType: "application/json",
         },
-      });
+      } as any);
 
       const text = response.text || "";
       debugLog(`Response received (${text.length} chars)`);
@@ -503,6 +504,7 @@ export async function generateStreamingWithCachedSystem(
       // Generate with cached content + streaming
       debugLog(`Streaming with cache: ${cacheName}`);
 
+      // Use type assertion for cachedContent (SDK types don't include it yet)
       const response = await genai.models.generateContentStream({
         model: MODEL_NAME,
         contents: [
@@ -512,7 +514,7 @@ export async function generateStreamingWithCachedSystem(
           cachedContent: cacheName,
           responseMimeType: "application/json",
         },
-      });
+      } as any);
 
       // Process stream with incremental JSON parsing
       const parser = new StreamingJsonParser();
