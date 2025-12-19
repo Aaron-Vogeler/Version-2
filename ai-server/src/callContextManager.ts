@@ -43,6 +43,7 @@ export interface CallContext {
   stream?: boolean; // Enable streaming for LLM calls
   jsonMode?: boolean; // Enable JSON mode for LLM calls
   chunkFirstTurnByPunctuation?: boolean; // Split first AI response at punctuation for faster TTS
+  noAiMode?: boolean; // Disable STT, LLM, TTS - only allow audio playback
   initiatedAt?: string;
 
   // Rolling summary and turn tracking

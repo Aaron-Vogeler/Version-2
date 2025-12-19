@@ -57,6 +57,9 @@ import {
   Volume2,
   Headphones,
   Radio,
+  Play,
+  Square,
+  VolumeX,
 } from 'lucide-react';
 import { LiveCallObserver } from './live-call-observer';
 
@@ -127,7 +130,7 @@ const CALL_AUDIO_SOUNDS = [
   {
     id: 'standard-fart',
     name: 'Standard Fart',
-    url: 'https://www.myinstants.com/media/sounds/dry-fart.mp3',
+    url: 'https://www.myinstants.com/media/sounds/mario-meme.mp3',
   },
   {
     id: 'fart-song',
@@ -154,6 +157,7 @@ interface SavedGroqSettings {
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
   ttsVoiceId?: string; // Custom Telnyx TTS voice ID
+  noAiMode?: boolean; // Disable STT, LLM, TTS - just allow audio playback
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
@@ -341,6 +345,11 @@ Examples:
   // Audio playback state
   const [showAudioPopup, setShowAudioPopup] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [previewingAudioId, setPreviewingAudioId] = useState<string | null>(null);
+  const [previewAudioRef, setPreviewAudioRef] = useState<HTMLAudioElement | null>(null);
+
+  // No AI mode - disable STT, LLM, and TTS but still allow audio playback
+  const [noAiMode, setNoAiMode] = useState(false);
 
   // Live observer state
   const [showObserver, setShowObserver] = useState(false);
@@ -369,6 +378,7 @@ Examples:
       if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
       if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
       if (groqSettings.ttsVoiceId !== undefined) setTtsVoiceId(groqSettings.ttsVoiceId);
+      if (groqSettings.noAiMode !== undefined) setNoAiMode(groqSettings.noAiMode);
       if (groqSettings.callControlSettings) {
         setCallControlSettings(prev => ({
           ...prev,
@@ -644,6 +654,8 @@ Examples:
           stream: stream,
           json_mode: jsonMode,
           chunk_first_turn_by_punctuation: chunkFirstTurnByPunctuation,
+          // No AI mode - disable STT, LLM, TTS
+          no_ai_mode: noAiMode,
         }),
       });
 
@@ -750,6 +762,7 @@ Examples:
       customSystemPrompt,
       rollingSummaryPrompt,
       ttsVoiceId,
+      noAiMode,
       callControlSettings,
       ivrSettings,
       humanDetectionSettings,
@@ -831,6 +844,54 @@ Examples:
         setAudioStatus(null);
       }, 3000);
     }
+  };
+
+  // Preview audio in browser (for testing sounds without being on a call)
+  const handlePreviewAudio = (soundId: string, url: string) => {
+    // Stop any currently playing preview
+    if (previewAudioRef) {
+      previewAudioRef.pause();
+      previewAudioRef.currentTime = 0;
+      if (previewingAudioId === soundId) {
+        // Same sound - toggle off
+        setPreviewingAudioId(null);
+        setPreviewAudioRef(null);
+        return;
+      }
+    }
+
+    // Play new audio
+    const audio = new Audio(url);
+    audio.onended = () => {
+      setPreviewingAudioId(null);
+      setPreviewAudioRef(null);
+    };
+    audio.onerror = () => {
+      setAudioStatus('Preview failed - check URL');
+      setTimeout(() => setAudioStatus(null), 3000);
+      setPreviewingAudioId(null);
+      setPreviewAudioRef(null);
+    };
+    audio.play().catch((err) => {
+      console.error('Error previewing audio:', err);
+      setAudioStatus('Preview blocked by browser');
+      setTimeout(() => setAudioStatus(null), 3000);
+      setPreviewingAudioId(null);
+      setPreviewAudioRef(null);
+    });
+    setPreviewingAudioId(soundId);
+    setPreviewAudioRef(audio);
+  };
+
+  // Stop preview when popup closes
+  const handleAudioPopupClose = (open: boolean) => {
+    if (!open && previewAudioRef) {
+      previewAudioRef.pause();
+      previewAudioRef.currentTime = 0;
+      setPreviewingAudioId(null);
+      setPreviewAudioRef(null);
+    }
+    setShowAudioPopup(open);
   };
 
   // Helper functions for LLM logs
@@ -982,9 +1043,40 @@ Examples:
         </div>
       </div>
 
-      {/* Divider */}
+      {/* No AI Mode Toggle */}
       <div className="border-t border-border/50 pt-4">
-        <p className="text-xs font-medium text-muted-foreground mb-3">LLM Parameters (for call)</p>
+        <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+          <div className="flex flex-col gap-0.5">
+            <Label htmlFor="noAiMode" className="text-sm font-medium flex items-center gap-2">
+              <VolumeX className="h-4 w-4" />
+              No AI Mode
+            </Label>
+            <span className="text-xs text-muted-foreground">Disable STT, LLM, and TTS - only play audio</span>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={noAiMode}
+            onClick={() => setNoAiMode(!noAiMode)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              noAiMode ? 'bg-amber-500' : 'bg-muted'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                noAiMode ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div className={`border-t border-border/50 pt-4 ${noAiMode ? 'opacity-50 pointer-events-none' : ''}`}>
+        <p className="text-xs font-medium text-muted-foreground mb-3">
+          LLM Parameters (for call)
+          {noAiMode && <span className="ml-2 text-amber-600 dark:text-amber-400">(disabled)</span>}
+        </p>
       </div>
 
       {/* Model Selection */}
@@ -2477,19 +2569,19 @@ Examples:
       </Dialog>
 
       {/* Audio Playback Popup */}
-      <Dialog open={showAudioPopup} onOpenChange={setShowAudioPopup}>
+      <Dialog open={showAudioPopup} onOpenChange={handleAudioPopupClose}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Volume2 className="h-5 w-5" />
-              Play Audio Into Call
+              Audio Sounds
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-4">
             {/* Status message */}
             {audioStatus && (
               <div className={`text-center py-2 px-3 rounded-md text-sm ${
-                audioStatus.includes('Error') || audioStatus.includes('error')
+                audioStatus.includes('Error') || audioStatus.includes('error') || audioStatus.includes('failed') || audioStatus.includes('blocked')
                   ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
                   : audioStatus.includes('Playing')
                   ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
@@ -2498,29 +2590,65 @@ Examples:
                 {audioStatus}
               </div>
             )}
-            {!isCallActive && (
-              <div className="text-center py-4 text-muted-foreground">
-                <PhoneOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>No active call</p>
-                <p className="text-xs mt-1">Start a call to play audio to the recipient</p>
-              </div>
-            )}
-            {isCallActive && CALL_AUDIO_SOUNDS.map((sound) => (
-              <Button
-                key={sound.id}
-                variant={playingAudioId === sound.id ? 'default' : 'outline'}
-                className="w-full h-12 text-lg justify-start gap-3"
-                onClick={() => handlePlayAudio(sound.id, sound.url)}
-                disabled={playingAudioId !== null}
-              >
-                {playingAudioId === sound.id ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+
+            {/* Sound list with preview and call buttons */}
+            {CALL_AUDIO_SOUNDS.map((sound) => (
+              <div key={sound.id} className="flex items-center gap-2">
+                {/* Preview button - always available */}
+                <Button
+                  variant={previewingAudioId === sound.id ? 'default' : 'outline'}
+                  size="icon"
+                  className="h-12 w-12 shrink-0"
+                  onClick={() => handlePreviewAudio(sound.id, sound.url)}
+                  title={previewingAudioId === sound.id ? 'Stop preview' : 'Preview in browser'}
+                >
+                  {previewingAudioId === sound.id ? (
+                    <Square className="h-4 w-4" />
+                  ) : (
+                    <Play className="h-4 w-4" />
+                  )}
+                </Button>
+
+                {/* Sound name */}
+                <span className="flex-1 text-sm font-medium truncate">{sound.name}</span>
+
+                {/* Play into call button - only when call is active */}
+                {isCallActive ? (
+                  <Button
+                    variant={playingAudioId === sound.id ? 'default' : 'secondary'}
+                    size="sm"
+                    className="shrink-0 gap-1.5"
+                    onClick={() => handlePlayAudio(sound.id, sound.url)}
+                    disabled={playingAudioId !== null}
+                  >
+                    {playingAudioId === sound.id ? (
+                      <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    ) : (
+                      <PhoneCall className="h-3 w-3" />
+                    )}
+                    Play to Call
+                  </Button>
                 ) : (
-                  <Volume2 className="h-4 w-4" />
+                  <Badge variant="outline" className="text-xs text-muted-foreground">
+                    <PhoneOff className="h-3 w-3 mr-1" />
+                    No call
+                  </Badge>
                 )}
-                {sound.name}
-              </Button>
+              </div>
             ))}
+
+            {/* Help text */}
+            <div className="text-xs text-muted-foreground text-center pt-2 border-t border-border/50">
+              <Play className="h-3 w-3 inline mr-1" />
+              Preview plays in your browser
+              {isCallActive && (
+                <>
+                  {' • '}
+                  <PhoneCall className="h-3 w-3 inline mr-1" />
+                  Play to Call sends to the recipient
+                </>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>
