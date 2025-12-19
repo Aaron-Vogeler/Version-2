@@ -70,6 +70,7 @@ const config = {
     enableDebug: getEnv("ENABLE_GEMINI_DEBUG", "false") === "true", // Enable debug logging for cache operations
     cacheModel: getEnv("GEMINI_CACHE_MODEL", "gemini-2.5-flash-lite"), // Model for cached calls (1024 token min)
     cacheTtlSeconds: getEnvInt("GEMINI_CACHE_TTL_SECONDS", 3600), // Cache TTL in seconds (default: 1 hour)
+    useCustomPrompt: getEnv("GEMINI_USE_CUSTOM_PROMPT", "false") === "true", // Use custom system prompt instead of cached prompt
   },
 
   xai: {

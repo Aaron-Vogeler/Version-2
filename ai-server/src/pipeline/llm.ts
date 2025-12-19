@@ -564,6 +564,30 @@ export async function generateAssistantReply(
 
   // Route to appropriate provider based on model
   if (useStreaming && gemini) {
+    // Check if custom prompt mode is enabled - skip cache and use custom system prompt
+    if (config.gemini.useCustomPrompt) {
+      // Estimate tokens that would have been cached (rough estimate: ~4 chars per token)
+      const estimatedCacheTokens = Math.round(systemPrompt.length / 4);
+      console.log(`[LLM] 📝 Custom prompt mode enabled - bypassing Gemini cache`);
+      console.log(`[LLM] 📊 Dropped caching tokens (estimate): ~${estimatedCacheTokens} tokens (${systemPrompt.length} chars)`);
+
+      // Use regular Gemini streaming with custom system prompt, passing isCustomPromptMode=true
+      return await generateWithGeminiStreaming(
+        modelToUse,
+        messages,
+        temperatureToUse,
+        maxTokensToUse,
+        topPToUse,
+        context,
+        userText,
+        rollingSummary,
+        recentTurnsCount,
+        startTime,
+        onSpeakReady,
+        true  // isCustomPromptMode - enables dropped cache token logging
+      );
+    }
+
     // Check if Gemini caching is available - use cached streaming for cost savings
     if (isGeminiCacheConfigured()) {
       console.log(`[LLM] 🔄 Using cached Gemini streaming for model: ${modelToUse}`);
@@ -778,6 +802,7 @@ async function generateWithOpenAICompatible(
 
 /**
  * Generate response using Gemini (streaming mode with early TTS)
+ * @param isCustomPromptMode - When true, logs dropped caching tokens data
  */
 async function generateWithGeminiStreaming(
   modelToUse: string,
@@ -790,7 +815,8 @@ async function generateWithGeminiStreaming(
   rollingSummary: string | undefined,
   recentTurnsCount: number,
   startTime: number,
-  onSpeakReady?: EarlyTtsCallback
+  onSpeakReady?: EarlyTtsCallback,
+  isCustomPromptMode: boolean = false
 ): Promise<string> {
   if (!gemini) {
     throw new Error("Gemini client not initialized - GEMINI_API_KEY not configured");
@@ -870,6 +896,16 @@ async function generateWithGeminiStreaming(
     const usageMetadata = finalResponse.usageMetadata;
 
     console.log(`[LLM] ✅ Gemini streaming complete (${latencyMs}ms, ${fullResponse.length} chars)`);
+
+    // Log dropped caching tokens when in custom prompt mode
+    if (isCustomPromptMode && usageMetadata) {
+      const promptTokens = usageMetadata.promptTokenCount || 0;
+      const completionTokens = usageMetadata.candidatesTokenCount || 0;
+      const totalTokens = usageMetadata.totalTokenCount || 0;
+      // All prompt tokens are "uncached" in custom prompt mode since we bypassed the cache
+      console.log(`[LLM] 📊 Gemini dropped caching tokens (actual): ${promptTokens} prompt tokens uncached`);
+      console.log(`[LLM] 📊 Gemini usage: prompt=${promptTokens}, completion=${completionTokens}, total=${totalTokens} (no cache applied)`);
+    }
 
     // Log the LLM interaction
     if (context?.callId) {
