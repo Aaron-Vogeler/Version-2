@@ -8,7 +8,7 @@
  * Key features:
  * - Shared cache pointer stored in Supabase (gemini_prompt_cache table)
  * - Automatic cache refresh when expired or about to expire
- * - 1024 token minimum for Gemini 2.5 Flash models
+ * - 1024 token minimum for Gemini 2.5 Flash-Lite models
  * - JSON-only output via responseMimeType
  * - Retry logic for cache expiry edge cases
  * - Streaming support with early TTS callback for low latency
@@ -26,14 +26,14 @@ import { LatencyTracker } from "./latencyLogger";
 
 const PROMPT_VERSION = "ferguson-system-v2";
 const TTL_SECONDS = config.gemini.cacheTtlSeconds || 3600;
-const MODEL_NAME = config.gemini.cacheModel || "gemini-2.5-flash";
+const MODEL_NAME = config.gemini.cacheModel || "gemini-2.5-flash-lite";
 const CACHE_EXPIRY_BUFFER_MS = 10_000; // 10 seconds buffer before expiry
-const MIN_CACHE_TOKENS = 1024; // Minimum tokens required for Gemini 2.5 Flash caching
+const MIN_CACHE_TOKENS = 1024; // Minimum tokens required for Gemini 2.5 Flash-Lite caching
 
 /**
  * Ferguson system prompt for caching (static part only).
  * Dynamic parts (assistant name, user name, goal, introduction) are passed at runtime via contents.
- * This prompt meets Gemini 2.5 Flash's 1024 token minimum for caching.
+ * This prompt meets Gemini 2.5 Flash-Lite's 1024 token minimum for caching.
  */
 const SYSTEM_PROMPT = `IDENTITY
 You are Ferguson, a professional AI assistant calling on behalf of Aaron. You sound like a competent, warm human secretary.
