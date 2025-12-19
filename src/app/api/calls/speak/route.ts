@@ -38,15 +38,19 @@ export async function POST(request: NextRequest) {
     }
 
     // 3. Call Telnyx API to speak text using TTS
+    // Use the same format as the backend (ai-server/src/pipeline/tts.ts)
     const telnyxUrl = `https://api.telnyx.com/v2/calls/${call_control_id}/actions/speak`;
     console.log('[Manual TTS API] Calling Telnyx:', telnyxUrl);
 
-    const speakPayload: any = {
+    // Default voice matches the backend config default
+    const effectiveVoice = voice_id || 'Telnyx.KokoroTTS.af_nicole';
+
+    const speakPayload = {
       payload: text.trim(),
-      language: 'en-US',
-      // Use provided voice_id or default to a Telnyx voice
-      voice: voice_id || 'Telnyx.KokoroTTS.af_nicole',
+      voice: effectiveVoice,
     };
+
+    console.log('[Manual TTS API] Speak payload:', { ...speakPayload, payload: speakPayload.payload.substring(0, 50) + '...' });
 
     const response = await fetch(telnyxUrl, {
       method: 'POST',
