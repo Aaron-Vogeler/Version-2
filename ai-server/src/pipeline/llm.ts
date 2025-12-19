@@ -63,10 +63,9 @@ export type CallContext = contextMgr.CallContext;
  * Uses variable keys: {ASSISTANT_NAME}, {USER_NAME} for placeholder replacement.
  * Goal is always injected at the bottom in format: CALL GOAL (YOUR ONLY MISSION): "{goal}"
  * @param context - Optional call context with goal, assistantName, userName, and systemPrompt
- * @param useGeminiFormat - If true, adds Gemini-specific JSON format instructions
  * @returns The complete system prompt
  */
-function buildSystemPrompt(context?: CallContext, useGeminiFormat = false): string {
+function buildSystemPrompt(context?: CallContext): string {
   // Use systemPrompt from context (passed from frontend), fall back to config (for backwards compat)
   let prompt = context?.systemPrompt || config.llm.systemPrompt;
 
@@ -106,31 +105,6 @@ ${context.additionalContext}`;
     prompt += `
 
 CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`;
-  }
-
-  // Add Gemini-specific JSON format instructions for streaming optimization
-  if (useGeminiFormat) {
-    prompt += `
-
-CRITICAL RESPONSE FORMAT:
-You MUST respond with valid JSON in this EXACT field order:
-{
-  "behavior": "speak|wait|end|noop|hold|dtmf",
-  "speak": "text to speak to the caller",
-  "internal": "your internal reasoning (optional)"
-}
-
-Behavior types:
-- "speak": Normal conversational response (default, most common)
-- "wait": Stay silent and listen for more input
-- "dtmf": Send phone digits for IVR navigation (include "dtmf" field with digits)
-- "hold": Enter hold mode with periodic check-ins
-- "end": End the call after speaking the text in "speak" field
-- "noop": Do nothing, no speech
-
-The "behavior" field MUST come FIRST in the JSON for optimal processing.
-Always include all three fields (behavior, speak, internal) in every response.
-For "wait", "noop", or "hold" behaviors, set "speak" to null.`;
   }
 
   return prompt;
@@ -174,7 +148,7 @@ Your name: ${assistantName}
 Your owner's name: ${userName}
 
 INTRODUCTION TEMPLATE
-Always begin calls with:
+When applicable (i.e. if you haven't been prompted to provide a DTMF tone), begin calls with:
 "Hi, this is [your name]. I'm an AI assistant calling on behalf of [owner's name]. He wants to [summarize goal in 1 sentence]."
 
 GOAL FOR THIS CALL
@@ -551,8 +525,8 @@ export async function generateAssistantReply(
   const modelToUse = callContext?.model || config.groq.model;
   const useStreaming = isGeminiModel(modelToUse);
 
-  // Build system prompt (with Gemini format instructions if using Gemini)
-  const systemPrompt = buildSystemPrompt(context, useStreaming);
+  // Build system prompt
+  const systemPrompt = buildSystemPrompt(context);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemPrompt },
   ];
