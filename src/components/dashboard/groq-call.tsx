@@ -2591,29 +2591,25 @@ Examples:
               </div>
             )}
 
-            {/* Sound list with preview and call buttons */}
+            {/* Sound list - play buttons always work for browser preview */}
             {CALL_AUDIO_SOUNDS.map((sound) => (
               <div key={sound.id} className="flex items-center gap-2">
-                {/* Preview button - always available */}
+                {/* Main play button - plays in browser */}
                 <Button
                   variant={previewingAudioId === sound.id ? 'default' : 'outline'}
-                  size="icon"
-                  className="h-12 w-12 shrink-0"
+                  className="h-12 flex-1 justify-start gap-3"
                   onClick={() => handlePreviewAudio(sound.id, sound.url)}
-                  title={previewingAudioId === sound.id ? 'Stop preview' : 'Preview in browser'}
                 >
                   {previewingAudioId === sound.id ? (
-                    <Square className="h-4 w-4" />
+                    <Square className="h-5 w-5" />
                   ) : (
-                    <Play className="h-4 w-4" />
+                    <Play className="h-5 w-5" />
                   )}
+                  <span className="font-medium">{sound.name}</span>
                 </Button>
 
-                {/* Sound name */}
-                <span className="flex-1 text-sm font-medium truncate">{sound.name}</span>
-
                 {/* Play into call button - only when call is active */}
-                {isCallActive ? (
+                {isCallActive && (
                   <Button
                     variant={playingAudioId === sound.id ? 'default' : 'secondary'}
                     size="sm"
@@ -2626,26 +2622,20 @@ Examples:
                     ) : (
                       <PhoneCall className="h-3 w-3" />
                     )}
-                    Play to Call
+                    To Call
                   </Button>
-                ) : (
-                  <Badge variant="outline" className="text-xs text-muted-foreground">
-                    <PhoneOff className="h-3 w-3 mr-1" />
-                    No call
-                  </Badge>
                 )}
               </div>
             ))}
 
             {/* Help text */}
             <div className="text-xs text-muted-foreground text-center pt-2 border-t border-border/50">
-              <Play className="h-3 w-3 inline mr-1" />
-              Preview plays in your browser
+              Click to play in your browser
               {isCallActive && (
                 <>
                   {' • '}
-                  <PhoneCall className="h-3 w-3 inline mr-1" />
-                  Play to Call sends to the recipient
+                  <PhoneCall className="h-3 w-3 inline mx-1" />
+                  sends to call recipient
                 </>
               )}
             </div>
