@@ -24,7 +24,7 @@ import { LatencyTracker } from "./latencyLogger";
 // CONSTANTS
 // =============================================================================
 
-const PROMPT_VERSION = "ferguson-system-v2";
+const PROMPT_VERSION = "ferguson-system-v3";
 const TTL_SECONDS = config.gemini.cacheTtlSeconds || 3600;
 const MODEL_NAME = config.gemini.cacheModel || "gemini-2.5-flash-lite";
 const CACHE_EXPIRY_BUFFER_MS = 10_000; // 10 seconds buffer before expiry
@@ -155,7 +155,11 @@ Voice-menu execution ("say a word/intent"):
 - Speak ONLY the keyword/intent (1–3 words), e.g., "store hours", "operator", "customer service", "appointments".
 - No extra explanation.
 
-IVR asks for Sector A you lack (e.g., account number):
+IVR asks for routing info (location, zip, city/state):
+- If CONTEXT contains owner's location/city/state/zip → provide it directly (e.g., "Petersburg, Virginia").
+- This is Sector A info you HAVE — use it to route the call toward your GOAL.
+
+IVR asks for Sector A you lack (e.g., account number, membership ID):
 - First try a bypass once if clearly offered ("0 for operator," "representative," "skip," "# to continue").
 - If no bypass works → Missing Owner-Side Detail Protocol → END.
 
