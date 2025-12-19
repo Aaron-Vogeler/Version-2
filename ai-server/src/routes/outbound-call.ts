@@ -64,8 +64,8 @@ interface OutboundCallRequest {
   stream?: boolean;
   jsonMode?: boolean;
   chunkFirstTurnByPunctuation?: boolean;
-  // No AI mode - disable STT, LLM, TTS
-  noAiMode?: boolean;
+  // Manual mode - disable auto AI, allow manual TTS
+  manualMode?: boolean;
 }
 
 interface TelnyxCallResponse {
@@ -83,7 +83,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsVoiceId, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationModel, humanDetectionClassificationPrompt, musicDetectionEnabled, musicDetectionWindowSize, musicDetectionMusicThreshold, musicDetectionSilenceThreshold, musicDetectionHysteresisMs, musicDetectionAuditLogging, musicDetectionUseTranscriptPatterns, diarizationEnabled, diarizationDebounceMs, diarizationMinConfidence, diarizationAuditLogging, model, temperature, maxTokens, topP, reasoning, stream, jsonMode, chunkFirstTurnByPunctuation, noAiMode } = req.body as OutboundCallRequest;
+    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsVoiceId, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationModel, humanDetectionClassificationPrompt, musicDetectionEnabled, musicDetectionWindowSize, musicDetectionMusicThreshold, musicDetectionSilenceThreshold, musicDetectionHysteresisMs, musicDetectionAuditLogging, musicDetectionUseTranscriptPatterns, diarizationEnabled, diarizationDebounceMs, diarizationMinConfidence, diarizationAuditLogging, model, temperature, maxTokens, topP, reasoning, stream, jsonMode, chunkFirstTurnByPunctuation, manualMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -160,8 +160,8 @@ router.post("/", async (req: Request, res: Response) => {
       stream: stream || null,
       jsonMode: jsonMode || null,
       chunkFirstTurnByPunctuation: chunkFirstTurnByPunctuation ?? null,
-      // No AI mode
-      noAiMode: noAiMode ?? false,
+      // Manual mode
+      manualMode: manualMode ?? false,
     });
     const clientStateBase64 = Buffer.from(clientStatePayload).toString("base64");
 

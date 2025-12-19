@@ -494,9 +494,9 @@ async function scheduleTtsResponse(
   expectedSeq: number
 ): Promise<void> {
   try {
-    // GUARD: Skip AI processing in No AI mode
-    if (callContext.noAiMode) {
-      console.log("🔇 No AI mode - skipping LLM/TTS response pipeline");
+    // GUARD: Skip auto AI processing in Manual mode
+    if (callContext.manualMode) {
+      console.log("🎛️ Manual mode - skipping auto LLM/TTS response pipeline");
       return;
     }
 
@@ -847,11 +847,7 @@ async function sendTtsResponse(
   console.log("🎵 STARTING TTS SPEAK ACTION");
   console.log("🎵 ========================================");
 
-  // GUARD: Skip TTS in No AI mode
-  if (callContext.noAiMode) {
-    console.log("🔇 No AI mode - skipping TTS response");
-    return;
-  }
+  // NOTE: This function is for auto AI TTS. Manual TTS uses a separate API endpoint.
 
   // GUARD: Final check - is this response still valid?
   if (callContext.turnSeq !== expectedSeq) {
@@ -2386,7 +2382,7 @@ wss.on("connection", async (ws) => {
           managedContext.stream = decoded.stream || null;
           managedContext.jsonMode = decoded.jsonMode || null;
           managedContext.chunkFirstTurnByPunctuation = decoded.chunkFirstTurnByPunctuation ?? true; // Default to true for faster TTS
-          managedContext.noAiMode = decoded.noAiMode ?? false; // No AI mode - disable STT, LLM, TTS
+          managedContext.manualMode = decoded.manualMode ?? false; // Manual mode - disable auto AI, allow manual TTS
           // Call control settings
           managedContext.ttsDebounceMs = decoded.ttsDebounceMs || null;
           managedContext.bargeInCooldownMs = decoded.bargeInCooldownMs || null;
@@ -2468,7 +2464,7 @@ wss.on("connection", async (ws) => {
             assistantName: callContext.assistantName,
             userName: callContext.userName,
             customRecordingEnabled: isCustomRecordingEnabled(),
-            noAiMode: callContext.noAiMode,
+            manualMode: callContext.manualMode,
             // TTS settings (per-call overrides)
             ttsVoiceId: callContext.ttsVoiceId,
             // Call control settings (per-call overrides)
@@ -2477,13 +2473,13 @@ wss.on("connection", async (ws) => {
             callerUtteranceFlushMs: callContext.callerUtteranceFlushMs,
           });
 
-          // Log prominent warning if No AI mode is enabled
-          if (callContext.noAiMode) {
-            console.log("🔇 ========================================");
-            console.log("🔇 NO AI MODE ENABLED");
-            console.log("🔇 STT, LLM, and TTS are DISABLED");
-            console.log("🔇 Only audio playback is available");
-            console.log("🔇 ========================================");
+          // Log prominent notice if Manual mode is enabled
+          if (callContext.manualMode) {
+            console.log("🎛️ ========================================");
+            console.log("🎛️ MANUAL MODE ENABLED");
+            console.log("🎛️ Auto AI (STT→LLM→TTS) is DISABLED");
+            console.log("🎛️ Manual TTS and audio playback available");
+            console.log("🎛️ ========================================");
           }
 
           // Register this machine as the handler for this call (for multi-instance observer routing)
@@ -2623,10 +2619,10 @@ wss.on("connection", async (ws) => {
           return;
         }
 
-        // Skip STT in No AI mode (still allow audio playback but no transcription)
-        if (callContext?.noAiMode) {
+        // Skip STT in Manual mode (still allow audio playback but no transcription for auto-response)
+        if (callContext?.manualMode) {
           if (process.env.LOG_AUDIO_PACKETS === "true") {
-            console.log("🔇 No AI mode - skipping STT for inbound audio");
+            console.log("🎛️ Manual mode - skipping STT for inbound audio");
           }
           return;
         }

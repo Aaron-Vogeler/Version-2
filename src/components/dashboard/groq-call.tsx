@@ -60,6 +60,7 @@ import {
   Play,
   Square,
   VolumeX,
+  Mic,
 } from 'lucide-react';
 import { LiveCallObserver } from './live-call-observer';
 
@@ -172,7 +173,7 @@ interface SavedGroqSettings {
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
   ttsVoiceId?: string; // Custom Telnyx TTS voice ID
-  noAiMode?: boolean; // Disable STT, LLM, TTS - just allow audio playback
+  manualMode?: boolean; // Manual mode - disable auto AI, allow manual TTS and audio playback
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
@@ -363,8 +364,10 @@ Examples:
   const [previewingAudioId, setPreviewingAudioId] = useState<string | null>(null);
   const [previewAudioRef, setPreviewAudioRef] = useState<HTMLAudioElement | null>(null);
 
-  // No AI mode - disable STT, LLM, and TTS but still allow audio playback
-  const [noAiMode, setNoAiMode] = useState(false);
+  // Manual mode - disable auto AI, allow manual TTS and audio playback
+  const [manualMode, setManualMode] = useState(false);
+  const [manualTtsText, setManualTtsText] = useState('');
+  const [sendingManualTts, setSendingManualTts] = useState(false);
 
   // Live observer state
   const [showObserver, setShowObserver] = useState(false);
@@ -393,7 +396,7 @@ Examples:
       if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
       if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
       if (groqSettings.ttsVoiceId !== undefined) setTtsVoiceId(groqSettings.ttsVoiceId);
-      if (groqSettings.noAiMode !== undefined) setNoAiMode(groqSettings.noAiMode);
+      if (groqSettings.manualMode !== undefined) setManualMode(groqSettings.manualMode);
       if (groqSettings.callControlSettings) {
         setCallControlSettings(prev => ({
           ...prev,
@@ -669,8 +672,8 @@ Examples:
           stream: stream,
           json_mode: jsonMode,
           chunk_first_turn_by_punctuation: chunkFirstTurnByPunctuation,
-          // No AI mode - disable STT, LLM, TTS
-          no_ai_mode: noAiMode,
+          // Manual mode - disable auto AI, allow manual TTS
+          manual_mode: manualMode,
         }),
       });
 
@@ -777,7 +780,7 @@ Examples:
       customSystemPrompt,
       rollingSummaryPrompt,
       ttsVoiceId,
-      noAiMode,
+      manualMode,
       callControlSettings,
       ivrSettings,
       humanDetectionSettings,
@@ -907,6 +910,48 @@ Examples:
       setPreviewAudioRef(null);
     }
     setShowAudioPopup(open);
+  };
+
+  // Send manual TTS to the call (for Manual Mode)
+  const handleSendManualTts = async () => {
+    if (!activeCall?.id || !manualTtsText.trim()) {
+      return;
+    }
+
+    setSendingManualTts(true);
+    setAudioStatus('Sending to call...');
+
+    try {
+      console.log('[Manual TTS] Sending text:', manualTtsText.trim().substring(0, 50) + '...');
+      const response = await fetch('/api/calls/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          call_control_id: activeCall.id,
+          text: manualTtsText.trim(),
+          voice_id: ttsVoiceId || null,
+        }),
+      });
+
+      const data = await response.json();
+      console.log('[Manual TTS] Response:', data);
+
+      if (!response.ok) {
+        console.error('[Manual TTS] Failed:', data);
+        setAudioStatus(`Error: ${data.error || 'Failed'}`);
+      } else {
+        setAudioStatus('Speaking...');
+        setManualTtsText(''); // Clear the input on success
+      }
+    } catch (err) {
+      console.error('[Manual TTS] Error:', err);
+      setAudioStatus('Network error');
+    } finally {
+      setTimeout(() => {
+        setSendingManualTts(false);
+        setAudioStatus(null);
+      }, 2000);
+    }
   };
 
   // Helper functions for LLM logs
@@ -1058,28 +1103,28 @@ Examples:
         </div>
       </div>
 
-      {/* No AI Mode Toggle */}
+      {/* Manual Mode Toggle */}
       <div className="border-t border-border/50 pt-4">
-        <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+        <div className="flex items-center justify-between p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
           <div className="flex flex-col gap-0.5">
-            <Label htmlFor="noAiMode" className="text-sm font-medium flex items-center gap-2">
-              <VolumeX className="h-4 w-4" />
-              No AI Mode
+            <Label htmlFor="manualMode" className="text-sm font-medium flex items-center gap-2">
+              <Settings2 className="h-4 w-4" />
+              Manual Mode
             </Label>
-            <span className="text-xs text-muted-foreground">Disable STT, LLM, and TTS - only play audio</span>
+            <span className="text-xs text-muted-foreground">Control the call manually - type what to say</span>
           </div>
           <button
             type="button"
             role="switch"
-            aria-checked={noAiMode}
-            onClick={() => setNoAiMode(!noAiMode)}
+            aria-checked={manualMode}
+            onClick={() => setManualMode(!manualMode)}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              noAiMode ? 'bg-amber-500' : 'bg-muted'
+              manualMode ? 'bg-blue-500' : 'bg-muted'
             }`}
           >
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                noAiMode ? 'translate-x-6' : 'translate-x-1'
+                manualMode ? 'translate-x-6' : 'translate-x-1'
               }`}
             />
           </button>
@@ -1087,10 +1132,10 @@ Examples:
       </div>
 
       {/* Divider */}
-      <div className={`border-t border-border/50 pt-4 ${noAiMode ? 'opacity-50 pointer-events-none' : ''}`}>
+      <div className={`border-t border-border/50 pt-4 ${manualMode ? 'opacity-50 pointer-events-none' : ''}`}>
         <p className="text-xs font-medium text-muted-foreground mb-3">
           LLM Parameters (for call)
-          {noAiMode && <span className="ml-2 text-amber-600 dark:text-amber-400">(disabled)</span>}
+          {manualMode && <span className="ml-2 text-blue-600 dark:text-blue-400">(disabled in manual mode)</span>}
         </p>
       </div>
 
@@ -2076,6 +2121,140 @@ Examples:
     </div>
   );
 
+  // Manual Control panel content (shown when Manual Mode is enabled)
+  const manualControlContent = (
+    <div className="space-y-4">
+      {/* Status Badge */}
+      <div className="flex items-center justify-between">
+        <Badge variant="outline" className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+          <Settings2 className="h-3 w-3 mr-1" />
+          Manual Mode Active
+        </Badge>
+        {isCallActive ? (
+          <Badge variant="success" className="animate-pulse">
+            <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
+            Call Active
+          </Badge>
+        ) : (
+          <Badge variant="secondary">
+            <PhoneOff className="h-3 w-3 mr-1" />
+            No Call
+          </Badge>
+        )}
+      </div>
+
+      {/* Manual TTS Input */}
+      <div className="space-y-2">
+        <Label className="flex items-center gap-2 text-sm font-medium">
+          <Mic className="h-4 w-4" />
+          Type what to say
+        </Label>
+        <div className="flex gap-2">
+          <Textarea
+            value={manualTtsText}
+            onChange={(e) => setManualTtsText(e.target.value)}
+            placeholder={isCallActive ? "Type text to speak into the call..." : "Start a call first to use manual TTS"}
+            className="min-h-[80px] resize-none text-sm"
+            disabled={!isCallActive}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && isCallActive && manualTtsText.trim()) {
+                e.preventDefault();
+                handleSendManualTts();
+              }
+            }}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            Press Enter to send, Shift+Enter for new line
+          </p>
+          <Button
+            onClick={handleSendManualTts}
+            disabled={!isCallActive || !manualTtsText.trim() || sendingManualTts}
+            size="sm"
+            className="gap-2"
+          >
+            {sendingManualTts ? (
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+            Send TTS
+          </Button>
+        </div>
+      </div>
+
+      {/* Status message */}
+      {audioStatus && (
+        <div className={`text-center py-2 px-3 rounded-md text-sm ${
+          audioStatus.includes('Error') || audioStatus.includes('error') || audioStatus.includes('failed')
+            ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+            : audioStatus.includes('Speaking') || audioStatus.includes('Playing')
+            ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+            : 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400'
+        }`}>
+          {audioStatus}
+        </div>
+      )}
+
+      {/* Audio Sounds Section */}
+      <div className="border-t border-border/50 pt-4">
+        <Label className="flex items-center gap-2 text-sm font-medium mb-3">
+          <Volume2 className="h-4 w-4" />
+          Sound Effects
+        </Label>
+        <div className="grid gap-2">
+          {CALL_AUDIO_SOUNDS.map((sound) => (
+            <div key={sound.id} className="flex items-center gap-2">
+              {/* Preview in browser button */}
+              <Button
+                variant={previewingAudioId === sound.id ? 'default' : 'outline'}
+                size="sm"
+                className="h-9 flex-1 justify-start gap-2"
+                onClick={() => handlePreviewAudio(sound.id, sound.url)}
+              >
+                {previewingAudioId === sound.id ? (
+                  <Square className="h-3 w-3" />
+                ) : (
+                  <Play className="h-3 w-3" />
+                )}
+                <span className="text-xs">{sound.name}</span>
+              </Button>
+
+              {/* Play into call button */}
+              {isCallActive && (
+                <Button
+                  variant={playingAudioId === sound.id ? 'default' : 'secondary'}
+                  size="sm"
+                  className="h-9 gap-1"
+                  onClick={() => handlePlayAudio(sound.id, sound.url)}
+                  disabled={playingAudioId !== null}
+                >
+                  {playingAudioId === sound.id ? (
+                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  ) : (
+                    <PhoneCall className="h-3 w-3" />
+                  )}
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground text-center mt-3">
+          Click to preview in browser
+          {isCallActive && <> • <PhoneCall className="h-3 w-3 inline mx-1" /> sends to call</>}
+        </p>
+      </div>
+
+      {/* Info */}
+      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-3">
+        <p className="text-xs text-blue-700 dark:text-blue-300">
+          <strong>Manual Mode:</strong> Auto AI responses are disabled. Type text to speak, or play sound effects directly into the call. The other party will hear what you send.
+        </p>
+      </div>
+    </div>
+  );
+
   // LLM Logs panel content
   const logsContent = (
     <div className="space-y-4">
@@ -2429,15 +2608,25 @@ Examples:
             `${showSettings && showContextPanel ? 'xl:col-span-5' : showSettings || showContextPanel ? 'xl:col-span-8' : 'xl:col-span-12'}`
           )}
 
-        {/* Context Visibility Panel */}
+        {/* Context Visibility Panel OR Manual Control Panel */}
         {(showContextPanel || expandedPanel === 'context') &&
-          renderPanel(
-            'context',
-            'Context Visibility',
-            "What's being configured for the call",
-            contextContent,
-            'xl:col-span-4'
-          )}
+          (manualMode ? (
+            renderPanel(
+              'context',
+              'Manual Control',
+              'Control the call manually',
+              manualControlContent,
+              'xl:col-span-4'
+            )
+          ) : (
+            renderPanel(
+              'context',
+              'Context Visibility',
+              "What's being configured for the call",
+              contextContent,
+              'xl:col-span-4'
+            )
+          ))}
       </div>
 
       {/* LLM Logs Panel - Separate full-width section below */}
