@@ -128,8 +128,8 @@ CALL GOAL (YOUR ONLY MISSION): "your goal here"`;
 // Audio sounds that can be played during calls
 const CALL_AUDIO_SOUNDS = [
   {
-    id: 'standard-fart',
-    name: 'Standard Fart',
+    id: 'mario-theme',
+    name: 'Mario Theme',
     url: 'https://www.myinstants.com/media/sounds/mario-meme.mp3',
   },
   {
@@ -138,9 +138,24 @@ const CALL_AUDIO_SOUNDS = [
     url: 'https://www.myinstants.com/media/sounds/jerry-farts-united-clean-loop-original-3_48-hd-by-jtf-entertainment_chzyMf5.mp3',
   },
   {
+    id: 'standard-fart',
+    name: 'Standard Fart',
+    url: 'https://www.myinstants.com/media/sounds/dry-fart.mp3',
+  },
+  {
     id: 'quick-fart',
     name: 'Quick Fart',
-    url: 'https://www.myinstants.com/media/sounds/dry-fart.mp3',
+    url: 'https://www.myinstants.com/media/sounds/fart_1.mp3',
+  },
+  {
+    id: 'reverberating-fart',
+    name: 'Reverberating Fart',
+    url: 'https://www.myinstants.com/media/sounds/fart-with-extra-reverb.mp3',
+  },
+  {
+    id: 'dramatic-fart',
+    name: 'Dramatic Fart',
+    url: 'https://www.myinstants.com/media/sounds/dramatic-fart_f8Sw6fv.mp3',
   },
 ];
 
