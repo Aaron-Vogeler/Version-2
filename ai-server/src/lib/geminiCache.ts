@@ -725,6 +725,23 @@ export async function generateStreamingWithCachedSystem(
       latencyTracker.markComplete(fullResponse.length);
       latencyTracker.logSummary();
 
+      // Log Gemini usage metadata including prompt caching data
+      // The response object from generateContentStream has usageMetadata after iteration
+      const usageMetadata = (response as any).usageMetadata;
+      if (usageMetadata) {
+        const promptTokens = usageMetadata.promptTokenCount || 0;
+        const completionTokens = usageMetadata.candidatesTokenCount || 0;
+        const totalTokens = usageMetadata.totalTokenCount || 0;
+        // Gemini returns cachedContentTokenCount for explicit/implicit prompt caching
+        const cachedTokens = usageMetadata.cachedContentTokenCount || 0;
+
+        console.log(`[GeminiCache] 📊 Gemini usage: prompt=${promptTokens}, completion=${completionTokens}, total=${totalTokens}, cached=${cachedTokens}`);
+        if (cachedTokens > 0) {
+          const cacheHitRate = ((cachedTokens / promptTokens) * 100).toFixed(1);
+          console.log(`[GeminiCache] 💾 Prompt cache hit: ${cachedTokens} tokens cached (${cacheHitRate}% of prompt)`);
+        }
+      }
+
       debugLog(`Streaming response complete (${fullResponse.length} chars)`);
 
       // Strip markdown fences if present
@@ -830,6 +847,21 @@ async function generateStreamingWithoutCache(
   // Track completion and log summary
   latencyTracker.markComplete(fullResponse.length);
   latencyTracker.logSummary();
+
+  // Log Gemini usage metadata including implicit caching data
+  const usageMetadata = (response as any).usageMetadata;
+  if (usageMetadata) {
+    const promptTokens = usageMetadata.promptTokenCount || 0;
+    const completionTokens = usageMetadata.candidatesTokenCount || 0;
+    const totalTokens = usageMetadata.totalTokenCount || 0;
+    const cachedTokens = usageMetadata.cachedContentTokenCount || 0;
+
+    console.log(`[GeminiCache] 📊 Gemini usage (no cache): prompt=${promptTokens}, completion=${completionTokens}, total=${totalTokens}, cached=${cachedTokens}`);
+    if (cachedTokens > 0) {
+      const cacheHitRate = ((cachedTokens / promptTokens) * 100).toFixed(1);
+      console.log(`[GeminiCache] 💾 Implicit cache hit: ${cachedTokens} tokens cached (${cacheHitRate}% of prompt)`);
+    }
+  }
 
   return stripCodeFences(fullResponse);
 }
