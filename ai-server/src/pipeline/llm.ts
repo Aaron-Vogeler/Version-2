@@ -856,6 +856,22 @@ async function generateWithOpenAICompatible(
     apiParams.response_format = { type: 'json_object' };
   }
 
+  // ============================================================================
+  // LOG EXACT API REQUEST JSON - for debugging xAI prompt caching
+  // ============================================================================
+  if (isGrokModel(modelToUse)) {
+    console.log('\n' + '🔷'.repeat(40));
+    console.log('[XAI-DEBUG] EXACT API REQUEST PAYLOAD (for cache debugging):');
+    console.log('🔷'.repeat(40));
+    // Log compact JSON (no pretty print) to see exact payload
+    const payloadJson = JSON.stringify(apiParams);
+    console.log('[XAI-DEBUG] PAYLOAD LENGTH:', payloadJson.length, 'chars');
+    console.log('[XAI-DEBUG] PAYLOAD HASH:', hashContent(payloadJson));
+    console.log('[XAI-DEBUG] FULL PAYLOAD:');
+    console.log(payloadJson);
+    console.log('🔷'.repeat(40) + '\n');
+  }
+
   const response = await client.chat.completions.create(apiParams);
   const latencyMs = Date.now() - startTime;
 
