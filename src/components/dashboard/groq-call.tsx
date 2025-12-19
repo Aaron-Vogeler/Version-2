@@ -2149,24 +2149,46 @@ Examples:
           <Mic className="h-4 w-4" />
           Type what to say
         </Label>
-        <div className="flex gap-2">
-          <Textarea
-            value={manualTtsText}
-            onChange={(e) => setManualTtsText(e.target.value)}
-            placeholder={isCallActive ? "Type text to speak into the call..." : "Start a call first to use manual TTS"}
-            className="min-h-[80px] resize-none text-sm"
-            disabled={!isCallActive}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && isCallActive && manualTtsText.trim()) {
-                e.preventDefault();
-                handleSendManualTts();
-              }
-            }}
+        <Textarea
+          value={manualTtsText}
+          onChange={(e) => setManualTtsText(e.target.value)}
+          placeholder={isCallActive ? "Type text to speak into the call..." : "Start a call first to use manual TTS"}
+          className="min-h-[80px] resize-none text-sm"
+          disabled={!isCallActive}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && isCallActive && manualTtsText.trim()) {
+              e.preventDefault();
+              handleSendManualTts();
+            }
+          }}
+        />
+        {/* Voice Selection */}
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground whitespace-nowrap">Voice:</Label>
+          <Input
+            type="text"
+            placeholder="Telnyx.KokoroTTS.af_nicole"
+            value={ttsVoiceId}
+            onChange={(e) => setTtsVoiceId(e.target.value)}
+            className="flex-1 h-7 text-xs font-mono"
+            list="telnyx-voices"
           />
+          <datalist id="telnyx-voices">
+            <option value="Telnyx.KokoroTTS.af_nicole">American Female - Nicole</option>
+            <option value="Telnyx.KokoroTTS.af_sarah">American Female - Sarah</option>
+            <option value="Telnyx.KokoroTTS.af_bella">American Female - Bella</option>
+            <option value="Telnyx.KokoroTTS.af_sky">American Female - Sky</option>
+            <option value="Telnyx.KokoroTTS.bf_emma">British Female - Emma</option>
+            <option value="Telnyx.KokoroTTS.bf_isabella">British Female - Isabella</option>
+            <option value="Telnyx.KokoroTTS.am_adam">American Male - Adam</option>
+            <option value="Telnyx.KokoroTTS.am_michael">American Male - Michael</option>
+            <option value="Telnyx.KokoroTTS.bm_george">British Male - George</option>
+            <option value="Telnyx.KokoroTTS.bm_lewis">British Male - Lewis</option>
+          </datalist>
         </div>
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            Press Enter to send, Shift+Enter for new line
+            Enter to send, Shift+Enter for new line
           </p>
           <Button
             onClick={handleSendManualTts}
