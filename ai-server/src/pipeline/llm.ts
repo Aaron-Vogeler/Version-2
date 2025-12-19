@@ -19,67 +19,71 @@ import {
 import { LatencyTracker } from "../lib/latencyLogger";
 
 // ============================================================================
-// LLM MESSAGE LOGGING HELPERS
+// LLM MESSAGE LOGGING HELPERS - FULL UNTRUNCATED LOGGING
 // ============================================================================
 
 /**
- * Format LLM messages for clear console logging.
- * Shows each message with role and content in a readable format.
+ * Log FULL LLM input messages - NO TRUNCATION.
+ * Shows every message with complete content for debugging.
  */
-function formatMessagesForLog(
+function logLlmInput(
   messages: Array<{ role: string; content: string }>,
-  maxContentLength: number = 500
-): string {
-  const lines: string[] = [];
-  lines.push(`┌─────────────────────────────────────────────────────────────────┐`);
-  lines.push(`│ LLM INPUT MESSAGES (${messages.length} messages)                              │`);
-  lines.push(`├─────────────────────────────────────────────────────────────────┤`);
+  model: string,
+  temperature: number,
+  maxTokens: number,
+  requestType: string = "chat"
+): void {
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`[LLM INPUT] 📤 REQUEST TO ${model.toUpperCase()}`);
+  console.log(`${'='.repeat(80)}`);
+  console.log(`Request Type: ${requestType}`);
+  console.log(`Model: ${model}`);
+  console.log(`Temperature: ${temperature}`);
+  console.log(`Max Tokens: ${maxTokens}`);
+  console.log(`Message Count: ${messages.length}`);
+  console.log(`${'─'.repeat(80)}`);
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    const roleLabel = msg.role.toUpperCase().padEnd(9);
-    const contentPreview = msg.content.length > maxContentLength
-      ? msg.content.substring(0, maxContentLength) + `... [${msg.content.length} chars total]`
-      : msg.content;
-
-    // Split content into lines for readability
-    const contentLines = contentPreview.split('\n');
-    lines.push(`│ [${i}] ${roleLabel}: ${contentLines[0]}`);
-    for (let j = 1; j < Math.min(contentLines.length, 10); j++) {
-      lines.push(`│     ${' '.repeat(roleLabel.length)}  ${contentLines[j]}`);
-    }
-    if (contentLines.length > 10) {
-      lines.push(`│     ${' '.repeat(roleLabel.length)}  ... [${contentLines.length - 10} more lines]`);
-    }
-    if (i < messages.length - 1) {
-      lines.push(`│`);
-    }
+    console.log(`\n[MESSAGE ${i}] Role: ${msg.role.toUpperCase()}`);
+    console.log(`${'─'.repeat(40)}`);
+    console.log(msg.content);
+    console.log(`${'─'.repeat(40)}`);
+    console.log(`[END MESSAGE ${i}] (${msg.content.length} chars)`);
   }
 
-  lines.push(`└─────────────────────────────────────────────────────────────────┘`);
-  return lines.join('\n');
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`[END LLM INPUT]`);
+  console.log(`${'='.repeat(80)}\n`);
 }
 
 /**
- * Log the raw LLM output response in a clear format.
+ * Log FULL LLM output response - NO TRUNCATION.
  */
-function logLlmOutput(response: string, model: string, latencyMs: number): void {
-  const lines: string[] = [];
-  lines.push(`┌─────────────────────────────────────────────────────────────────┐`);
-  lines.push(`│ LLM OUTPUT RESPONSE                                             │`);
-  lines.push(`│ Model: ${model.padEnd(54)}│`);
-  lines.push(`│ Latency: ${String(latencyMs + 'ms').padEnd(52)}│`);
-  lines.push(`│ Length: ${String(response.length + ' chars').padEnd(53)}│`);
-  lines.push(`├─────────────────────────────────────────────────────────────────┤`);
-
-  // Show full response (it's usually JSON so not too long)
-  const responseLines = response.split('\n');
-  for (const line of responseLines) {
-    lines.push(`│ ${line}`);
+function logLlmOutput(
+  response: string,
+  model: string,
+  latencyMs: number,
+  promptTokens?: number,
+  completionTokens?: number,
+  totalTokens?: number
+): void {
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`[LLM OUTPUT] 📥 RESPONSE FROM ${model.toUpperCase()}`);
+  console.log(`${'='.repeat(80)}`);
+  console.log(`Model: ${model}`);
+  console.log(`Latency: ${latencyMs}ms`);
+  console.log(`Response Length: ${response.length} chars`);
+  if (promptTokens !== undefined) {
+    console.log(`Tokens - Prompt: ${promptTokens}, Completion: ${completionTokens}, Total: ${totalTokens}`);
   }
-
-  lines.push(`└─────────────────────────────────────────────────────────────────┘`);
-  console.log(lines.join('\n'));
+  console.log(`${'─'.repeat(80)}`);
+  console.log(`FULL RESPONSE:`);
+  console.log(`${'─'.repeat(40)}`);
+  console.log(response);
+  console.log(`${'─'.repeat(40)}`);
+  console.log(`[END RESPONSE]`);
+  console.log(`${'='.repeat(80)}\n`);
 }
 
 // Create Groq client configured with API key and base URL
@@ -280,9 +284,13 @@ export async function generateRollingSummary(
       { role: "user", content: summaryPrompt },
     ];
 
-    const startTime = Date.now();
     // Use model from context if available, otherwise fall back to config
     const modelToUse = context.model || config.groq.model;
+
+    // LOG FULL INPUT
+    logLlmInput(summaryMessages, modelToUse, 0.2, config_params.maxSummaryTokensHint, "summary");
+
+    const startTime = Date.now();
     const response = await groq.chat.completions.create({
       model: modelToUse,
       messages: summaryMessages,
@@ -292,6 +300,9 @@ export async function generateRollingSummary(
     const latencyMs = Date.now() - startTime;
 
     const newSummary = response.choices[0]?.message?.content || "";
+
+    // LOG FULL OUTPUT
+    logLlmOutput(newSummary, modelToUse, latencyMs, response.usage?.prompt_tokens, response.usage?.completion_tokens, response.usage?.total_tokens);
 
     // Log the LLM interaction to database for live visibility
     insertLlmLog({
@@ -395,6 +406,9 @@ Respond with ONLY "True" if this sounds like an IVR/AI/robotic system, or "False
     { role: "user", content: `Analyze this transcript:\n"${transcriptText}"\n\nIs this an IVR/AI system? Respond only with True or False.` },
   ];
 
+  // LOG FULL INPUT
+  logLlmInput(messages, config.groq.model, 0.1, 10, "party_detection");
+
   try {
     const startTime = Date.now();
     const response = await groq.chat.completions.create({
@@ -407,6 +421,9 @@ Respond with ONLY "True" if this sounds like an IVR/AI/robotic system, or "False
 
     const result = response.choices[0]?.message?.content?.trim().toLowerCase() || "";
     const isRobotic = result === "true" || result.startsWith("true");
+
+    // LOG FULL OUTPUT
+    logLlmOutput(result, config.groq.model, latencyMs, response.usage?.prompt_tokens, response.usage?.completion_tokens, response.usage?.total_tokens);
 
     console.log(`[PARTY-DETECT] 🔍 Detection result: ${isRobotic ? "ROBOTIC/IVR" : "HUMAN"} (response: "${result}", latency: ${latencyMs}ms)`);
 
@@ -471,6 +488,9 @@ export async function classifyReceiver(
   const useXai = isGrokModel(modelToUse) && xai;
   const client = useXai ? xai! : groq;
 
+  // LOG FULL INPUT
+  logLlmInput(messages, modelToUse, 0.1, 100, "receiver_classification");
+
   try {
     const startTime = Date.now();
     console.log(`[RECEIVER-CLASSIFY] 🔍 Using model: ${modelToUse} (${useXai ? 'xAI' : 'Groq'})`);
@@ -484,6 +504,9 @@ export async function classifyReceiver(
 
     const rawResponse = response.choices[0]?.message?.content?.trim() || "";
     const classification = parseClassificationResponse(rawResponse);
+
+    // LOG FULL OUTPUT
+    logLlmOutput(rawResponse, modelToUse, latencyMs, response.usage?.prompt_tokens, response.usage?.completion_tokens, response.usage?.total_tokens);
 
     console.log(
       `[RECEIVER-CLASSIFY] 🔍 Classification result: ${classification.receiver.toUpperCase()} ` +
@@ -619,15 +642,14 @@ export async function generateAssistantReply(
     messages.push({ role: "user", content: userText });
   }
 
-  // ============================================================================
-  // LOG LLM INPUT MESSAGES
-  // ============================================================================
-  console.log(`\n[LLM] 📤 SENDING TO LLM (model: ${modelToUse}, ${messages.length} messages)`);
-  console.log(formatMessagesForLog(messages));
-
   const startTime = Date.now();
   const temperatureToUse = callContext?.temperature ?? 0.7;
   const maxTokensToUse = callContext?.maxTokens ?? 1024;
+
+  // ============================================================================
+  // LOG FULL LLM INPUT - NO TRUNCATION
+  // ============================================================================
+  logLlmInput(messages, modelToUse, temperatureToUse, maxTokensToUse, "chat");
   const topPToUse = callContext?.topP ?? 1.0;
   const reasoningToUse = callContext?.reasoning || 'medium';
   const jsonModeToUse = callContext?.jsonMode || false;
@@ -652,9 +674,8 @@ export async function generateAssistantReply(
         console.log(`[LLM] ✅ Cached Gemini streaming complete (${latencyMs}ms, ${response.length} chars)`);
 
         // ============================================================================
-        // LOG LLM OUTPUT RESPONSE (Cached Gemini)
+        // LOG FULL LLM OUTPUT - NO TRUNCATION (Cached Gemini)
         // ============================================================================
-        console.log(`\n[LLM] 📥 RECEIVED FROM LLM (Cached Gemini)`);
         logLlmOutput(response, config.gemini.cacheModel, latencyMs);
 
         // Log the interaction
@@ -782,12 +803,6 @@ async function generateWithOpenAICompatible(
 
   const assistantResponse = response.choices[0]?.message?.content || "";
 
-  // ============================================================================
-  // LOG LLM OUTPUT RESPONSE
-  // ============================================================================
-  console.log(`\n[LLM] 📥 RECEIVED FROM LLM`);
-  logLlmOutput(assistantResponse, modelToUse, latencyMs);
-
   // Extract token usage - xAI provides detailed usage including cache info
   const usage = response.usage;
   const promptTokens = usage?.prompt_tokens || 0;
@@ -801,12 +816,14 @@ async function generateWithOpenAICompatible(
   // Determine if this is xAI/Grok for detailed logging
   const isXai = isGrokModel(modelToUse);
 
-  // Log detailed token usage for Grok models
-  if (isXai && usage) {
-    console.log(
-      `[LLM] 🤖 Grok usage: prompt=${promptTokens}, completion=${completionTokens}, ` +
-      `total=${totalTokens}, cached=${cachedTokens}`
-    );
+  // ============================================================================
+  // LOG FULL LLM OUTPUT - NO TRUNCATION
+  // ============================================================================
+  logLlmOutput(assistantResponse, modelToUse, latencyMs, promptTokens, completionTokens, totalTokens);
+
+  // Log additional cache info for Grok models
+  if (isXai && cachedTokens > 0) {
+    console.log(`[LLM] 🤖 Grok cached tokens: ${cachedTokens}`);
   }
 
   // Log the LLM interaction to database for live visibility
@@ -954,10 +971,16 @@ async function generateWithGeminiStreaming(
     console.log(`[LLM] ✅ Gemini streaming complete (${latencyMs}ms, ${fullResponse.length} chars)`);
 
     // ============================================================================
-    // LOG LLM OUTPUT RESPONSE
+    // LOG FULL LLM OUTPUT - NO TRUNCATION (Gemini Streaming)
     // ============================================================================
-    console.log(`\n[LLM] 📥 RECEIVED FROM LLM (Gemini Streaming)`);
-    logLlmOutput(fullResponse, modelToUse, latencyMs);
+    logLlmOutput(
+      fullResponse,
+      modelToUse,
+      latencyMs,
+      usageMetadata?.promptTokenCount,
+      usageMetadata?.candidatesTokenCount,
+      usageMetadata?.totalTokenCount
+    );
 
     // Log the LLM interaction
     if (context?.callId) {
