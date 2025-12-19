@@ -859,12 +859,11 @@ async function generateWithOpenAICompatible(
   // ============================================================================
   // LOG EXACT API REQUEST JSON - for debugging xAI prompt caching
   // ============================================================================
+  const payloadJson = JSON.stringify(apiParams);
   if (isGrokModel(modelToUse)) {
     console.log('\n' + '🔷'.repeat(40));
     console.log('[XAI-DEBUG] EXACT API REQUEST PAYLOAD (for cache debugging):');
     console.log('🔷'.repeat(40));
-    // Log compact JSON (no pretty print) to see exact payload
-    const payloadJson = JSON.stringify(apiParams);
     console.log('[XAI-DEBUG] PAYLOAD LENGTH:', payloadJson.length, 'chars');
     console.log('[XAI-DEBUG] PAYLOAD HASH:', hashContent(payloadJson));
     console.log('[XAI-DEBUG] FULL PAYLOAD:');
@@ -872,19 +871,51 @@ async function generateWithOpenAICompatible(
     console.log('🔷'.repeat(40) + '\n');
   }
 
-  const response = await client.chat.completions.create(apiParams);
+  // For xAI/Grok models, use direct fetch to avoid any SDK transformations
+  // that might affect prompt caching. The OpenAI SDK may add extra fields.
+  let response: any;
+  let assistantResponse: string;
+  let usage: any;
+
+  if (isGrokModel(modelToUse) && config.xai.apiKey) {
+    console.log('[XAI-DEBUG] Using DIRECT FETCH (bypassing OpenAI SDK)');
+
+    const fetchResponse = await fetch(`${config.xai.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.xai.apiKey}`,
+      },
+      body: payloadJson,
+    });
+
+    if (!fetchResponse.ok) {
+      const errorText = await fetchResponse.text();
+      console.error('[XAI-DEBUG] API error:', fetchResponse.status, errorText);
+      throw new Error(`xAI API error: ${fetchResponse.status} ${errorText}`);
+    }
+
+    response = await fetchResponse.json();
+    assistantResponse = response.choices?.[0]?.message?.content || "";
+    usage = response.usage;
+
+    console.log('[XAI-DEBUG] Direct fetch successful');
+  } else {
+    // Use OpenAI SDK for non-xAI models
+    response = await client.chat.completions.create(apiParams);
+    assistantResponse = response.choices[0]?.message?.content || "";
+    usage = response.usage;
+  }
+
   const latencyMs = Date.now() - startTime;
 
-  const assistantResponse = response.choices[0]?.message?.content || "";
-
   // Extract token usage - xAI provides detailed usage including cache info
-  const usage = response.usage;
   const promptTokens = usage?.prompt_tokens || 0;
   const completionTokens = usage?.completion_tokens || 0;
   const totalTokens = usage?.total_tokens || 0;
 
-  // xAI provides cache details in usage_details (if available)
-  const usageDetails = (usage as any)?.prompt_tokens_details;
+  // xAI provides cache details in prompt_tokens_details (if available)
+  const usageDetails = usage?.prompt_tokens_details;
   const cachedTokens = usageDetails?.cached_tokens || 0;
 
   // Determine if this is xAI/Grok for detailed logging
