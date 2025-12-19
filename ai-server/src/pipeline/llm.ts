@@ -894,13 +894,18 @@ async function generateWithOpenAICompatible(
   if (isGrokModel(modelToUse) && config.xai.apiKey) {
     console.log('[XAI-DEBUG] Using DIRECT FETCH (bypassing OpenAI SDK)');
 
+    // Use headers that exactly match curl for consistent caching behavior
     const fetchResponse = await fetch(`${config.xai.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.xai.apiKey}`,
+        'Accept': 'application/json',
+        'Connection': 'keep-alive',
       },
       body: payloadJson,
+      // @ts-ignore - keepalive hint for connection reuse
+      keepalive: true,
     });
 
     if (!fetchResponse.ok) {
