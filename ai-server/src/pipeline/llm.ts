@@ -691,7 +691,9 @@ export async function generateAssistantReply(
     }
 
     // Add recent turns from the sliding window
-    const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
+    // Use ALL turns (not limited) to maintain stable message positions for better caching
+    // The rolling summary handles context compression for older turns
+    const recentTurns = contextMgr.getRecentTurns(context.callId, 50); // High limit - rely on summary for compression
     recentTurnsCount = recentTurns.length;
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);

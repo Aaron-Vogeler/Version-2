@@ -318,7 +318,13 @@ export function initializeMusicDetection(
  * Append a new turn to the CallContext.
  * Each utterance is added as a separate turn to preserve conversation granularity.
  * When sending to the LLM, getRecentTurns() will return the most recent X messages.
- * Automatically trims old turns if the window exceeds maxTurnsInWindow.
+ *
+ * CACHING OPTIMIZATION: We keep MORE turns in memory to maintain stable message positions
+ * for xAI prompt caching. Only trim turns that are BOTH:
+ * 1. Already included in the rolling summary
+ * 2. Exceed a high threshold (50 turns)
+ *
+ * This ensures message positions stay stable, maximizing prefix cache hits.
  */
 export function appendTurn(
   callId: string,
@@ -331,21 +337,33 @@ export function appendTurn(
   console.log(`[CONTEXT] Appending ${turn.speaker} turn (${turn.text.length} chars)`);
   context.turns.push(turn);
 
-  // Trim turns that are older than the window and have been included in the summary
-  // Keep all turns that haven't been summarized yet
-  const turnsToKeepFromSummary =
-    context.turns.length - (context.lastSummaryUpdateTurnIndex + 1);
-  const maxTurnsToKeepForRecency = config.maxTurnsInWindow;
-  const minTurnsToKeep = Math.max(turnsToKeepFromSummary, maxTurnsToKeepForRecency);
+  // CACHING OPTIMIZATION: Keep more turns to maintain stable message positions
+  // Only trim turns that have been summarized AND exceed a high threshold
+  // This prevents message position shifts that break xAI prompt caching
+  const HIGH_TURN_THRESHOLD = 50; // Only start trimming after 50 turns
 
-  if (context.turns.length > minTurnsToKeep) {
-    const excessTurns = context.turns.length - minTurnsToKeep;
-    context.turns = context.turns.slice(excessTurns);
-    // Adjust the summary index since we've removed turns from the beginning
-    context.lastSummaryUpdateTurnIndex = Math.max(
-      -1,
-      context.lastSummaryUpdateTurnIndex - excessTurns
+  // Calculate how many turns have been summarized (safe to trim)
+  const summarizedTurnCount = context.lastSummaryUpdateTurnIndex + 1;
+
+  // Only trim if we have BOTH:
+  // 1. More than HIGH_TURN_THRESHOLD total turns
+  // 2. Some summarized turns we can safely remove
+  if (context.turns.length > HIGH_TURN_THRESHOLD && summarizedTurnCount > 0) {
+    // Only trim summarized turns, and only the excess above threshold
+    const excessTurns = Math.min(
+      summarizedTurnCount, // Can only trim summarized turns
+      context.turns.length - HIGH_TURN_THRESHOLD // Only trim excess
     );
+
+    if (excessTurns > 0) {
+      console.log(`[CONTEXT] Trimming ${excessTurns} summarized turns (keeping ${context.turns.length - excessTurns})`);
+      context.turns = context.turns.slice(excessTurns);
+      // Adjust the summary index since we've removed turns from the beginning
+      context.lastSummaryUpdateTurnIndex = Math.max(
+        -1,
+        context.lastSummaryUpdateTurnIndex - excessTurns
+      );
+    }
   }
 }
 
