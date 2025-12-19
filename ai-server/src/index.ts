@@ -554,13 +554,23 @@ async function scheduleTtsResponse(
       }
     }
 
-    // Append user turn to the call context if callId is available
-    if (callContext.callId) {
-      contextMgr.appendTurn(callContext.callId, {
-        speaker: "caller",
-        text: userText,
-        timestamp: new Date().toISOString(),
-      });
+    // Append each accumulated utterance as a separate turn to preserve conversation granularity
+    // The LLM will receive the most recent X messages via getRecentTurns()
+    if (callContext.callId && callContext.accumulatedTurnText && callContext.accumulatedTurnText.length > 0) {
+      const now = new Date();
+      for (let i = 0; i < callContext.accumulatedTurnText.length; i++) {
+        const utterance = callContext.accumulatedTurnText[i].trim();
+        if (utterance) {
+          // Offset timestamps slightly to maintain order
+          const timestamp = new Date(now.getTime() + i).toISOString();
+          contextMgr.appendTurn(callContext.callId, {
+            speaker: "caller",
+            text: utterance,
+            timestamp,
+          });
+        }
+      }
+      console.log(`[CONTEXT] Added ${callContext.accumulatedTurnText.length} separate utterances as individual turns`);
 
       // NOTE: User transcript logging is now handled in Deepgram Transcript handler
       // Only final recognized speech (is_final=true) is logged via insertTranscriptSegment()

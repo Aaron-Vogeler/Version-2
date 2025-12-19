@@ -316,8 +316,8 @@ export function initializeMusicDetection(
 
 /**
  * Append a new turn to the CallContext.
- * If the last turn is from the same speaker (caller), UPDATE it instead of adding new.
- * This prevents duplicate turns when multiple speech segments arrive before AI responds.
+ * Each utterance is added as a separate turn to preserve conversation granularity.
+ * When sending to the LLM, getRecentTurns() will return the most recent X messages.
  * Automatically trims old turns if the window exceeds maxTurnsInWindow.
  */
 export function appendTurn(
@@ -327,18 +327,8 @@ export function appendTurn(
 ): void {
   const context = getOrCreateContext(callId, config);
 
-  // Check if the last turn is from the same speaker - if so, UPDATE instead of APPEND
-  // This handles the case where multiple speech_final events fire before AI responds
-  const lastTurn = context.turns[context.turns.length - 1];
-  if (lastTurn && lastTurn.speaker === turn.speaker && turn.speaker === "caller") {
-    // Update the existing turn with the new (accumulated) text
-    console.log(`[CONTEXT] Updating last ${turn.speaker} turn instead of appending (${lastTurn.text.length} -> ${turn.text.length} chars)`);
-    lastTurn.text = turn.text;
-    lastTurn.timestamp = turn.timestamp;
-    return; // Don't add a new turn, just updated existing
-  }
-
-  // Add the new turn
+  // Add the new turn (each utterance is kept as a separate message)
+  console.log(`[CONTEXT] Appending ${turn.speaker} turn (${turn.text.length} chars)`);
   context.turns.push(turn);
 
   // Trim turns that are older than the window and have been included in the summary
