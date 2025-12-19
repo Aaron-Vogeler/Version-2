@@ -680,15 +680,18 @@ export async function generateAssistantReply(
   let recentTurnsCount = 0;
 
   // Add rolling summary if available and non-empty
+  // CACHING FIX: Always include summary message (even if empty) to keep positions stable
   if (context?.callId) {
     const contextData = contextMgr.getContext(context.callId);
-    if (contextData?.rollingSummary) {
-      rollingSummary = contextData.rollingSummary;
-      messages.push({
-        role: "user",
-        content: `CALL CONTEXT SUMMARY:\n${contextData.rollingSummary}`,
-      });
-    }
+
+    // Always add summary at position 2 for stable message positions
+    // This prevents cache breaks when summary is first generated
+    const summaryContent = contextData?.rollingSummary || "(No summary yet - call in progress)";
+    rollingSummary = contextData?.rollingSummary;
+    messages.push({
+      role: "user",
+      content: `CALL CONTEXT SUMMARY:\n${summaryContent}`,
+    });
 
     // Add recent turns from the sliding window
     // Use ALL turns (not limited) to maintain stable message positions for better caching
