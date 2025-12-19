@@ -23,8 +23,23 @@ import { LatencyTracker } from "../lib/latencyLogger";
 // ============================================================================
 
 /**
+ * Simple hash function to create a fingerprint of content for cache debugging.
+ * Returns first 8 chars of a hash to compare if content is identical.
+ */
+function hashContent(content: string): string {
+  let hash = 0;
+  for (let i = 0; i < content.length; i++) {
+    const char = content.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
+}
+
+/**
  * Log FULL LLM input messages - NO TRUNCATION.
  * Shows every message with complete content for debugging.
+ * Includes content hash for cache debugging.
  */
 function logLlmInput(
   messages: Array<{ role: string; content: string }>,
@@ -41,15 +56,22 @@ function logLlmInput(
   console.log(`Temperature: ${temperature}`);
   console.log(`Max Tokens: ${maxTokens}`);
   console.log(`Message Count: ${messages.length}`);
+
+  // Calculate total content hash for cache debugging
+  const allContent = messages.map(m => m.content).join('|||');
+  const totalHash = hashContent(allContent);
+  console.log(`TOTAL CONTENT HASH: ${totalHash} (for cache debugging)`);
+
   console.log(`${'─'.repeat(80)}`);
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    console.log(`\n[MESSAGE ${i}] Role: ${msg.role.toUpperCase()}`);
+    const msgHash = hashContent(msg.content);
+    console.log(`\n[MESSAGE ${i}] Role: ${msg.role.toUpperCase()} | Hash: ${msgHash} | Length: ${msg.content.length} chars`);
     console.log(`${'─'.repeat(40)}`);
     console.log(msg.content);
     console.log(`${'─'.repeat(40)}`);
-    console.log(`[END MESSAGE ${i}] (${msg.content.length} chars)`);
+    console.log(`[END MESSAGE ${i}]`);
   }
 
   console.log(`\n${'='.repeat(80)}`);
@@ -59,6 +81,7 @@ function logLlmInput(
 
 /**
  * Log FULL LLM output response - NO TRUNCATION.
+ * Includes cache token info for xAI/Grok debugging.
  */
 function logLlmOutput(
   response: string,
@@ -66,7 +89,8 @@ function logLlmOutput(
   latencyMs: number,
   promptTokens?: number,
   completionTokens?: number,
-  totalTokens?: number
+  totalTokens?: number,
+  cachedTokens?: number
 ): void {
   console.log(`\n${'='.repeat(80)}`);
   console.log(`[LLM OUTPUT] 📥 RESPONSE FROM ${model.toUpperCase()}`);
@@ -76,6 +100,12 @@ function logLlmOutput(
   console.log(`Response Length: ${response.length} chars`);
   if (promptTokens !== undefined) {
     console.log(`Tokens - Prompt: ${promptTokens}, Completion: ${completionTokens}, Total: ${totalTokens}`);
+    if (cachedTokens !== undefined && cachedTokens > 0) {
+      const cachePercent = ((cachedTokens / promptTokens) * 100).toFixed(1);
+      console.log(`🔥 CACHED TOKENS: ${cachedTokens}/${promptTokens} (${cachePercent}% cache hit!)`);
+    } else if (promptTokens > 0) {
+      console.log(`⚠️ NO CACHE HIT - 0 tokens cached (check if system prompt varies)`);
+    }
   }
   console.log(`${'─'.repeat(80)}`);
   console.log(`FULL RESPONSE:`);
@@ -137,7 +167,12 @@ export type CallContext = contextMgr.CallContext;
  */
 function buildSystemPrompt(context?: CallContext): string {
   // Use systemPrompt from context (passed from frontend), fall back to config (for backwards compat)
+  const fromContext = !!context?.systemPrompt;
   const prompt = context?.systemPrompt || config.llm.systemPrompt;
+
+  // Log which source is being used (critical for cache debugging)
+  const promptHash = prompt ? hashContent(prompt) : 'EMPTY';
+  console.log(`[LLM] 📋 System prompt source: ${fromContext ? 'CONTEXT (frontend)' : 'CONFIG (server)'} | Hash: ${promptHash} | Length: ${prompt?.length || 0} chars`);
 
   // If no prompt available, return empty (should not happen in normal flow)
   if (!prompt) {
@@ -840,14 +875,9 @@ async function generateWithOpenAICompatible(
   const isXai = isGrokModel(modelToUse);
 
   // ============================================================================
-  // LOG FULL LLM OUTPUT - NO TRUNCATION
+  // LOG FULL LLM OUTPUT - NO TRUNCATION (with cache info)
   // ============================================================================
-  logLlmOutput(assistantResponse, modelToUse, latencyMs, promptTokens, completionTokens, totalTokens);
-
-  // Log additional cache info for Grok models
-  if (isXai && cachedTokens > 0) {
-    console.log(`[LLM] 🤖 Grok cached tokens: ${cachedTokens}`);
-  }
+  logLlmOutput(assistantResponse, modelToUse, latencyMs, promptTokens, completionTokens, totalTokens, cachedTokens);
 
   // Log the LLM interaction to database for live visibility
   if (context?.callId) {
