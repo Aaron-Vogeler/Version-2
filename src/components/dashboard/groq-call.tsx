@@ -2360,11 +2360,10 @@ Examples:
                 {showLlmLogs ? 'Hide' : 'Show'} LLM Logs
               </Button>
               <Button
-                variant={isCallActive ? 'default' : 'outline'}
+                variant={showAudioPopup ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setShowAudioPopup(true)}
-                disabled={!isCallActive}
-                title={isCallActive ? 'Play audio into the call' : 'Start a call to play audio'}
+                title="Play audio sounds"
               >
                 <Volume2 className="h-4 w-4 mr-2" />
                 Play Audio
