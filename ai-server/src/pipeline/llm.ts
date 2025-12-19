@@ -127,55 +127,68 @@ function isGrokModel(model: string): boolean {
 export type CallContext = contextMgr.CallContext;
 
 /**
- * Build the system prompt dynamically, optionally injecting call goal context.
- * Uses variable keys: {ASSISTANT_NAME}, {USER_NAME} for placeholder replacement.
- * Goal is always injected at the bottom in format: CALL GOAL (YOUR ONLY MISSION): "{goal}"
- * @param context - Optional call context with goal, assistantName, userName, and systemPrompt
- * @returns The complete system prompt
+ * Build the STATIC system prompt for LLM calls.
+ * Returns ONLY the base system prompt WITHOUT dynamic variables.
+ * Dynamic content (names, goal, additionalContext) should be added as a separate user message
+ * to maximize prompt caching efficiency.
+ *
+ * @param context - Optional call context with systemPrompt
+ * @returns The static system prompt (no variable substitutions)
  */
 function buildSystemPrompt(context?: CallContext): string {
   // Use systemPrompt from context (passed from frontend), fall back to config (for backwards compat)
-  let prompt = context?.systemPrompt || config.llm.systemPrompt;
+  const prompt = context?.systemPrompt || config.llm.systemPrompt;
 
   // If no prompt available, return empty (should not happen in normal flow)
   if (!prompt) {
     console.warn("[LLM] No system prompt available - neither from context nor config");
-    prompt = "";
+    return "";
   }
 
-  // Get names from context or use defaults
-  const assistantName = context?.assistantName || "Ferguson";
-  const userName = context?.userName || "Aaron";
-
-  // Replace variable keys {ASSISTANT_NAME} and {USER_NAME}
-  prompt = prompt.replace(/\{ASSISTANT_NAME\}/g, assistantName);
-  prompt = prompt.replace(/\{USER_NAME\}/g, userName);
-
-  // Also replace ASSISTANT_NAME and USER_NAME without curly braces (common mistake)
-  prompt = prompt.replace(/ASSISTANT_NAME/g, assistantName);
-  prompt = prompt.replace(/USER_NAME/g, userName);
-
-  // Also replace legacy hardcoded names for backwards compatibility
-  prompt = prompt.replace(/Ferguson/g, assistantName);
-  prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
-  prompt = prompt.replace(/Aaron/g, userName);
-
-  // Inject additional context if provided (right above the goal)
-  if (context?.additionalContext) {
-    prompt += `
-
-ADDITIONAL CONTEXT:
-${context.additionalContext}`;
-  }
-
-  // Inject goal at the bottom in simple format
-  if (context?.goal) {
-    prompt += `
-
-CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`;
-  }
-
+  // Return the prompt AS-IS without any variable replacements
+  // This keeps the system message IDENTICAL across calls for prompt caching
   return prompt;
+}
+
+/**
+ * Build the dynamic context message containing per-call variables.
+ * This should be added as a separate USER message AFTER the system message
+ * to maximize prompt caching (system message stays identical, dynamic content at end).
+ *
+ * @param context - Call context with goal, assistantName, userName
+ * @returns Dynamic context string to be added as a user message, or null if no dynamic content
+ */
+function buildDynamicContext(context?: CallContext): string | null {
+  if (!context) return null;
+
+  const parts: string[] = [];
+
+  // Add identity variables
+  const assistantName = context.assistantName || "Ferguson";
+  const userName = context.userName || "Aaron";
+
+  parts.push(`CALL VARIABLES:
+- Your name (AI assistant): ${assistantName}
+- Your owner's name: ${userName}`);
+
+  // Add additional context if provided
+  if (context.additionalContext) {
+    parts.push(`ADDITIONAL CONTEXT:
+${context.additionalContext}`);
+  }
+
+  // Add goal if provided
+  if (context.goal) {
+    parts.push(`CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`);
+  }
+
+  // Only return if we have meaningful content beyond just the names
+  if (parts.length === 1 && !context.goal && !context.additionalContext) {
+    // Still return the names so the AI knows its identity
+    return parts[0];
+  }
+
+  return parts.join("\n\n");
 }
 
 /**
@@ -612,11 +625,21 @@ export async function generateAssistantReply(
   const modelToUse = callContext?.model || config.groq.model;
   const useStreaming = isGeminiModel(modelToUse);
 
-  // Build system prompt
+  // Build STATIC system prompt (no dynamic variables for prompt caching)
   const systemPrompt = buildSystemPrompt(context);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: systemPrompt },
   ];
+
+  // Add dynamic context (names, goal, additionalContext) as SEPARATE user message
+  // This keeps the system message identical for prompt caching
+  const dynamicContext = buildDynamicContext(context);
+  if (dynamicContext) {
+    messages.push({
+      role: "user",
+      content: dynamicContext,
+    });
+  }
 
   let rollingSummary: string | undefined;
   let recentTurnsCount = 0;

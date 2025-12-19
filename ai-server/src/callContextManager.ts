@@ -488,6 +488,7 @@ export function getActiveCallIds(): string[] {
  * Format turns as a text block for LLM summary generation.
  * Used in the summarization prompt to show the LLM what needs to be summarized.
  * Uses "RECEIVER" for caller since the AI assistant is making an outbound call.
+ * NOTE: Timestamps are excluded to ensure consistent formatting for prompt caching.
  */
 export function formatTurnsForSummary(turns: Turn[]): string {
   if (turns.length === 0) {
@@ -497,7 +498,8 @@ export function formatTurnsForSummary(turns: Turn[]): string {
     .map((turn) => {
       // Map "caller" to "RECEIVER" since AI is making outbound call to them
       const speaker = turn.speaker === "caller" ? "RECEIVER" : turn.speaker.toUpperCase();
-      return `[${turn.timestamp}] ${speaker}: ${turn.text}`;
+      // NO TIMESTAMP - ensures consistent formatting for prompt caching
+      return `${speaker}: ${turn.text}`;
     })
     .join("\n");
 }
