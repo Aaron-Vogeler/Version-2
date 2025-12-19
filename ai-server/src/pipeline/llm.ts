@@ -564,8 +564,9 @@ export async function generateAssistantReply(
 
   // Route to appropriate provider based on model
   if (useStreaming && gemini) {
-    // Check if custom prompt mode is enabled - skip cache and use custom system prompt
-    if (config.gemini.useCustomPrompt) {
+    // Check if custom prompt mode is enabled (per-call setting from dashboard, or global config fallback)
+    const useCustomGeminiPrompt = callContext?.geminiUseCustomPrompt ?? config.gemini.useCustomPrompt;
+    if (useCustomGeminiPrompt) {
       // Estimate tokens that would have been cached (rough estimate: ~4 chars per token)
       const estimatedCacheTokens = Math.round(systemPrompt.length / 4);
       console.log(`[LLM] 📝 Custom prompt mode enabled - bypassing Gemini cache`);

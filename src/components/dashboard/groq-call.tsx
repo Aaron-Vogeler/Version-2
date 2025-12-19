@@ -151,6 +151,7 @@ interface SavedGroqSettings {
   stream?: boolean;
   jsonMode?: boolean;
   chunkFirstTurnByPunctuation?: boolean; // Split first AI response at punctuation for faster TTS
+  useCustomGeminiPrompt?: boolean; // Use custom system prompt instead of cached Gemini prompt
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
   ttsVoiceId?: string; // Custom Telnyx TTS voice ID
@@ -243,6 +244,7 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [stream, setStream] = useState(false);
   const [jsonMode, setJsonMode] = useState(false);
   const [chunkFirstTurnByPunctuation, setChunkFirstTurnByPunctuation] = useState(true); // Default to true for faster TTS
+  const [useCustomGeminiPrompt, setUseCustomGeminiPrompt] = useState(false); // Use custom prompt instead of cached Gemini prompt
   const [contextConfig, setContextConfig] = useState<ContextConfig>({
     maxTurnsInWindow: 12,
     summaryUpdateIntervalTurns: 6,
@@ -366,6 +368,7 @@ Examples:
       if (groqSettings.stream !== undefined) setStream(groqSettings.stream);
       if (groqSettings.jsonMode !== undefined) setJsonMode(groqSettings.jsonMode);
       if (groqSettings.chunkFirstTurnByPunctuation !== undefined) setChunkFirstTurnByPunctuation(groqSettings.chunkFirstTurnByPunctuation);
+      if (groqSettings.useCustomGeminiPrompt !== undefined) setUseCustomGeminiPrompt(groqSettings.useCustomGeminiPrompt);
       if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
       if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
       if (groqSettings.ttsVoiceId !== undefined) setTtsVoiceId(groqSettings.ttsVoiceId);
@@ -644,6 +647,7 @@ Examples:
           stream: stream,
           json_mode: jsonMode,
           chunk_first_turn_by_punctuation: chunkFirstTurnByPunctuation,
+          gemini_use_custom_prompt: useCustomGeminiPrompt,
         }),
       });
 
@@ -747,6 +751,7 @@ Examples:
       stream,
       jsonMode,
       chunkFirstTurnByPunctuation,
+      useCustomGeminiPrompt,
       customSystemPrompt,
       rollingSummaryPrompt,
       ttsVoiceId,
@@ -1131,6 +1136,29 @@ Examples:
           <span
             className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
               chunkFirstTurnByPunctuation ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* Use Custom Gemini Prompt */}
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-0.5">
+          <Label htmlFor="useCustomGeminiPrompt" className="text-sm">Use Custom Gemini Prompt</Label>
+          <span className="text-xs text-muted-foreground">Bypass cache, use system prompt below</span>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={useCustomGeminiPrompt}
+          onClick={() => setUseCustomGeminiPrompt(!useCustomGeminiPrompt)}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            useCustomGeminiPrompt ? 'bg-primary' : 'bg-muted'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              useCustomGeminiPrompt ? 'translate-x-6' : 'translate-x-1'
             }`}
           />
         </button>

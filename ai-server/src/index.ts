@@ -2374,6 +2374,7 @@ wss.on("connection", async (ws) => {
           managedContext.stream = decoded.stream || null;
           managedContext.jsonMode = decoded.jsonMode || null;
           managedContext.chunkFirstTurnByPunctuation = decoded.chunkFirstTurnByPunctuation ?? true; // Default to true for faster TTS
+          managedContext.geminiUseCustomPrompt = decoded.geminiUseCustomPrompt ?? false; // Default to false (use cached prompt)
           // Call control settings
           managedContext.ttsDebounceMs = decoded.ttsDebounceMs || null;
           managedContext.bargeInCooldownMs = decoded.bargeInCooldownMs || null;
