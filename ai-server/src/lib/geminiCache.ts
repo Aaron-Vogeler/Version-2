@@ -26,7 +26,7 @@ import { LatencyTracker } from "./latencyLogger";
 
 const PROMPT_VERSION = "ferguson-system-v2";
 const TTL_SECONDS = config.gemini.cacheTtlSeconds || 3600;
-const MODEL_NAME = config.gemini.cacheModel || "gemini-2.5-flash";
+const MODEL_NAME = config.gemini.cacheModel || "gemini-2.5-flash-lite";
 const CACHE_EXPIRY_BUFFER_MS = 10_000; // 10 seconds buffer before expiry
 const MIN_CACHE_TOKENS = 1024; // Minimum tokens required for Gemini 2.5 Flash caching
 
