@@ -567,10 +567,7 @@ export async function generateAssistantReply(
     // Check if custom prompt mode is enabled (per-call setting from dashboard, or global config fallback)
     const useCustomGeminiPrompt = callContext?.geminiUseCustomPrompt ?? config.gemini.useCustomPrompt;
     if (useCustomGeminiPrompt) {
-      // Estimate tokens that would have been cached (rough estimate: ~4 chars per token)
-      const estimatedCacheTokens = Math.round(systemPrompt.length / 4);
-      console.log(`[LLM] 📝 Custom prompt mode enabled - bypassing Gemini cache`);
-      console.log(`[LLM] 📊 Dropped caching tokens (estimate): ~${estimatedCacheTokens} tokens (${systemPrompt.length} chars)`);
+      console.log(`[LLM] 📝 Custom prompt mode enabled - using dashboard system prompt (explicit cache bypassed)`);
 
       // Use regular Gemini streaming with custom system prompt, passing isCustomPromptMode=true
       return await generateWithGeminiStreaming(
@@ -906,17 +903,14 @@ async function generateWithGeminiStreaming(
       // Gemini returns cachedContentTokenCount for implicit prompt caching
       const cachedTokens = (usageMetadata as any).cachedContentTokenCount || 0;
 
-      if (isCustomPromptMode) {
-        // Custom prompt mode - no caching applied
-        console.log(`[LLM] 📊 Gemini usage (custom prompt): prompt=${promptTokens}, completion=${completionTokens}, total=${totalTokens}`);
-        console.log(`[LLM] 📊 Gemini dropped caching: ${promptTokens} prompt tokens uncached (cache bypassed)`);
-      } else {
-        // Normal mode - log implicit caching data
-        console.log(`[LLM] 📊 Gemini usage: prompt=${promptTokens}, completion=${completionTokens}, total=${totalTokens}, cached=${cachedTokens}`);
-        if (cachedTokens > 0) {
-          const cacheHitRate = ((cachedTokens / promptTokens) * 100).toFixed(1);
-          console.log(`[LLM] 💾 Gemini implicit cache hit: ${cachedTokens} tokens cached (${cacheHitRate}% of prompt)`);
-        }
+      // Always log usage with cached token info
+      console.log(`[LLM] 📊 Gemini usage: prompt=${promptTokens}, completion=${completionTokens}, total=${totalTokens}, cached=${cachedTokens}`);
+
+      if (cachedTokens > 0) {
+        const cacheHitRate = ((cachedTokens / promptTokens) * 100).toFixed(1);
+        console.log(`[LLM] 💾 Gemini implicit cache hit: ${cachedTokens} tokens cached (${cacheHitRate}% of prompt)`);
+      } else if (isCustomPromptMode) {
+        console.log(`[LLM] 📝 Custom prompt mode (explicit cache bypassed, implicit cache: ${cachedTokens})`);
       }
     }
 
