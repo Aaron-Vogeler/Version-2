@@ -861,12 +861,26 @@ async function generateWithOpenAICompatible(
   // ============================================================================
   const payloadJson = JSON.stringify(apiParams);
   if (isGrokModel(modelToUse)) {
+    // Extract prefix hashes for cache debugging
+    const systemMsg = messages.find(m => m.role === 'system')?.content || '';
+    const variablesMsg = messages.find((m, i) => m.role === 'user' && i === 1)?.content || '';
+    const systemHash = hashContent(systemMsg);
+    const prefixHash = hashContent(systemMsg + '|||' + variablesMsg);
+    const messageCount = messages.length;
+    const userMsgCount = messages.filter(m => m.role === 'user').length;
+    const assistantMsgCount = messages.filter(m => m.role === 'assistant').length;
+
     console.log('\n' + '🔷'.repeat(40));
-    console.log('[XAI-DEBUG] EXACT API REQUEST PAYLOAD (for cache debugging):');
+    console.log('[XAI-CACHE] PREFIX ANALYSIS (critical for caching):');
     console.log('🔷'.repeat(40));
-    console.log('[XAI-DEBUG] PAYLOAD LENGTH:', payloadJson.length, 'chars');
-    console.log('[XAI-DEBUG] PAYLOAD HASH:', hashContent(payloadJson));
-    console.log('[XAI-DEBUG] FULL PAYLOAD:');
+    console.log(`[XAI-CACHE] SYSTEM MSG HASH: ${systemHash} (${systemMsg.length} chars)`);
+    console.log(`[XAI-CACHE] PREFIX HASH (sys+vars): ${prefixHash}`);
+    console.log(`[XAI-CACHE] MESSAGE COUNT: ${messageCount} total (${userMsgCount} user, ${assistantMsgCount} assistant)`);
+    console.log(`[XAI-CACHE] TURN NUMBER: ${assistantMsgCount + 1} (1=first request of call)`);
+    console.log(`[XAI-CACHE] PAYLOAD LENGTH: ${payloadJson.length} chars`);
+    console.log(`[XAI-CACHE] FULL PAYLOAD HASH: ${hashContent(payloadJson)}`);
+    console.log('🔷'.repeat(40));
+    console.log('[XAI-CACHE] FULL PAYLOAD:');
     console.log(payloadJson);
     console.log('🔷'.repeat(40) + '\n');
   }
