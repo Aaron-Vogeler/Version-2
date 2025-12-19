@@ -18,6 +18,70 @@ import {
 } from "../lib/geminiCache";
 import { LatencyTracker } from "../lib/latencyLogger";
 
+// ============================================================================
+// LLM MESSAGE LOGGING HELPERS
+// ============================================================================
+
+/**
+ * Format LLM messages for clear console logging.
+ * Shows each message with role and content in a readable format.
+ */
+function formatMessagesForLog(
+  messages: Array<{ role: string; content: string }>,
+  maxContentLength: number = 500
+): string {
+  const lines: string[] = [];
+  lines.push(`┌─────────────────────────────────────────────────────────────────┐`);
+  lines.push(`│ LLM INPUT MESSAGES (${messages.length} messages)                              │`);
+  lines.push(`├─────────────────────────────────────────────────────────────────┤`);
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const roleLabel = msg.role.toUpperCase().padEnd(9);
+    const contentPreview = msg.content.length > maxContentLength
+      ? msg.content.substring(0, maxContentLength) + `... [${msg.content.length} chars total]`
+      : msg.content;
+
+    // Split content into lines for readability
+    const contentLines = contentPreview.split('\n');
+    lines.push(`│ [${i}] ${roleLabel}: ${contentLines[0]}`);
+    for (let j = 1; j < Math.min(contentLines.length, 10); j++) {
+      lines.push(`│     ${' '.repeat(roleLabel.length)}  ${contentLines[j]}`);
+    }
+    if (contentLines.length > 10) {
+      lines.push(`│     ${' '.repeat(roleLabel.length)}  ... [${contentLines.length - 10} more lines]`);
+    }
+    if (i < messages.length - 1) {
+      lines.push(`│`);
+    }
+  }
+
+  lines.push(`└─────────────────────────────────────────────────────────────────┘`);
+  return lines.join('\n');
+}
+
+/**
+ * Log the raw LLM output response in a clear format.
+ */
+function logLlmOutput(response: string, model: string, latencyMs: number): void {
+  const lines: string[] = [];
+  lines.push(`┌─────────────────────────────────────────────────────────────────┐`);
+  lines.push(`│ LLM OUTPUT RESPONSE                                             │`);
+  lines.push(`│ Model: ${model.padEnd(54)}│`);
+  lines.push(`│ Latency: ${String(latencyMs + 'ms').padEnd(52)}│`);
+  lines.push(`│ Length: ${String(response.length + ' chars').padEnd(53)}│`);
+  lines.push(`├─────────────────────────────────────────────────────────────────┤`);
+
+  // Show full response (it's usually JSON so not too long)
+  const responseLines = response.split('\n');
+  for (const line of responseLines) {
+    lines.push(`│ ${line}`);
+  }
+
+  lines.push(`└─────────────────────────────────────────────────────────────────┘`);
+  console.log(lines.join('\n'));
+}
+
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
   apiKey: config.groq.apiKey,
@@ -555,6 +619,12 @@ export async function generateAssistantReply(
     messages.push({ role: "user", content: userText });
   }
 
+  // ============================================================================
+  // LOG LLM INPUT MESSAGES
+  // ============================================================================
+  console.log(`\n[LLM] 📤 SENDING TO LLM (model: ${modelToUse}, ${messages.length} messages)`);
+  console.log(formatMessagesForLog(messages));
+
   const startTime = Date.now();
   const temperatureToUse = callContext?.temperature ?? 0.7;
   const maxTokensToUse = callContext?.maxTokens ?? 1024;
@@ -580,6 +650,12 @@ export async function generateAssistantReply(
 
         const latencyMs = Date.now() - startTime;
         console.log(`[LLM] ✅ Cached Gemini streaming complete (${latencyMs}ms, ${response.length} chars)`);
+
+        // ============================================================================
+        // LOG LLM OUTPUT RESPONSE (Cached Gemini)
+        // ============================================================================
+        console.log(`\n[LLM] 📥 RECEIVED FROM LLM (Cached Gemini)`);
+        logLlmOutput(response, config.gemini.cacheModel, latencyMs);
 
         // Log the interaction
         if (context?.callId) {
@@ -705,6 +781,12 @@ async function generateWithOpenAICompatible(
   const latencyMs = Date.now() - startTime;
 
   const assistantResponse = response.choices[0]?.message?.content || "";
+
+  // ============================================================================
+  // LOG LLM OUTPUT RESPONSE
+  // ============================================================================
+  console.log(`\n[LLM] 📥 RECEIVED FROM LLM`);
+  logLlmOutput(assistantResponse, modelToUse, latencyMs);
 
   // Extract token usage - xAI provides detailed usage including cache info
   const usage = response.usage;
@@ -870,6 +952,12 @@ async function generateWithGeminiStreaming(
     const usageMetadata = finalResponse.usageMetadata;
 
     console.log(`[LLM] ✅ Gemini streaming complete (${latencyMs}ms, ${fullResponse.length} chars)`);
+
+    // ============================================================================
+    // LOG LLM OUTPUT RESPONSE
+    // ============================================================================
+    console.log(`\n[LLM] 📥 RECEIVED FROM LLM (Gemini Streaming)`);
+    logLlmOutput(fullResponse, modelToUse, latencyMs);
 
     // Log the LLM interaction
     if (context?.callId) {
