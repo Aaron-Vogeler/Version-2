@@ -589,7 +589,8 @@ export async function generateAssistantReply(
         const response = await generateStreamingWithCachedSystem(
           dynamicInput,
           onSpeakReady,
-          context?.callId  // Pass callId for latency tracking
+          context?.callId,  // Pass callId for latency tracking
+          temperatureToUse  // Pass temperature from dashboard
         );
 
         const latencyMs = Date.now() - startTime;

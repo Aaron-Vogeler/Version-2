@@ -628,12 +628,14 @@ export type EarlyTtsCallback = (
  * @param dynamicInput - The dynamic user input/context for this generation
  * @param onSpeakReady - Optional callback for early TTS (called when speak field is complete)
  * @param callId - Optional call ID for latency tracking
+ * @param temperature - Optional temperature for generation (default 0.7)
  * @returns The generated JSON response as a string
  */
 export async function generateStreamingWithCachedSystem(
   dynamicInput: string,
   onSpeakReady?: EarlyTtsCallback,
-  callId?: string
+  callId?: string,
+  temperature?: number
 ): Promise<string> {
   const genai = getGeminiClient();
   if (!genai) {
@@ -651,7 +653,7 @@ export async function generateStreamingWithCachedSystem(
       if (!cacheName) {
         // Fallback to non-cached streaming if cache creation fails
         console.warn("[GeminiCache] Cache unavailable, falling back to non-cached streaming");
-        return await generateStreamingWithoutCache(genai, SYSTEM_PROMPT, dynamicInput, onSpeakReady, callId);
+        return await generateStreamingWithoutCache(genai, SYSTEM_PROMPT, dynamicInput, onSpeakReady, callId, temperature);
       }
 
       // Generate with cached content + streaming
@@ -661,6 +663,8 @@ export async function generateStreamingWithCachedSystem(
       const latencyTracker = new LatencyTracker(MODEL_NAME, true, callId);
 
       // Use type assertion for cachedContent (SDK types don't include it yet)
+      const temperatureToUse = temperature ?? 0.7;
+      debugLog(`Using temperature: ${temperatureToUse}`);
       const response = await genai.models.generateContentStream({
         model: MODEL_NAME,
         contents: [
@@ -669,6 +673,7 @@ export async function generateStreamingWithCachedSystem(
         config: {
           cachedContent: cacheName,
           responseMimeType: "application/json",
+          temperature: temperatureToUse,
         },
       } as any);
 
@@ -767,9 +772,11 @@ async function generateStreamingWithoutCache(
   systemPrompt: string,
   dynamicInput: string,
   onSpeakReady?: EarlyTtsCallback,
-  callId?: string
+  callId?: string,
+  temperature?: number
 ): Promise<string> {
-  debugLog("Streaming without cache (fallback mode)");
+  const temperatureToUse = temperature ?? 0.7;
+  debugLog(`Streaming without cache (fallback mode), temperature: ${temperatureToUse}`);
 
   // Initialize latency tracker for non-cached stream
   const latencyTracker = new LatencyTracker(MODEL_NAME, false, callId);
@@ -781,6 +788,7 @@ async function generateStreamingWithoutCache(
     ],
     config: {
       responseMimeType: "application/json",
+      temperature: temperatureToUse,
     },
   });
 
