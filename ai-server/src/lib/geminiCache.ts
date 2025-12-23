@@ -31,6 +31,22 @@ const CACHE_EXPIRY_BUFFER_MS = 10_000; // 10 seconds buffer before expiry
 const MIN_CACHE_TOKENS = 2048; // Minimum tokens required for Gemini 2.5 Flash-Lite caching
 
 /**
+ * Response schema for enforcing valid JSON output structure.
+ * This prevents malformed/incomplete JSON responses from Gemini.
+ */
+const RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    speak: { type: Type.STRING, nullable: true },
+    behavior: { type: Type.STRING },
+    dtmf: { type: Type.STRING, nullable: true },
+    internal: { type: Type.STRING },
+    diversion_count: { type: Type.INTEGER },
+  },
+  required: ["behavior", "internal", "diversion_count"],
+};
+
+/**
  * Ferguson system prompt for caching (static part only).
  * Dynamic parts (assistant name, user name, goal, introduction) are passed at runtime via contents.
  * This prompt meets Gemini 2.5 Flash-Lite's 2048 token minimum for caching.
@@ -539,6 +555,7 @@ export async function generateJsonWithCachedSystem(
         config: {
           cachedContent: cacheName,
           responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
         },
       } as any);
 
@@ -595,6 +612,7 @@ async function generateWithoutCache(
     ],
     config: {
       responseMimeType: "application/json",
+      responseSchema: RESPONSE_SCHEMA,
     },
   });
 
@@ -673,6 +691,7 @@ export async function generateStreamingWithCachedSystem(
         config: {
           cachedContent: cacheName,
           responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
           temperature: temperatureToUse,
         },
       } as any);
@@ -789,6 +808,7 @@ async function generateStreamingWithoutCache(
     ],
     config: {
       responseMimeType: "application/json",
+      responseSchema: RESPONSE_SCHEMA,
       temperature: temperatureToUse,
     },
   });
