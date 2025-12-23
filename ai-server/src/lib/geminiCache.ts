@@ -664,7 +664,7 @@ export async function generateStreamingWithCachedSystem(
 
       // Use type assertion for cachedContent (SDK types don't include it yet)
       const temperatureToUse = temperature ?? 0.7;
-      debugLog(`Using temperature: ${temperatureToUse}`);
+      console.log(`[LLM] 🌡️ Gemini temperature: ${temperatureToUse}`);
       const response = await genai.models.generateContentStream({
         model: MODEL_NAME,
         contents: [
@@ -729,7 +729,8 @@ export async function generateStreamingWithCachedSystem(
       latencyTracker.markComplete(fullResponse.length);
       latencyTracker.logSummary();
 
-      debugLog(`Streaming response complete (${fullResponse.length} chars)`);
+      // Log full LLM output for debugging
+      console.log(`[LLM] 📤 Output: ${fullResponse}`);
 
       // Strip markdown fences if present
       return stripCodeFences(fullResponse);

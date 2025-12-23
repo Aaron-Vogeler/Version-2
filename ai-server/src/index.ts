@@ -30,6 +30,44 @@ import { LatencyTracker } from "./lib/latencyLogger";
 // TTS_DEBOUNCE_MS, BARGE_IN_COOLDOWN_MS, CALLER_UTTERANCE_FLUSH_MS, HANGUP_DELAY_MS
 
 // -----------------------------------------------------------------------------
+// LOG FILTERING (set VERBOSE_LOGS=true to see all logs)
+// -----------------------------------------------------------------------------
+// Categories hidden when VERBOSE_LOGS=false (only LLM inputs/outputs shown)
+const VERBOSE_PREFIXES = [
+  "[TRANSCRIPT]",
+  "[DEBOUNCE]",
+  "[HUMAN-DETECT]",
+  "[MUSIC-DETECT]",
+  "[VAD]",
+  "[IVR]",
+  "[LATENCY]",
+  "[Supabase]",
+  "[TURN]",
+  "[DIARIZATION]",
+  "[BARGE-IN]",
+  "[TTS]",
+  "🗣️",
+  "📞",
+  "🎵",
+  "⏱️",
+  "==================",
+];
+
+const originalConsoleLog = console.log;
+console.log = (...args: any[]) => {
+  if (config.logging.verbose) {
+    originalConsoleLog(...args);
+    return;
+  }
+  // Filter out verbose logs - only show LLM-related logs
+  const firstArg = String(args[0] || "");
+  if (VERBOSE_PREFIXES.some(prefix => firstArg.startsWith(prefix) || firstArg.includes(prefix))) {
+    return; // Skip verbose log
+  }
+  originalConsoleLog(...args);
+};
+
+// -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
 const deepgram = createDeepgramClient();

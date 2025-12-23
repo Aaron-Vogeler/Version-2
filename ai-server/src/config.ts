@@ -54,6 +54,13 @@ const config = {
   // Server config
   port: parseInt(process.env.PORT || "8080", 10),
 
+  // Logging config
+  logging: {
+    // Set to true to enable verbose logs (TRANSCRIPT, DEBOUNCE, HUMAN-DETECT, MUSIC-DETECT, etc.)
+    // When false, only LLM logs (inputs/outputs) are shown
+    verbose: getEnv("VERBOSE_LOGS", "false") === "true",
+  },
+
   // API Keys (required)
   deepgram: {
     apiKey: requireEnv("DEEPGRAM_API_KEY"),

@@ -149,8 +149,10 @@ function buildDynamicInputForCache(
 
   console.log(`[LLM] 📝 Dynamic variables: assistantName="${assistantName}", userName="${userName}", goal="${goal}"`);
 
-  // Build the dynamic input with name, context (if provided), and goal
-  let dynamicVars = `Your name: ${assistantName}
+  // Build the dynamic input with clear structure for this call
+  let dynamicVars = `CALL VARIABLES
+
+Your name: ${assistantName}
 Your owner's name: ${userName}`;
 
   // Only add CONTEXT section if additionalContext is provided
@@ -584,6 +586,9 @@ export async function generateAssistantReply(
 
       // Build dynamic input from conversation context (includes dynamic variables, intro template, goal)
       const dynamicInput = buildDynamicInputForCache(messages, userText, context);
+
+      // Log full input for debugging
+      console.log(`[LLM] 📥 Input:\n${dynamicInput}`);
 
       try {
         const response = await generateStreamingWithCachedSystem(
