@@ -37,8 +37,8 @@ const MIN_CACHE_TOKENS = 2048; // Minimum tokens required for Gemini 2.5 Flash-L
 const RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
-    speak: { type: Type.STRING, nullable: true },
     behavior: { type: Type.STRING },
+    speak: { type: Type.STRING, nullable: true },
     dtmf: { type: Type.STRING, nullable: true },
     internal: { type: Type.STRING },
     diversion_count: { type: Type.INTEGER },
