@@ -149,17 +149,24 @@ function buildDynamicInputForCache(
 
   console.log(`[LLM] 📝 Dynamic variables: assistantName="${assistantName}", userName="${userName}", goal="${goal}"`);
 
-  parts.push(`VARIABLES (FOR THIS CALL)
+  // Build the dynamic input with name, context (if provided), and goal
+  let dynamicVars = `Your name: ${assistantName}
+Your owner's name: ${userName}`;
 
-Your name: ${assistantName}
-Your owner's name: ${userName}
+  // Only add CONTEXT section if additionalContext is provided
+  if (context?.additionalContext) {
+    dynamicVars += `
 
-INTRODUCTION TEMPLATE
-When applicable (i.e. if you haven't been prompted to provide a DTMF tone), begin calls with:
-"Hi, this is [your name]. I'm an AI assistant calling on behalf of [owner's name]. He wants to [summarize goal in 1 sentence]."
+CONTEXT
+${context.additionalContext}`;
+  }
+
+  dynamicVars += `
 
 GOAL FOR THIS CALL
-${goal}`);
+${goal}`;
+
+  parts.push(dynamicVars);
 
   // Skip system message (index 0) - it's cached
   for (let i = 1; i < messages.length; i++) {
