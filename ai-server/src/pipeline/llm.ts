@@ -61,7 +61,7 @@ export type CallContext = contextMgr.CallContext;
 /**
  * Build the system prompt dynamically, optionally injecting call goal context.
  * Uses variable keys: {ASSISTANT_NAME}, {USER_NAME} for placeholder replacement.
- * Goal is always injected at the bottom in format: CALL GOAL (YOUR ONLY MISSION): "{goal}"
+ * Appends at the bottom: Your name, Your owner's name, CONTEXT (if provided), GOAL FOR THIS CALL
  * @param context - Optional call context with goal, assistantName, userName, and systemPrompt
  * @returns The complete system prompt
  */
@@ -92,19 +92,26 @@ function buildSystemPrompt(context?: CallContext): string {
   prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
   prompt = prompt.replace(/Aaron/g, userName);
 
-  // Inject additional context if provided (right above the goal)
+  // Append call-specific variables at the bottom
+  prompt += `
+
+Your name: ${assistantName}
+Your owner's name: ${userName}`;
+
+  // Inject additional context if provided (only show CONTEXT section if not empty)
   if (context?.additionalContext) {
     prompt += `
 
-ADDITIONAL CONTEXT:
+CONTEXT
 ${context.additionalContext}`;
   }
 
-  // Inject goal at the bottom in simple format
+  // Inject goal at the bottom
   if (context?.goal) {
     prompt += `
 
-CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`;
+GOAL FOR THIS CALL
+${context.goal}`;
   }
 
   return prompt;
