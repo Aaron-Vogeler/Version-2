@@ -29,7 +29,7 @@ export default async function handler(
 
   try {
     // Validate request body
-    const { goal, context, to_number, custom_system_prompt, rolling_summary_prompt, tts_voice_id, tts_debounce_ms, barge_in_cooldown_ms, caller_utterance_flush_ms, hold_check_in_interval_ms, hold_max_check_ins, ivr_debounce_ms, ivr_utterance_flush_ms, ivr_dtmf_min_pause_ms, ivr_dtmf_duration_ms, ivr_auto_detect_threshold, ivr_response_timeout_ms, ivr_max_dtmf_retries, ivr_disable_barge_in_grace_period, human_detection_enabled, human_detection_utterance_flush_ms, human_detection_human_wait_ms, human_detection_ivr_wait_ms, human_detection_min_utterances, human_detection_hold_silence_ms, human_detection_human_turns_after_hold, human_detection_max_unsure, human_detection_classification_model, human_detection_classification_prompt, music_detection_enabled, music_detection_window_size, music_detection_music_threshold, music_detection_silence_threshold, music_detection_hysteresis_ms, music_detection_audit_logging, music_detection_use_transcript_patterns, diarization_enabled, diarization_debounce_ms, diarization_min_confidence, diarization_audit_logging, model, temperature, max_tokens, top_p, reasoning, stream, json_mode, chunk_first_turn_by_punctuation } = req.body;
+    const { goal, context, to_number, custom_system_prompt, rolling_summary_prompt, tts_voice_id, tts_debounce_ms, barge_in_cooldown_ms, caller_utterance_flush_ms, hold_check_in_interval_ms, hold_max_check_ins, ivr_debounce_ms, ivr_utterance_flush_ms, ivr_dtmf_min_pause_ms, ivr_dtmf_duration_ms, ivr_auto_detect_threshold, ivr_response_timeout_ms, ivr_max_dtmf_retries, ivr_disable_barge_in_grace_period, human_detection_enabled, human_detection_utterance_flush_ms, human_detection_human_wait_ms, human_detection_ivr_wait_ms, human_detection_min_utterances, human_detection_hold_silence_ms, human_detection_human_turns_after_hold, human_detection_max_unsure, human_detection_classification_model, human_detection_classification_prompt, music_detection_enabled, music_detection_window_size, music_detection_music_threshold, music_detection_silence_threshold, music_detection_hysteresis_ms, music_detection_audit_logging, music_detection_use_transcript_patterns, diarization_enabled, diarization_debounce_ms, diarization_min_confidence, diarization_audit_logging, model, temperature, max_tokens, top_p, reasoning, stream, json_mode, chunk_first_turn_by_punctuation, manual_mode } = req.body;
 
     if (!goal || !to_number) {
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
@@ -137,6 +137,8 @@ export default async function handler(
         stream: stream,
         jsonMode: json_mode,
         chunkFirstTurnByPunctuation: chunk_first_turn_by_punctuation,
+        // Manual mode
+        manualMode: manual_mode,
       }),
     });
 

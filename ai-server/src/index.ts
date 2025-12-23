@@ -494,6 +494,12 @@ async function scheduleTtsResponse(
   expectedSeq: number
 ): Promise<void> {
   try {
+    // GUARD: Skip auto AI processing in Manual mode
+    if (callContext.manualMode) {
+      console.log("🎛️ Manual mode - skipping auto LLM/TTS response pipeline");
+      return;
+    }
+
     // GUARD: Check if this response is stale (turnSeq changed due to barge-in or new speech)
     if (callContext.turnSeq !== expectedSeq) {
       console.log(
@@ -840,6 +846,8 @@ async function sendTtsResponse(
   console.log("🎵 ========================================");
   console.log("🎵 STARTING TTS SPEAK ACTION");
   console.log("🎵 ========================================");
+
+  // NOTE: This function is for auto AI TTS. Manual TTS uses a separate API endpoint.
 
   // GUARD: Final check - is this response still valid?
   if (callContext.turnSeq !== expectedSeq) {
@@ -2374,6 +2382,7 @@ wss.on("connection", async (ws) => {
           managedContext.stream = decoded.stream || null;
           managedContext.jsonMode = decoded.jsonMode || null;
           managedContext.chunkFirstTurnByPunctuation = decoded.chunkFirstTurnByPunctuation ?? true; // Default to true for faster TTS
+          managedContext.manualMode = decoded.manualMode ?? false; // Manual mode - disable auto AI, allow manual TTS
           // Call control settings
           managedContext.ttsDebounceMs = decoded.ttsDebounceMs || null;
           managedContext.bargeInCooldownMs = decoded.bargeInCooldownMs || null;
@@ -2455,6 +2464,7 @@ wss.on("connection", async (ws) => {
             assistantName: callContext.assistantName,
             userName: callContext.userName,
             customRecordingEnabled: isCustomRecordingEnabled(),
+            manualMode: callContext.manualMode,
             // TTS settings (per-call overrides)
             ttsVoiceId: callContext.ttsVoiceId,
             // Call control settings (per-call overrides)
@@ -2462,6 +2472,15 @@ wss.on("connection", async (ws) => {
             bargeInCooldownMs: callContext.bargeInCooldownMs,
             callerUtteranceFlushMs: callContext.callerUtteranceFlushMs,
           });
+
+          // Log prominent notice if Manual mode is enabled
+          if (callContext.manualMode) {
+            console.log("🎛️ ========================================");
+            console.log("🎛️ MANUAL MODE ENABLED");
+            console.log("🎛️ Auto AI (STT→LLM→TTS) is DISABLED");
+            console.log("🎛️ Manual TTS and audio playback available");
+            console.log("🎛️ ========================================");
+          }
 
           // Register this machine as the handler for this call (for multi-instance observer routing)
           sharedState.registerCallMachine(callControlId);
@@ -2596,6 +2615,14 @@ wss.on("connection", async (ws) => {
         if (track !== "inbound") {
           if (process.env.LOG_AUDIO_PACKETS === "true") {
             console.log(`🔄 Skipping non-inbound audio packet for STT (track: ${track || "undefined"})`);
+          }
+          return;
+        }
+
+        // Skip STT in Manual mode (still allow audio playback but no transcription for auto-response)
+        if (callContext?.manualMode) {
+          if (process.env.LOG_AUDIO_PACKETS === "true") {
+            console.log("🎛️ Manual mode - skipping STT for inbound audio");
           }
           return;
         }
