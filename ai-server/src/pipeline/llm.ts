@@ -61,7 +61,7 @@ export type CallContext = contextMgr.CallContext;
 /**
  * Build the system prompt dynamically, optionally injecting call goal context.
  * Uses variable keys: {ASSISTANT_NAME}, {USER_NAME} for placeholder replacement.
- * Goal is always injected at the bottom in format: CALL GOAL (YOUR ONLY MISSION): "{goal}"
+ * Appends at the bottom: Your name, Your owner's name, CONTEXT (if provided), GOAL FOR THIS CALL
  * @param context - Optional call context with goal, assistantName, userName, and systemPrompt
  * @returns The complete system prompt
  */
@@ -92,19 +92,26 @@ function buildSystemPrompt(context?: CallContext): string {
   prompt = prompt.replace(/ferguson/g, assistantName.toLowerCase());
   prompt = prompt.replace(/Aaron/g, userName);
 
-  // Inject additional context if provided (right above the goal)
+  // Append call-specific variables at the bottom
+  prompt += `
+
+Your name: ${assistantName}
+Your owner's name: ${userName}`;
+
+  // Inject additional context if provided (only show CONTEXT section if not empty)
   if (context?.additionalContext) {
     prompt += `
 
-ADDITIONAL CONTEXT:
+CONTEXT
 ${context.additionalContext}`;
   }
 
-  // Inject goal at the bottom in simple format
+  // Inject goal at the bottom
   if (context?.goal) {
     prompt += `
 
-CALL GOAL (YOUR ONLY MISSION): "${context.goal}"`;
+GOAL FOR THIS CALL
+${context.goal}`;
   }
 
   return prompt;
@@ -142,17 +149,26 @@ function buildDynamicInputForCache(
 
   console.log(`[LLM] 📝 Dynamic variables: assistantName="${assistantName}", userName="${userName}", goal="${goal}"`);
 
-  parts.push(`VARIABLES (FOR THIS CALL)
+  // Build the dynamic input with clear structure for this call
+  let dynamicVars = `CALL VARIABLES
 
 Your name: ${assistantName}
-Your owner's name: ${userName}
+Your owner's name: ${userName}`;
 
-INTRODUCTION TEMPLATE
-When applicable (i.e. if you haven't been prompted to provide a DTMF tone), begin calls with:
-"Hi, this is [your name]. I'm an AI assistant calling on behalf of [owner's name]. He wants to [summarize goal in 1 sentence]."
+  // Only add CONTEXT section if additionalContext is provided
+  if (context?.additionalContext) {
+    dynamicVars += `
+
+CONTEXT
+${context.additionalContext}`;
+  }
+
+  dynamicVars += `
 
 GOAL FOR THIS CALL
-${goal}`);
+${goal}`;
+
+  parts.push(dynamicVars);
 
   // Skip system message (index 0) - it's cached
   for (let i = 1; i < messages.length; i++) {
@@ -571,11 +587,15 @@ export async function generateAssistantReply(
       // Build dynamic input from conversation context (includes dynamic variables, intro template, goal)
       const dynamicInput = buildDynamicInputForCache(messages, userText, context);
 
+      // Log full input for debugging
+      console.log(`[LLM] 📥 Input:\n${dynamicInput}`);
+
       try {
         const response = await generateStreamingWithCachedSystem(
           dynamicInput,
           onSpeakReady,
-          context?.callId  // Pass callId for latency tracking
+          context?.callId,  // Pass callId for latency tracking
+          temperatureToUse  // Pass temperature from dashboard
         );
 
         const latencyMs = Date.now() - startTime;

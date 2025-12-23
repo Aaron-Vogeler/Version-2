@@ -30,6 +30,24 @@ import { LatencyTracker } from "./lib/latencyLogger";
 // TTS_DEBOUNCE_MS, BARGE_IN_COOLDOWN_MS, CALLER_UTTERANCE_FLUSH_MS, HANGUP_DELAY_MS
 
 // -----------------------------------------------------------------------------
+// LOG FILTERING (set VERBOSE_LOGS=true to see all logs)
+// -----------------------------------------------------------------------------
+// When VERBOSE_LOGS=false, ONLY [LLM] and [STREAM] logs are shown
+const originalConsoleLog = console.log;
+console.log = (...args: any[]) => {
+  if (config.logging.verbose) {
+    originalConsoleLog(...args);
+    return;
+  }
+  // Only show LLM-related logs
+  const firstArg = String(args[0] || "");
+  if (firstArg.startsWith("[LLM]") || firstArg.startsWith("[STREAM]") || firstArg.startsWith("[GeminiCache]")) {
+    originalConsoleLog(...args);
+  }
+  // Everything else is filtered out
+};
+
+// -----------------------------------------------------------------------------
 // CLIENTS
 // -----------------------------------------------------------------------------
 const deepgram = createDeepgramClient();
@@ -2375,12 +2393,12 @@ wss.on("connection", async (ws) => {
           managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
           managedContext.ttsVoiceId = decoded.ttsVoiceId || null;
           managedContext.model = decoded.model || null;
-          managedContext.temperature = decoded.temperature || null;
-          managedContext.maxTokens = decoded.maxTokens || null;
-          managedContext.topP = decoded.topP || null;
+          managedContext.temperature = decoded.temperature ?? null;  // Use ?? to preserve 0
+          managedContext.maxTokens = decoded.maxTokens ?? null;      // Use ?? to preserve 0
+          managedContext.topP = decoded.topP ?? null;                // Use ?? to preserve 0
           managedContext.reasoning = decoded.reasoning || null;
-          managedContext.stream = decoded.stream || null;
-          managedContext.jsonMode = decoded.jsonMode || null;
+          managedContext.stream = decoded.stream ?? null;
+          managedContext.jsonMode = decoded.jsonMode ?? null;
           managedContext.chunkFirstTurnByPunctuation = decoded.chunkFirstTurnByPunctuation ?? true; // Default to true for faster TTS
           managedContext.manualMode = decoded.manualMode ?? false; // Manual mode - disable auto AI, allow manual TTS
           // Call control settings

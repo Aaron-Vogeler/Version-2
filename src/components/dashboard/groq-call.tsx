@@ -573,7 +573,7 @@ Examples:
 
   // Build the full system prompt (for display)
   // Uses variable keys: {ASSISTANT_NAME}, {USER_NAME}
-  // Goal is always injected at bottom in format: CALL GOAL (YOUR ONLY MISSION): "goal"
+  // Appends: Your name, Your owner's name, CONTEXT (if provided), GOAL FOR THIS CALL
   const buildFullSystemPrompt = () => {
     // Custom system prompt is REQUIRED
     if (!customSystemPrompt) {
@@ -593,14 +593,17 @@ Examples:
     prompt = prompt.replace(/ferguson/g, finalAssistantName.toLowerCase());
     prompt = prompt.replace(/Aaron/g, finalUserName);
 
-    // Add context if provided
+    // Append call-specific variables at the bottom
+    prompt += `\n\nYour name: ${finalAssistantName}\nYour owner's name: ${finalUserName}`;
+
+    // Add context if provided (only show CONTEXT section if not empty)
     if (additionalContext) {
-      prompt += `\n\nADDITIONAL CONTEXT:\n${additionalContext}`;
+      prompt += `\n\nCONTEXT\n${additionalContext}`;
     }
 
-    // Goal is always injected at bottom in simple format
+    // Goal is always injected at bottom
     if (goal) {
-      prompt += `\n\nCALL GOAL (YOUR ONLY MISSION): "${goal}"`;
+      prompt += `\n\nGOAL FOR THIS CALL\n${goal}`;
     }
 
     return prompt;
