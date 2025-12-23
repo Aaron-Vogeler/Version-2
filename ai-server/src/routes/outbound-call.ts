@@ -153,12 +153,12 @@ router.post("/", async (req: Request, res: Response) => {
       diarizationAuditLogging: diarizationAuditLogging ?? null,
       // LLM settings
       model: model || null,
-      temperature: temperature || null,
-      maxTokens: maxTokens || null,
-      topP: topP || null,
+      temperature: temperature ?? null,  // Use ?? to preserve 0
+      maxTokens: maxTokens ?? null,      // Use ?? to preserve 0
+      topP: topP ?? null,                // Use ?? to preserve 0
       reasoning: reasoning || null,
-      stream: stream || null,
-      jsonMode: jsonMode || null,
+      stream: stream ?? null,
+      jsonMode: jsonMode ?? null,
       chunkFirstTurnByPunctuation: chunkFirstTurnByPunctuation ?? null,
       // Manual mode
       manualMode: manualMode ?? false,
