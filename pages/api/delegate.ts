@@ -35,11 +35,6 @@ export default async function handler(
       return res.status(400).json({ error: 'Missing required fields: goal and to_number' });
     }
 
-    // System prompt is required for calls
-    if (!custom_system_prompt) {
-      return res.status(400).json({ error: 'Missing required field: custom_system_prompt' });
-    }
-
     // Extract user ID from NextAuth session
     // session.user.id is set in the jwt callback of [...nextauth].ts
     const userId = (session.user as any).id;
@@ -47,25 +42,88 @@ export default async function handler(
       return res.status(401).json({ error: 'User ID not found in session' });
     }
 
-    // Fetch custom assistant name and first name from profile
+    // Fetch custom assistant name, first name, and groq_settings from profile
     let customAssistantName = null;
     let firstName = null;
+    let savedGroqSettings: any = null;
     if (supabaseUrl && supabaseServiceKey) {
       try {
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
         const { data, error } = await supabase
           .from('profiles')
-          .select('custom_assistant_name, first_name')
+          .select('custom_assistant_name, first_name, groq_settings')
           .eq('user_id', userId)
           .single();
 
         if (!error && data) {
           customAssistantName = data.custom_assistant_name;
           firstName = data.first_name;
+          savedGroqSettings = data.groq_settings;
         }
       } catch (error) {
         console.error('Error fetching profile data:', error);
       }
+    }
+
+    // Use saved groq_settings as defaults, allow request body to override
+    const effectiveSystemPrompt = custom_system_prompt || savedGroqSettings?.customSystemPrompt;
+    const effectiveRollingSummaryPrompt = rolling_summary_prompt || savedGroqSettings?.rollingSummaryPrompt;
+    const effectiveTtsVoiceId = tts_voice_id || savedGroqSettings?.ttsVoiceId;
+    const effectiveModel = model || savedGroqSettings?.model;
+    const effectiveTemperature = temperature ?? savedGroqSettings?.temperature;
+    const effectiveMaxTokens = max_tokens ?? savedGroqSettings?.maxTokens;
+    const effectiveTopP = top_p ?? savedGroqSettings?.topP;
+    const effectiveReasoning = reasoning || savedGroqSettings?.reasoning;
+    const effectiveStream = stream ?? savedGroqSettings?.stream;
+    const effectiveJsonMode = json_mode ?? savedGroqSettings?.jsonMode;
+    const effectiveChunkFirstTurn = chunk_first_turn_by_punctuation ?? savedGroqSettings?.chunkFirstTurnByPunctuation;
+    const effectiveManualMode = manual_mode ?? savedGroqSettings?.manualMode;
+
+    // Merge call control settings
+    const savedCallControl = savedGroqSettings?.callControlSettings || {};
+    const effectiveTtsDebounceMs = tts_debounce_ms ?? savedCallControl.ttsDebounceMs;
+    const effectiveBargeInCooldownMs = barge_in_cooldown_ms ?? savedCallControl.bargeInCooldownMs;
+    const effectiveCallerUtteranceFlushMs = caller_utterance_flush_ms ?? savedCallControl.callerUtteranceFlushMs;
+    const effectiveHoldCheckInIntervalMs = hold_check_in_interval_ms ?? savedCallControl.holdCheckInIntervalMs;
+    const effectiveHoldMaxCheckIns = hold_max_check_ins ?? savedCallControl.holdMaxCheckIns;
+
+    // Merge IVR settings
+    const savedIvrSettings = savedGroqSettings?.ivrSettings || {};
+    const effectiveIvrDebounceMs = ivr_debounce_ms ?? savedIvrSettings.debounceMs;
+    const effectiveIvrUtteranceFlushMs = ivr_utterance_flush_ms ?? savedIvrSettings.utteranceFlushMs;
+    const effectiveIvrDtmfMinPauseMs = ivr_dtmf_min_pause_ms ?? savedIvrSettings.dtmfMinPauseMs;
+    const effectiveIvrDtmfDurationMs = ivr_dtmf_duration_ms ?? savedIvrSettings.dtmfDurationMs;
+    const effectiveIvrAutoDetectThreshold = ivr_auto_detect_threshold ?? savedIvrSettings.autoDetectThreshold;
+    const effectiveIvrResponseTimeoutMs = ivr_response_timeout_ms ?? savedIvrSettings.responseTimeoutMs;
+    const effectiveIvrMaxDtmfRetries = ivr_max_dtmf_retries ?? savedIvrSettings.maxDtmfRetries;
+    const effectiveIvrDisableBargeInGracePeriod = ivr_disable_barge_in_grace_period ?? savedIvrSettings.disableBargeInGracePeriod;
+
+    // Merge human detection settings
+    const savedHumanDetection = savedGroqSettings?.humanDetectionSettings || {};
+    const effectiveHumanDetectionEnabled = human_detection_enabled ?? savedHumanDetection.enabled;
+    const effectiveHumanDetectionUtteranceFlushMs = human_detection_utterance_flush_ms ?? savedHumanDetection.utteranceFlushMs;
+    const effectiveHumanDetectionHumanWaitMs = human_detection_human_wait_ms ?? savedHumanDetection.humanWaitMs;
+    const effectiveHumanDetectionIvrWaitMs = human_detection_ivr_wait_ms ?? savedHumanDetection.ivrWaitMs;
+    const effectiveHumanDetectionMinUtterances = human_detection_min_utterances ?? savedHumanDetection.minUtterances;
+    const effectiveHumanDetectionHoldSilenceMs = human_detection_hold_silence_ms ?? savedHumanDetection.holdSilenceMs;
+    const effectiveHumanDetectionHumanTurnsAfterHold = human_detection_human_turns_after_hold ?? savedHumanDetection.humanTurnsAfterHold;
+    const effectiveHumanDetectionMaxUnsure = human_detection_max_unsure ?? savedHumanDetection.maxUnsure;
+    const effectiveHumanDetectionClassificationModel = human_detection_classification_model || savedHumanDetection.classificationModel;
+    const effectiveHumanDetectionClassificationPrompt = human_detection_classification_prompt || savedHumanDetection.classificationPrompt;
+
+    // Merge music detection settings
+    const savedMusicDetection = savedGroqSettings?.musicDetectionSettings || {};
+    const effectiveMusicDetectionEnabled = music_detection_enabled ?? savedMusicDetection.enabled;
+    const effectiveMusicDetectionWindowSize = music_detection_window_size ?? savedMusicDetection.windowSize;
+    const effectiveMusicDetectionMusicThreshold = music_detection_music_threshold ?? savedMusicDetection.musicThreshold;
+    const effectiveMusicDetectionSilenceThreshold = music_detection_silence_threshold ?? savedMusicDetection.silenceThreshold;
+    const effectiveMusicDetectionHysteresisMs = music_detection_hysteresis_ms ?? savedMusicDetection.hysteresisMs;
+    const effectiveMusicDetectionAuditLogging = music_detection_audit_logging ?? savedMusicDetection.auditLogging;
+    const effectiveMusicDetectionUseTranscriptPatterns = music_detection_use_transcript_patterns ?? savedMusicDetection.useTranscriptPatterns;
+
+    // Validate that we have a system prompt (either from request or saved settings)
+    if (!effectiveSystemPrompt) {
+      return res.status(400).json({ error: 'Missing required field: custom_system_prompt (not provided and no saved settings found)' });
     }
 
     // Forward request to Fly.io AI server
@@ -85,60 +143,61 @@ export default async function handler(
         userId,
         assistantName: customAssistantName,
         userName: firstName,
-        systemPrompt: custom_system_prompt,
-        rollingSummaryPrompt: rolling_summary_prompt,
+        // Use effective values (merged from request and saved settings)
+        systemPrompt: effectiveSystemPrompt,
+        rollingSummaryPrompt: effectiveRollingSummaryPrompt,
         // TTS settings
-        ttsVoiceId: tts_voice_id,
+        ttsVoiceId: effectiveTtsVoiceId,
         // Call control settings
-        ttsDebounceMs: tts_debounce_ms,
-        bargeInCooldownMs: barge_in_cooldown_ms,
-        callerUtteranceFlushMs: caller_utterance_flush_ms,
-        holdCheckInIntervalMs: hold_check_in_interval_ms,
-        holdMaxCheckIns: hold_max_check_ins,
+        ttsDebounceMs: effectiveTtsDebounceMs,
+        bargeInCooldownMs: effectiveBargeInCooldownMs,
+        callerUtteranceFlushMs: effectiveCallerUtteranceFlushMs,
+        holdCheckInIntervalMs: effectiveHoldCheckInIntervalMs,
+        holdMaxCheckIns: effectiveHoldMaxCheckIns,
         // IVR/Phone Tree settings
-        ivrDebounceMs: ivr_debounce_ms,
-        ivrUtteranceFlushMs: ivr_utterance_flush_ms,
-        ivrDtmfMinPauseMs: ivr_dtmf_min_pause_ms,
-        ivrDtmfDurationMs: ivr_dtmf_duration_ms,
-        ivrAutoDetectThreshold: ivr_auto_detect_threshold,
-        ivrResponseTimeoutMs: ivr_response_timeout_ms,
-        ivrMaxDtmfRetries: ivr_max_dtmf_retries,
-        ivrDisableBargeInGracePeriod: ivr_disable_barge_in_grace_period,
+        ivrDebounceMs: effectiveIvrDebounceMs,
+        ivrUtteranceFlushMs: effectiveIvrUtteranceFlushMs,
+        ivrDtmfMinPauseMs: effectiveIvrDtmfMinPauseMs,
+        ivrDtmfDurationMs: effectiveIvrDtmfDurationMs,
+        ivrAutoDetectThreshold: effectiveIvrAutoDetectThreshold,
+        ivrResponseTimeoutMs: effectiveIvrResponseTimeoutMs,
+        ivrMaxDtmfRetries: effectiveIvrMaxDtmfRetries,
+        ivrDisableBargeInGracePeriod: effectiveIvrDisableBargeInGracePeriod,
         // Human Detection settings (IVR vs Human state machine)
-        humanDetectionEnabled: human_detection_enabled,
-        humanDetectionUtteranceFlushMs: human_detection_utterance_flush_ms,
-        humanDetectionHumanWaitMs: human_detection_human_wait_ms,
-        humanDetectionIvrWaitMs: human_detection_ivr_wait_ms,
-        humanDetectionMinUtterances: human_detection_min_utterances,
-        humanDetectionHoldSilenceMs: human_detection_hold_silence_ms,
-        humanDetectionHumanTurnsAfterHold: human_detection_human_turns_after_hold,
-        humanDetectionMaxUnsure: human_detection_max_unsure,
-        humanDetectionClassificationModel: human_detection_classification_model,
-        humanDetectionClassificationPrompt: human_detection_classification_prompt,
+        humanDetectionEnabled: effectiveHumanDetectionEnabled,
+        humanDetectionUtteranceFlushMs: effectiveHumanDetectionUtteranceFlushMs,
+        humanDetectionHumanWaitMs: effectiveHumanDetectionHumanWaitMs,
+        humanDetectionIvrWaitMs: effectiveHumanDetectionIvrWaitMs,
+        humanDetectionMinUtterances: effectiveHumanDetectionMinUtterances,
+        humanDetectionHoldSilenceMs: effectiveHumanDetectionHoldSilenceMs,
+        humanDetectionHumanTurnsAfterHold: effectiveHumanDetectionHumanTurnsAfterHold,
+        humanDetectionMaxUnsure: effectiveHumanDetectionMaxUnsure,
+        humanDetectionClassificationModel: effectiveHumanDetectionClassificationModel,
+        humanDetectionClassificationPrompt: effectiveHumanDetectionClassificationPrompt,
         // Music Detection settings (Energy Floor)
-        musicDetectionEnabled: music_detection_enabled,
-        musicDetectionWindowSize: music_detection_window_size,
-        musicDetectionMusicThreshold: music_detection_music_threshold,
-        musicDetectionSilenceThreshold: music_detection_silence_threshold,
-        musicDetectionHysteresisMs: music_detection_hysteresis_ms,
-        musicDetectionAuditLogging: music_detection_audit_logging,
-        musicDetectionUseTranscriptPatterns: music_detection_use_transcript_patterns,
-        // Diarization settings (Speaker Change Detection)
+        musicDetectionEnabled: effectiveMusicDetectionEnabled,
+        musicDetectionWindowSize: effectiveMusicDetectionWindowSize,
+        musicDetectionMusicThreshold: effectiveMusicDetectionMusicThreshold,
+        musicDetectionSilenceThreshold: effectiveMusicDetectionSilenceThreshold,
+        musicDetectionHysteresisMs: effectiveMusicDetectionHysteresisMs,
+        musicDetectionAuditLogging: effectiveMusicDetectionAuditLogging,
+        musicDetectionUseTranscriptPatterns: effectiveMusicDetectionUseTranscriptPatterns,
+        // Diarization settings (Speaker Change Detection) - keep original values as they're not in groq_settings
         diarizationEnabled: diarization_enabled,
         diarizationDebounceMs: diarization_debounce_ms,
         diarizationMinConfidence: diarization_min_confidence,
         diarizationAuditLogging: diarization_audit_logging,
         // LLM settings
-        model: model,
-        temperature: temperature,
-        maxTokens: max_tokens,
-        topP: top_p,
-        reasoning: reasoning,
-        stream: stream,
-        jsonMode: json_mode,
-        chunkFirstTurnByPunctuation: chunk_first_turn_by_punctuation,
+        model: effectiveModel,
+        temperature: effectiveTemperature,
+        maxTokens: effectiveMaxTokens,
+        topP: effectiveTopP,
+        reasoning: effectiveReasoning,
+        stream: effectiveStream,
+        jsonMode: effectiveJsonMode,
+        chunkFirstTurnByPunctuation: effectiveChunkFirstTurn,
         // Manual mode
-        manualMode: manual_mode,
+        manualMode: effectiveManualMode,
       }),
     });
 

@@ -2,6 +2,13 @@
  * Database type definitions
  */
 
+// Delegate call settings stored in profiles
+export interface DelegateCallSettings {
+  goal?: string;
+  context?: string;
+  numberToCall?: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -23,6 +30,8 @@ export interface Database {
           full_name: string | null;
           first_name: string | null;
           custom_assistant_name: string | null;
+          groq_settings: Record<string, unknown> | null;
+          delegate_call_settings: DelegateCallSettings | null;
           created_at: string;
           updated_at: string;
         };

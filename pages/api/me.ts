@@ -22,18 +22,19 @@ export default async function handler(
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // Fetch custom_assistant_name, first_name, and groq_settings from profile
+  // Fetch custom_assistant_name, first_name, groq_settings, and delegate_call_settings from profile
   const userId = (session.user as any).id;
   let customAssistantName = null;
   let firstName = null;
   let groqSettings = null;
+  let delegateCallSettings = null;
 
   if (userId && supabaseUrl && supabaseServiceKey) {
     try {
       const supabase = createClient(supabaseUrl, supabaseServiceKey);
       const { data, error } = await supabase
         .from('profiles')
-        .select('custom_assistant_name, first_name, groq_settings')
+        .select('custom_assistant_name, first_name, groq_settings, delegate_call_settings')
         .eq('user_id', userId)
         .single();
 
@@ -41,13 +42,14 @@ export default async function handler(
         customAssistantName = data.custom_assistant_name;
         firstName = data.first_name;
         groqSettings = data.groq_settings;
+        delegateCallSettings = data.delegate_call_settings;
       }
     } catch (error) {
       console.error('Error fetching profile data:', error);
     }
   }
 
-  // Return session info with custom_assistant_name, first_name, and groq_settings
+  // Return session info with custom_assistant_name, first_name, groq_settings, and delegate_call_settings
   return res.status(200).json({
     ok: true,
     user: {
@@ -55,6 +57,7 @@ export default async function handler(
       custom_assistant_name: customAssistantName,
       first_name: firstName,
       groq_settings: groqSettings,
+      delegate_call_settings: delegateCallSettings,
     },
   });
 }

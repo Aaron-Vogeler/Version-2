@@ -3,27 +3,91 @@
 /**
  * Delegate A Call Component
  * Form to trigger outbound calls via webhook
+ * Supports saving/loading settings from Supabase
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Phone, Send, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Phone, Send, CheckCircle2, AlertCircle, Save, Loader2 } from 'lucide-react';
+
+// Delegate call settings interface matching Supabase schema
+interface DelegateCallSettings {
+  goal?: string;
+  context?: string;
+  numberToCall?: string;
+}
 
 interface DelegateCallProps {
   customAssistantName?: string;
+  delegateCallSettings?: DelegateCallSettings | null;
+  onSettingsSaved?: () => void;
 }
 
-export function DelegateCall({ customAssistantName = 'your AI assistant' }: DelegateCallProps) {
+export function DelegateCall({
+  customAssistantName = 'your AI assistant',
+  delegateCallSettings,
+  onSettingsSaved,
+}: DelegateCallProps) {
   const [goal, setGoal] = useState('');
   const [context, setContext] = useState('');
   const [toNumber, setToNumber] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+
+  // Settings save state
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSaveStatus, setSettingsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  // Load saved settings when delegateCallSettings prop is available
+  useEffect(() => {
+    if (delegateCallSettings) {
+      if (delegateCallSettings.goal) setGoal(delegateCallSettings.goal);
+      if (delegateCallSettings.context) setContext(delegateCallSettings.context);
+      if (delegateCallSettings.numberToCall) setToNumber(delegateCallSettings.numberToCall);
+    }
+  }, [delegateCallSettings]);
+
+  // Save settings to Supabase
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    setSettingsSaveStatus('idle');
+
+    try {
+      const response = await fetch('/api/profile/update-delegate-call-settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          goal,
+          context,
+          numberToCall: toNumber,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to save settings');
+      }
+
+      setSettingsSaveStatus('success');
+      onSettingsSaved?.();
+
+      // Reset status after 3 seconds
+      setTimeout(() => setSettingsSaveStatus('idle'), 3000);
+    } catch (error: any) {
+      console.error('Error saving delegate call settings:', error);
+      setSettingsSaveStatus('error');
+      setTimeout(() => setSettingsSaveStatus('idle'), 3000);
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -185,24 +249,58 @@ export function DelegateCall({ customAssistantName = 'your AI assistant' }: Dele
               </div>
             )}
 
-            {/* Submit Button */}
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={loading || !goal || !toNumber}
-            >
-              {loading ? (
-                <>
-                  <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                  Delegating Call...
-                </>
-              ) : (
-                <>
-                  <Send className="mr-2 h-4 w-4" />
-                  Delegate Call
-                </>
-              )}
-            </Button>
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              {/* Save Settings Button */}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleSaveSettings}
+                disabled={savingSettings}
+                className="flex-1"
+              >
+                {savingSettings ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : settingsSaveStatus === 'success' ? (
+                  <>
+                    <CheckCircle2 className="mr-2 h-4 w-4 text-green-600" />
+                    Saved!
+                  </>
+                ) : settingsSaveStatus === 'error' ? (
+                  <>
+                    <AlertCircle className="mr-2 h-4 w-4 text-red-600" />
+                    Failed
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" />
+                    Save Settings
+                  </>
+                )}
+              </Button>
+
+              {/* Submit Button */}
+              <Button
+                type="submit"
+                className="flex-1"
+                disabled={loading || !goal || !toNumber}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Delegating...
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-2 h-4 w-4" />
+                    Delegate Call
+                  </>
+                )}
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>
