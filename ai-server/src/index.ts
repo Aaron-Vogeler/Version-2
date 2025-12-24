@@ -60,13 +60,15 @@ const deepgram = createDeepgramClient();
  * Result of parsing an LLM response for speech and behavior.
  */
 interface ParsedLlmResponse {
-  /** Text to be spoken via TTS (null if behavior is wait/noop/hold/dtmf) */
+  /** Text to be spoken via TTS (null if waiting or sending DTMF) */
   speakText: string | null;
-  /** Behavior directive: "speak" | "wait" | "end" | "noop" | "hold" | "dtmf" */
-  behavior: "speak" | "wait" | "end" | "noop" | "hold" | "dtmf";
-  /** Internal notes (for logging/debugging) */
-  internal?: string;
-  /** DTMF digits to send (only used when behavior is "dtmf") */
+  /** Behavior directive: "listen" | "wait" | "hangup" | "transfer_request" */
+  behavior: "listen" | "wait" | "hangup" | "transfer_request";
+  /** Thought process notes (for logging/debugging) */
+  thought_process?: string;
+  /** Goal status: "in_progress" | "completed" | "blocked" */
+  goal_status?: string;
+  /** DTMF digits to send */
   dtmf?: string;
 }
 
@@ -101,8 +103,8 @@ function tryFixMalformedJson(text: string): string | null {
  * Extract JSON fields using regex as a fallback when JSON.parse fails.
  * This handles cases where the LLM returns partial/malformed JSON.
  */
-function extractFieldsViaRegex(text: string): { speak?: string; behavior?: string; internal?: string } | null {
-  const result: { speak?: string; behavior?: string; internal?: string } = {};
+function extractFieldsViaRegex(text: string): { speak?: string; behavior?: string; thought_process?: string; dtmf?: string; goal_status?: string } | null {
+  const result: { speak?: string; behavior?: string; thought_process?: string; dtmf?: string; goal_status?: string } = {};
 
   // Extract "speak" field value
   const speakMatch = text.match(/"speak"\s*:\s*"((?:[^"\\]|\\.)*)"/);
@@ -111,20 +113,32 @@ function extractFieldsViaRegex(text: string): { speak?: string; behavior?: strin
     result.speak = speakMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
   }
 
+  // Extract "dtmf" field value
+  const dtmfMatch = text.match(/"dtmf"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (dtmfMatch) {
+    result.dtmf = dtmfMatch[1];
+  }
+
   // Extract "behavior" field value
   const behaviorMatch = text.match(/"behavior"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   if (behaviorMatch) {
     result.behavior = behaviorMatch[1];
   }
 
-  // Extract "internal" field value
-  const internalMatch = text.match(/"internal"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-  if (internalMatch) {
-    result.internal = internalMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+  // Extract "thought_process" field value
+  const thoughtMatch = text.match(/"thought_process"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (thoughtMatch) {
+    result.thought_process = thoughtMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+  }
+
+  // Extract "goal_status" field value
+  const goalStatusMatch = text.match(/"goal_status"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (goalStatusMatch) {
+    result.goal_status = goalStatusMatch[1];
   }
 
   // Return null if we couldn't extract any useful fields
-  if (!result.speak && !result.behavior) {
+  if (!result.speak && !result.behavior && !result.dtmf) {
     return null;
   }
 
@@ -133,12 +147,10 @@ function extractFieldsViaRegex(text: string): { speak?: string; behavior?: strin
 
 /**
  * Extract the speech text and behavior from an LLM response.
- * Handles two response formats:
- * 1. JSON object with "speak" field: {"speak": "text to speak", "behavior": "...", "internal": "..."}
- * 2. Plain text string (returned as-is with behavior="speak")
+ * Handles the new JSON schema with thought_process, speak, dtmf, behavior, goal_status
  *
  * @param llmResponse - The raw response from the LLM
- * @returns Parsed response with speakText, behavior, and optional internal notes
+ * @returns Parsed response with speakText, behavior, thought_process, goal_status, dtmf
  */
 function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
   const trimmed = llmResponse.trim();
@@ -168,7 +180,7 @@ function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
       if (!parsed) {
         console.log("[LLM] Attempting regex extraction of JSON fields");
         const extracted = extractFieldsViaRegex(trimmed);
-        if (extracted && extracted.speak) {
+        if (extracted && (extracted.speak || extracted.dtmf || extracted.behavior)) {
           console.log("[LLM] Successfully extracted fields via regex");
           parsed = extracted;
         }
@@ -177,60 +189,49 @@ function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
 
     // If we successfully parsed or extracted the JSON
     if (parsed) {
-      // Extract behavior (default to "speak" if not provided)
-      const behavior = parsed.behavior || "speak";
-      const internal = parsed.internal;
+      // Extract fields with defaults
+      const behavior = parsed.behavior || "listen";
+      const thought_process = parsed.thought_process;
+      const goal_status = parsed.goal_status || "in_progress";
 
-      // Log internal notes if present
-      if (internal) {
-        console.log("[LLM] Internal notes:", internal);
+      // Log thought process if present
+      if (thought_process) {
+        console.log("[LLM] Thought process:", thought_process);
       }
 
-      // If behavior is "wait", "noop", or "hold", don't speak anything immediately
-      // (For "hold", the caller will handle periodic check-ins separately)
-      if (behavior === "wait" || behavior === "noop" || behavior === "hold") {
-        console.log(`[LLM] Behavior='${behavior}' - skipping TTS (silent response)`);
-        return { speakText: null, behavior, internal };
-      }
+      // Log goal status
+      console.log(`[LLM] Goal status: ${goal_status}`);
 
-      // Handle "dtmf" behavior - send DTMF tones instead of speaking
-      if (behavior === "dtmf") {
-        // Extract DTMF digits from the response
-        let dtmfDigits = parsed.dtmf || parsed.digits || parsed.digit;
-
-        // If no explicit dtmf field, try to extract from speak field
-        if (!dtmfDigits && typeof parsed.speak === "string") {
-          dtmfDigits = ivrUtils.extractDtmfDigits(parsed.speak) || ivrUtils.parseNaturalDtmf(parsed.speak);
-        }
-
-        if (dtmfDigits) {
-          const cleanDigits = ivrUtils.extractDtmfDigits(String(dtmfDigits));
-          console.log(`[LLM] Behavior='dtmf' - will send DTMF: ${cleanDigits}`);
-          return { speakText: null, behavior: "dtmf", internal, dtmf: cleanDigits || undefined };
-        } else {
-          console.warn("[LLM] Behavior='dtmf' but no valid digits found, treating as noop");
-          return { speakText: null, behavior: "noop", internal };
+      // Handle DTMF - if dtmf field has a value, send DTMF
+      if (parsed.dtmf && typeof parsed.dtmf === "string") {
+        const cleanDigits = ivrUtils.extractDtmfDigits(parsed.dtmf);
+        if (cleanDigits) {
+          console.log(`[LLM] DTMF detected - will send: ${cleanDigits}`);
+          return { speakText: null, behavior: behavior as any, thought_process, goal_status, dtmf: cleanDigits };
         }
       }
 
-      // If it has a "speak" field, use that
-      if (typeof parsed.speak === "string") {
-        console.log(`[LLM] Parsed JSON response, behavior='${behavior}', extracting 'speak' field`);
-        return { speakText: parsed.speak, behavior, internal };
+      // Handle speak - if speak field has a value, speak it
+      if (typeof parsed.speak === "string" && parsed.speak) {
+        console.log(`[LLM] Speak text detected, behavior='${behavior}'`);
+        return { speakText: parsed.speak, behavior: behavior as any, thought_process, goal_status };
       }
-      // If speak is null, treat as silent
-      if (parsed.speak === null) {
-        console.log(`[LLM] speak=null, behavior='${behavior}' - skipping TTS`);
-        return { speakText: null, behavior, internal };
+
+      // If speak is null or empty, don't speak
+      if (parsed.speak === null || parsed.speak === "") {
+        console.log(`[LLM] speak=null/empty, behavior='${behavior}' - skipping TTS`);
+        return { speakText: null, behavior: behavior as any, thought_process, goal_status };
       }
-      // If no speak field but has text field, try that
-      if (typeof parsed.text === "string") {
-        console.log(`[LLM] Parsed JSON response, behavior='${behavior}', extracting 'text' field`);
-        return { speakText: parsed.text, behavior, internal };
+
+      // If behavior is "wait", skip TTS
+      if (behavior === "wait") {
+        console.log(`[LLM] Behavior='wait' - skipping TTS (silent response)`);
+        return { speakText: null, behavior: "wait", thought_process, goal_status };
       }
-      // If no recognized field, log warning and return original
-      console.warn("[LLM] JSON response has no 'speak' or 'text' field, using raw response");
-      return { speakText: llmResponse, behavior: "speak" };
+
+      // If no speak field, treat as silent
+      console.log(`[LLM] No speak field found, behavior='${behavior}'`);
+      return { speakText: null, behavior: behavior as any, thought_process, goal_status };
     }
 
     // All parsing attempts failed - this is a critical error
@@ -238,11 +239,11 @@ function extractSpeechAndBehavior(llmResponse: string): ParsedLlmResponse {
     console.error("[LLM] ❌ CRITICAL: Failed to parse JSON response after all attempts. Raw response starts with '{' - will NOT speak raw JSON.");
     console.error("[LLM] Raw response (first 500 chars):", trimmed.substring(0, 500));
     // Return null speech to avoid speaking JSON
-    return { speakText: null, behavior: "speak" };
+    return { speakText: null, behavior: "listen" };
   }
 
   // Plain text response, return as-is with default behavior
-  return { speakText: llmResponse, behavior: "speak" };
+  return { speakText: llmResponse, behavior: "listen" };
 }
 
 /**
@@ -688,7 +689,7 @@ async function scheduleTtsResponse(
     }
 
     // Extract speech text and behavior from LLM response (buffered mode fallback)
-    const { speakText, behavior, dtmf } = extractSpeechAndBehavior(aiText);
+    const { speakText, behavior, dtmf, goal_status } = extractSpeechAndBehavior(aiText);
 
     // Log both raw and extracted for debugging
     if (speakText !== aiText) {
@@ -696,9 +697,9 @@ async function scheduleTtsResponse(
       console.log(`🤖 AI speech text: ${speakText ?? "(silent)"}, behavior: ${behavior}`);
     }
 
-    // Handle "wait" or "noop" behavior - skip TTS entirely (no sound)
-    if (behavior === "wait" || behavior === "noop") {
-      console.log(`🤫 Behavior='${behavior}' - staying silent, no TTS triggered`);
+    // Handle "wait" behavior - skip TTS entirely (no sound, waiting for IVR/hold)
+    if (behavior === "wait") {
+      console.log(`🤫 Behavior='wait' - staying silent, no TTS triggered`);
       // If we were on hold, exit hold mode since callee is now responding
       if (callContext.isOnHold) {
         cancelHoldMode(callContext);
@@ -708,18 +709,9 @@ async function scheduleTtsResponse(
       return;
     }
 
-    // Handle "hold" behavior - enter hold mode with periodic check-ins
-    if (behavior === "hold") {
-      console.log(`⏳ Behavior='hold' - entering hold mode with periodic check-ins`);
-      startHoldMode(callContext, ws);
-      // Clear transcript to avoid reprocessing
-      callContext.lastUserTranscript = "";
-      return;
-    }
-
-    // Handle "dtmf" behavior - send DTMF tones for IVR navigation
-    if (behavior === "dtmf" && dtmf) {
-      console.log(`📱 Behavior='dtmf' - sending DTMF tones: ${dtmf}`);
+    // Handle DTMF - if dtmf field has a value, send DTMF tones for IVR navigation
+    if (dtmf) {
+      console.log(`📱 DTMF detected - sending tones: ${dtmf}`);
 
       // Exit hold mode if we were on hold (we're now actively navigating)
       if (callContext.isOnHold) {
@@ -774,14 +766,17 @@ async function scheduleTtsResponse(
       return;
     }
 
-    // If we reach here with a "speak" or "end" behavior, we're no longer on hold
+    // If we reach here with speech or hangup behavior, we're no longer on hold
     if (callContext.isOnHold) {
       cancelHoldMode(callContext);
     }
 
-    // Handle "end" behavior - will hang up after TTS completes
-    if (behavior === "end") {
-      console.log("👋 Behavior='end' - will hang up after TTS completes");
+    // Determine if we should hang up (behavior=hangup or goal_status=completed/blocked)
+    const shouldHangup = behavior === "hangup" || goal_status === "completed" || goal_status === "blocked";
+
+    // Handle hangup - will hang up after TTS completes
+    if (shouldHangup) {
+      console.log(`👋 Will hang up after TTS (behavior='${behavior}', goal_status='${goal_status}')`);
       callContext.pendingHangupAfterTts = true;
       // Sync to Redis for multi-instance support
       if (callContext.callControlId) {
@@ -792,9 +787,9 @@ async function scheduleTtsResponse(
     // Check if we have text to speak
     if (!speakText) {
       console.warn("⚠️ No speech text extracted from LLM response");
-      // If behavior is "end" with no text, hang up immediately
-      if (behavior === "end" && callContext.callControlId) {
-        console.log("📞 Ending call (no speech text, behavior='end')");
+      // If should hang up with no text, hang up immediately
+      if (shouldHangup && callContext.callControlId) {
+        console.log("📞 Ending call (no speech text, hangup requested)");
         try {
           await hangupCall(callContext.callControlId);
         } catch (hangupError) {
@@ -1471,7 +1466,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
         // Check if we should hang up after TTS completed (triggered by "end" behavior or "Chow" signal)
         // Check local context first, then fall back to Redis
         if (ctx.pendingHangupAfterTts) {
-          console.log("📞 TTS completed - executing pending hangup (behavior='end' or 'Chow' detected)");
+          console.log("📞 TTS completed - executing pending hangup (goal completed/blocked or 'Chow' detected)");
           ctx.pendingHangupAfterTts = false; // Clear local flag
           await sharedState.setPendingHangup(callControlId, false); // Clear Redis flag
           try {
@@ -1487,7 +1482,7 @@ app.post("/webhooks/telnyx", async (req, res) => {
         // Check Redis for pending hangup (multi-instance case: webhook hit different instance than WebSocket)
         const pendingHangup = await sharedState.getPendingHangup(callControlId);
         if (pendingHangup) {
-          console.log("📞 TTS completed - executing pending hangup from Redis (behavior='end' or 'Chow' detected)");
+          console.log("📞 TTS completed - executing pending hangup from Redis (goal completed/blocked or 'Chow' detected)");
           await sharedState.setPendingHangup(callControlId, false); // Clear Redis flag
           try {
             await hangupCall(callControlId);

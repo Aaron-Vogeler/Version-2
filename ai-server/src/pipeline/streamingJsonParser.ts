@@ -6,17 +6,20 @@
  *
  * Expected JSON format (fields in this order for optimal performance):
  * {
- *   "behavior": "speak|wait|end|noop|hold|dtmf",
- *   "speak": "text to speak to the caller",
- *   "internal": "internal reasoning notes"
+ *   "thought_process": "Brief analysis of the situation",
+ *   "speak": "text to speak to the caller" | null,
+ *   "dtmf": "digit to press" | null,
+ *   "behavior": "listen|wait|hangup|transfer_request",
+ *   "goal_status": "in_progress|completed|blocked"
  * }
  */
 
 export interface ParsedStreamFields {
-  behavior?: string;
+  thought_process?: string;
   speak?: string;
-  internal?: string;
   dtmf?: string;
+  behavior?: string;
+  goal_status?: string;
 }
 
 export class StreamingJsonParser {
@@ -24,6 +27,7 @@ export class StreamingJsonParser {
   private extractedFields: ParsedStreamFields = {};
   private speakFieldComplete = false;
   private behaviorFieldComplete = false;
+  private thoughtProcessComplete = false;
 
   /**
    * Add a new chunk of text from the streaming LLM response
@@ -31,7 +35,42 @@ export class StreamingJsonParser {
   addChunk(chunk: string): void {
     this.buffer += chunk;
 
-    // Try to extract behavior field first (early decision)
+    // Try to extract thought_process field first (for logging)
+    if (!this.thoughtProcessComplete) {
+      const thoughtMatch = this.buffer.match(/"thought_process"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (thoughtMatch) {
+        this.extractedFields.thought_process = this.unescapeJsonString(thoughtMatch[1]);
+        this.thoughtProcessComplete = true;
+        console.log(`[STREAM] 🧠 Thought process complete`);
+      }
+    }
+
+    // Try to extract speak field (for early TTS)
+    if (!this.speakFieldComplete) {
+      // Match complete speak field: "speak": "text goes here" or "speak": null
+      const speakMatch = this.buffer.match(/"speak"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      const speakNullMatch = this.buffer.match(/"speak"\s*:\s*null/);
+      if (speakMatch) {
+        this.extractedFields.speak = this.unescapeJsonString(speakMatch[1]);
+        this.speakFieldComplete = true;
+        console.log(`[STREAM] ✅ Speak field complete (${this.extractedFields.speak?.length || 0} chars)`);
+      } else if (speakNullMatch) {
+        this.extractedFields.speak = undefined;
+        this.speakFieldComplete = true;
+        console.log(`[STREAM] ⏸️ Speak field is null`);
+      }
+    }
+
+    // Try to extract dtmf field
+    if (!this.extractedFields.dtmf) {
+      const dtmfMatch = this.buffer.match(/"dtmf"\s*:\s*"([^"]+)"/);
+      if (dtmfMatch) {
+        this.extractedFields.dtmf = dtmfMatch[1];
+        console.log(`[STREAM] 📱 DTMF field detected: ${dtmfMatch[1]}`);
+      }
+    }
+
+    // Try to extract behavior field
     if (!this.behaviorFieldComplete) {
       const behaviorMatch = this.buffer.match(/"behavior"\s*:\s*"([^"]+)"/);
       if (behaviorMatch) {
@@ -41,32 +80,12 @@ export class StreamingJsonParser {
       }
     }
 
-    // Try to extract speak field
-    if (!this.speakFieldComplete) {
-      // Match complete speak field: "speak": "text goes here"
-      // This regex handles escaped quotes and newlines within the string
-      const speakMatch = this.buffer.match(/"speak"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-      if (speakMatch) {
-        this.extractedFields.speak = this.unescapeJsonString(speakMatch[1]);
-        this.speakFieldComplete = true;
-        console.log(`[STREAM] ✅ Speak field complete (${this.extractedFields.speak?.length || 0} chars)`);
-      }
-    }
-
-    // Try to extract dtmf field (for dtmf behavior)
-    if (!this.extractedFields.dtmf) {
-      const dtmfMatch = this.buffer.match(/"dtmf"\s*:\s*"([^"]+)"/);
-      if (dtmfMatch) {
-        this.extractedFields.dtmf = dtmfMatch[1];
-        console.log(`[STREAM] 📱 DTMF field detected: ${dtmfMatch[1]}`);
-      }
-    }
-
-    // Try to extract internal field (optional, for debugging)
-    if (!this.extractedFields.internal) {
-      const internalMatch = this.buffer.match(/"internal"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-      if (internalMatch) {
-        this.extractedFields.internal = this.unescapeJsonString(internalMatch[1]);
+    // Try to extract goal_status field
+    if (!this.extractedFields.goal_status) {
+      const goalStatusMatch = this.buffer.match(/"goal_status"\s*:\s*"([^"]+)"/);
+      if (goalStatusMatch) {
+        this.extractedFields.goal_status = goalStatusMatch[1];
+        console.log(`[STREAM] 📊 Goal status: ${goalStatusMatch[1]}`);
       }
     }
   }
@@ -84,32 +103,37 @@ export class StreamingJsonParser {
   }
 
   /**
-   * Can we start TTS? (behavior=speak and speak field is complete)
+   * Can we start TTS? (speak field has content)
    */
   canStartTts(): boolean {
-    return this.extractedFields.behavior === 'speak' && this.speakFieldComplete;
+    return this.speakFieldComplete && !!this.extractedFields.speak;
   }
 
   /**
-   * Should we skip TTS entirely? (behavior is wait/noop/hold)
+   * Should we skip TTS entirely? (speak is null or behavior is wait)
    */
   shouldSkipTts(): boolean {
-    const behavior = this.extractedFields.behavior;
-    return behavior === 'wait' || behavior === 'noop' || behavior === 'hold';
+    // Skip if speak is null/empty or behavior is wait
+    if (this.speakFieldComplete && !this.extractedFields.speak) {
+      return true;
+    }
+    return this.extractedFields.behavior === 'wait';
   }
 
   /**
-   * Should we handle DTMF? (behavior=dtmf)
+   * Should we handle DTMF? (dtmf field has content)
    */
   shouldHandleDtmf(): boolean {
-    return this.extractedFields.behavior === 'dtmf';
+    return !!this.extractedFields.dtmf;
   }
 
   /**
-   * Should we end the call? (behavior=end)
+   * Should we end the call? (behavior=hangup or goal_status=completed/blocked)
    */
   shouldEndCall(): boolean {
-    return this.extractedFields.behavior === 'end';
+    return this.extractedFields.behavior === 'hangup' ||
+           this.extractedFields.goal_status === 'completed' ||
+           this.extractedFields.goal_status === 'blocked';
   }
 
   /**
@@ -130,7 +154,14 @@ export class StreamingJsonParser {
    * Get the behavior value
    */
   getBehavior(): string {
-    return this.extractedFields.behavior || 'speak';
+    return this.extractedFields.behavior || 'listen';
+  }
+
+  /**
+   * Get the goal status
+   */
+  getGoalStatus(): string {
+    return this.extractedFields.goal_status || 'in_progress';
   }
 
   /**
@@ -138,10 +169,11 @@ export class StreamingJsonParser {
    */
   getResult(): ParsedStreamFields {
     return {
-      behavior: this.extractedFields.behavior || 'speak',
+      thought_process: this.extractedFields.thought_process,
       speak: this.extractedFields.speak,
-      internal: this.extractedFields.internal,
       dtmf: this.extractedFields.dtmf,
+      behavior: this.extractedFields.behavior || 'listen',
+      goal_status: this.extractedFields.goal_status || 'in_progress',
     };
   }
 
