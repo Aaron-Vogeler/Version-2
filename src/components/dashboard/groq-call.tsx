@@ -896,6 +896,7 @@ Examples:
       callControlSettings,
       ivrSettings,
       humanDetectionSettings,
+      musicDetectionSettings,
     };
 
     try {
