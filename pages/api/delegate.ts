@@ -71,6 +71,10 @@ export default async function handler(
     const effectiveTtsVoiceId = tts_voice_id || savedGroqSettings?.ttsVoiceId;
     const effectiveGeminiCachedPrompt = savedGroqSettings?.geminiCachedPrompt;
     const effectiveModel = model || savedGroqSettings?.model;
+
+    // Debug logging for Gemini cached prompt
+    console.log('[Delegate] groq_settings keys:', savedGroqSettings ? Object.keys(savedGroqSettings) : 'null');
+    console.log('[Delegate] geminiCachedPrompt:', effectiveGeminiCachedPrompt ? `${effectiveGeminiCachedPrompt.length} chars` : 'not set');
     const effectiveTemperature = temperature ?? savedGroqSettings?.temperature;
     const effectiveMaxTokens = max_tokens ?? savedGroqSettings?.maxTokens;
     const effectiveTopP = top_p ?? savedGroqSettings?.topP;
