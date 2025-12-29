@@ -20,8 +20,12 @@ interface GroqSettings {
   reasoning?: 'low' | 'medium' | 'high';
   stream?: boolean;
   jsonMode?: boolean;
+  chunkFirstTurnByPunctuation?: boolean;
   customSystemPrompt?: string;
   rollingSummaryPrompt?: string;
+  geminiCachedPrompt?: string;
+  ttsVoiceId?: string;
+  manualMode?: boolean;
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
@@ -39,6 +43,27 @@ interface GroqSettings {
     responseTimeoutMs?: number;
     maxDtmfRetries?: number;
     disableBargeInGracePeriod?: boolean;
+  };
+  humanDetectionSettings?: {
+    enabled?: boolean;
+    utteranceFlushMs?: number;
+    humanWaitMs?: number;
+    ivrWaitMs?: number;
+    minUtterances?: number;
+    holdSilenceMs?: number;
+    humanTurnsAfterHold?: number;
+    maxUnsure?: number;
+    classificationModel?: string;
+    classificationPrompt?: string;
+  };
+  musicDetectionSettings?: {
+    enabled?: boolean;
+    windowSize?: number;
+    musicThreshold?: number;
+    silenceThreshold?: number;
+    hysteresisMs?: number;
+    auditLogging?: boolean;
+    useTranscriptPatterns?: boolean;
   };
 }
 
@@ -136,6 +161,32 @@ export default async function handler(
         return res.status(400).json({ error: 'Invalid rolling summary prompt format' });
       }
       sanitizedSettings.rollingSummaryPrompt = groqSettings.rollingSummaryPrompt.substring(0, 5000);
+    }
+
+    // Gemini Cached Prompt (string, max 50000 chars - can be very long)
+    if (groqSettings.geminiCachedPrompt !== undefined) {
+      if (typeof groqSettings.geminiCachedPrompt !== 'string') {
+        return res.status(400).json({ error: 'Invalid Gemini cached prompt format' });
+      }
+      sanitizedSettings.geminiCachedPrompt = groqSettings.geminiCachedPrompt.substring(0, 50000);
+    }
+
+    // TTS Voice ID (string, max 100 chars)
+    if (groqSettings.ttsVoiceId !== undefined) {
+      if (typeof groqSettings.ttsVoiceId !== 'string') {
+        return res.status(400).json({ error: 'Invalid TTS voice ID format' });
+      }
+      sanitizedSettings.ttsVoiceId = groqSettings.ttsVoiceId.substring(0, 100);
+    }
+
+    // Manual Mode (boolean)
+    if (groqSettings.manualMode !== undefined) {
+      sanitizedSettings.manualMode = Boolean(groqSettings.manualMode);
+    }
+
+    // Chunk First Turn By Punctuation (boolean)
+    if (groqSettings.chunkFirstTurnByPunctuation !== undefined) {
+      sanitizedSettings.chunkFirstTurnByPunctuation = Boolean(groqSettings.chunkFirstTurnByPunctuation);
     }
 
     // Call Control Settings
@@ -236,6 +287,110 @@ export default async function handler(
       }
       if (ivr.disableBargeInGracePeriod !== undefined) {
         sanitizedSettings.ivrSettings.disableBargeInGracePeriod = Boolean(ivr.disableBargeInGracePeriod);
+      }
+    }
+
+    // Human Detection Settings
+    if (groqSettings.humanDetectionSettings !== undefined) {
+      if (typeof groqSettings.humanDetectionSettings !== 'object') {
+        return res.status(400).json({ error: 'Invalid human detection settings format' });
+      }
+      sanitizedSettings.humanDetectionSettings = {};
+      const hd = groqSettings.humanDetectionSettings;
+
+      if (hd.enabled !== undefined) {
+        sanitizedSettings.humanDetectionSettings.enabled = Boolean(hd.enabled);
+      }
+      if (hd.utteranceFlushMs !== undefined) {
+        const val = Number(hd.utteranceFlushMs);
+        if (!isNaN(val) && val >= 100 && val <= 5000) {
+          sanitizedSettings.humanDetectionSettings.utteranceFlushMs = Math.floor(val);
+        }
+      }
+      if (hd.humanWaitMs !== undefined) {
+        const val = Number(hd.humanWaitMs);
+        if (!isNaN(val) && val >= 100 && val <= 10000) {
+          sanitizedSettings.humanDetectionSettings.humanWaitMs = Math.floor(val);
+        }
+      }
+      if (hd.ivrWaitMs !== undefined) {
+        const val = Number(hd.ivrWaitMs);
+        if (!isNaN(val) && val >= 100 && val <= 10000) {
+          sanitizedSettings.humanDetectionSettings.ivrWaitMs = Math.floor(val);
+        }
+      }
+      if (hd.minUtterances !== undefined) {
+        const val = Number(hd.minUtterances);
+        if (!isNaN(val) && val >= 1 && val <= 10) {
+          sanitizedSettings.humanDetectionSettings.minUtterances = Math.floor(val);
+        }
+      }
+      if (hd.holdSilenceMs !== undefined) {
+        const val = Number(hd.holdSilenceMs);
+        if (!isNaN(val) && val >= 1000 && val <= 60000) {
+          sanitizedSettings.humanDetectionSettings.holdSilenceMs = Math.floor(val);
+        }
+      }
+      if (hd.humanTurnsAfterHold !== undefined) {
+        const val = Number(hd.humanTurnsAfterHold);
+        if (!isNaN(val) && val >= 1 && val <= 10) {
+          sanitizedSettings.humanDetectionSettings.humanTurnsAfterHold = Math.floor(val);
+        }
+      }
+      if (hd.maxUnsure !== undefined) {
+        const val = Number(hd.maxUnsure);
+        if (!isNaN(val) && val >= 1 && val <= 20) {
+          sanitizedSettings.humanDetectionSettings.maxUnsure = Math.floor(val);
+        }
+      }
+      if (hd.classificationModel !== undefined && typeof hd.classificationModel === 'string') {
+        sanitizedSettings.humanDetectionSettings.classificationModel = hd.classificationModel.substring(0, 100);
+      }
+      if (hd.classificationPrompt !== undefined && typeof hd.classificationPrompt === 'string') {
+        sanitizedSettings.humanDetectionSettings.classificationPrompt = hd.classificationPrompt.substring(0, 5000);
+      }
+    }
+
+    // Music Detection Settings
+    if (groqSettings.musicDetectionSettings !== undefined) {
+      if (typeof groqSettings.musicDetectionSettings !== 'object') {
+        return res.status(400).json({ error: 'Invalid music detection settings format' });
+      }
+      sanitizedSettings.musicDetectionSettings = {};
+      const md = groqSettings.musicDetectionSettings;
+
+      if (md.enabled !== undefined) {
+        sanitizedSettings.musicDetectionSettings.enabled = Boolean(md.enabled);
+      }
+      if (md.windowSize !== undefined) {
+        const val = Number(md.windowSize);
+        if (!isNaN(val) && val >= 1 && val <= 100) {
+          sanitizedSettings.musicDetectionSettings.windowSize = Math.floor(val);
+        }
+      }
+      if (md.musicThreshold !== undefined) {
+        const val = Number(md.musicThreshold);
+        if (!isNaN(val) && val >= 0 && val <= 1) {
+          sanitizedSettings.musicDetectionSettings.musicThreshold = val;
+        }
+      }
+      if (md.silenceThreshold !== undefined) {
+        const val = Number(md.silenceThreshold);
+        if (!isNaN(val) && val >= 0 && val <= 1) {
+          sanitizedSettings.musicDetectionSettings.silenceThreshold = val;
+        }
+      }
+      if (md.hysteresisMs !== undefined) {
+        const val = Number(md.hysteresisMs);
+        if (!isNaN(val) && val >= 100 && val <= 10000) {
+          sanitizedSettings.musicDetectionSettings.hysteresisMs = Math.floor(val);
+        }
+      }
+      if (md.auditLogging !== undefined) {
+        sanitizedSettings.musicDetectionSettings.auditLogging = Boolean(md.auditLogging);
+      }
+      if (md.useTranscriptPatterns !== undefined) {
+        sanitizedSettings.musicDetectionSettings.useTranscriptPatterns = Boolean(md.useTranscriptPatterns);
       }
     }
 
