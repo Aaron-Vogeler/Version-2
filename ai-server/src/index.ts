@@ -2392,6 +2392,9 @@ wss.on("connection", async (ws) => {
           managedContext.systemPrompt = decoded.systemPrompt || null;
           managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
           managedContext.geminiCachedPrompt = decoded.geminiCachedPrompt || null;
+          if (decoded.geminiCachedPrompt) {
+            console.log(`[CallSetup] 📜 Custom Gemini prompt loaded (${decoded.geminiCachedPrompt.length} chars)`);
+          }
           managedContext.ttsVoiceId = decoded.ttsVoiceId || null;
           managedContext.model = decoded.model || null;
           managedContext.temperature = decoded.temperature ?? null;  // Use ?? to preserve 0
