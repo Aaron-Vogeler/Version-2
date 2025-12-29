@@ -79,7 +79,7 @@ export function DelegateCall({
   const handleTemplateSelect = (templateId: string) => {
     setSelectedTemplateId(templateId);
 
-    if (templateId === '') {
+    if (templateId === '__new__') {
       // Clear form when "New Call" is selected
       setGoal('');
       setContext('');
@@ -146,7 +146,7 @@ export function DelegateCall({
 
       // Clear selection if deleted template was selected
       if (selectedTemplateId === templateId) {
-        setSelectedTemplateId('');
+        setSelectedTemplateId('__new__');
         setGoal('');
         setContext('');
         setToNumber('');
@@ -217,7 +217,7 @@ export function DelegateCall({
                     <SelectValue placeholder="Select a template or start fresh..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">
+                    <SelectItem value="__new__">
                       <div className="flex items-center gap-2">
                         <Plus className="h-4 w-4" />
                         New Call (blank)
@@ -244,7 +244,7 @@ export function DelegateCall({
                 >
                   <Save className="h-4 w-4" />
                 </Button>
-                {selectedTemplateId && (
+                {selectedTemplateId && selectedTemplateId !== '__new__' && (
                   <Button
                     type="button"
                     variant="outline"
