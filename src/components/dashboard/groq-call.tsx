@@ -177,6 +177,7 @@ interface SavedGroqSettings {
   rollingSummaryPrompt?: string;
   ttsVoiceId?: string; // Custom Telnyx TTS voice ID
   manualMode?: boolean; // Manual mode - disable auto AI, allow manual TTS and audio playback
+  geminiCachedPrompt?: string; // Custom Gemini cached system prompt for streaming
   callControlSettings?: {
     ttsDebounceMs?: number;
     bargeInCooldownMs?: number;
@@ -275,6 +276,9 @@ export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron'
   const [customSystemPrompt, setCustomSystemPrompt] = useState('');
   // Rolling summary prompt for context management
   const [rollingSummaryPrompt, setRollingSummaryPrompt] = useState('');
+  // Gemini cached prompt (for streaming mode) with full-screen edit
+  const [geminiCachedPrompt, setGeminiCachedPrompt] = useState('');
+  const [showGeminiPromptFullscreen, setShowGeminiPromptFullscreen] = useState(false);
   // Custom TTS voice ID for Telnyx (e.g., "Telnyx.KokoroTTS.bm_george")
   const [ttsVoiceId, setTtsVoiceId] = useState('');
   const [temperature, setTemperature] = useState(0.7);
@@ -417,6 +421,7 @@ Examples:
       if (groqSettings.customSystemPrompt !== undefined) setCustomSystemPrompt(groqSettings.customSystemPrompt);
       if (groqSettings.rollingSummaryPrompt !== undefined) setRollingSummaryPrompt(groqSettings.rollingSummaryPrompt);
       if (groqSettings.ttsVoiceId !== undefined) setTtsVoiceId(groqSettings.ttsVoiceId);
+      if (groqSettings.geminiCachedPrompt !== undefined) setGeminiCachedPrompt(groqSettings.geminiCachedPrompt);
       if (groqSettings.manualMode !== undefined) setManualMode(groqSettings.manualMode);
       if (groqSettings.callControlSettings) {
         setCallControlSettings(prev => ({
@@ -887,6 +892,7 @@ Examples:
       rollingSummaryPrompt,
       ttsVoiceId,
       manualMode,
+      geminiCachedPrompt,
       callControlSettings,
       ivrSettings,
       humanDetectionSettings,
@@ -1316,6 +1322,38 @@ Examples:
           </SelectContent>
         </Select>
       </div>
+
+      {/* Gemini Cached Prompt - only show when Gemini model selected */}
+      {selectedModel.includes('gemini') && (
+        <div className="space-y-2 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="geminiCachedPrompt" className="text-sm flex items-center gap-2">
+              <Brain className="h-4 w-4 text-purple-600" />
+              Gemini Cached Prompt
+            </Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowGeminiPromptFullscreen(true)}
+              className="text-xs"
+            >
+              <Maximize2 className="h-3 w-3 mr-1" />
+              Fullscreen
+            </Button>
+          </div>
+          <Textarea
+            id="geminiCachedPrompt"
+            value={geminiCachedPrompt}
+            onChange={(e) => setGeminiCachedPrompt(e.target.value)}
+            placeholder="Enter the Gemini cached system prompt for streaming mode..."
+            className="min-h-[120px] resize-none text-xs font-mono"
+          />
+          <p className="text-xs text-muted-foreground">
+            This prompt is cached server-side for Gemini streaming. Must be 2048+ tokens for caching.
+          </p>
+        </div>
+      )}
 
       {/* Temperature */}
       <div className="space-y-2">
@@ -3061,6 +3099,39 @@ Examples:
               <Button onClick={handleSaveTemplate} disabled={!newTemplateName.trim() || savingTemplate}>
                 {savingTemplate ? 'Saving...' : 'Save Template'}
               </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Gemini Cached Prompt Fullscreen Editor */}
+      <Dialog open={showGeminiPromptFullscreen} onOpenChange={setShowGeminiPromptFullscreen}>
+        <DialogContent className="max-w-[95vw] w-[95vw] h-[90vh] max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <Brain className="h-5 w-5 text-purple-600" />
+              Gemini Cached System Prompt
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+            <Textarea
+              value={geminiCachedPrompt}
+              onChange={(e) => setGeminiCachedPrompt(e.target.value)}
+              placeholder="Enter your Gemini cached system prompt here..."
+              className="flex-1 resize-none text-sm font-mono leading-relaxed"
+            />
+            <div className="flex items-center justify-between flex-shrink-0">
+              <div className="text-xs text-muted-foreground">
+                <span className="font-medium">{geminiCachedPrompt.length}</span> characters
+                {' • '}
+                <span className="text-purple-600">Gemini requires 2048+ tokens for caching</span>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowGeminiPromptFullscreen(false)}>
+                  <Minimize2 className="h-4 w-4 mr-1" />
+                  Close
+                </Button>
+              </div>
             </div>
           </div>
         </DialogContent>
