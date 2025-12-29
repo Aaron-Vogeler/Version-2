@@ -19,6 +19,12 @@ CREATE INDEX IF NOT EXISTS idx_call_templates_user_id ON public.call_templates(u
 -- Add RLS policies
 ALTER TABLE public.call_templates ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies if they exist (for idempotent migration)
+DROP POLICY IF EXISTS "Users can view own templates" ON public.call_templates;
+DROP POLICY IF EXISTS "Users can insert own templates" ON public.call_templates;
+DROP POLICY IF EXISTS "Users can update own templates" ON public.call_templates;
+DROP POLICY IF EXISTS "Users can delete own templates" ON public.call_templates;
+
 -- Users can only see their own templates
 CREATE POLICY "Users can view own templates" ON public.call_templates
   FOR SELECT USING (auth.uid() = user_id);
