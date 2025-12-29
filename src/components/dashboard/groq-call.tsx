@@ -61,6 +61,9 @@ import {
   Square,
   VolumeX,
   Mic,
+  Save,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { LiveCallObserver } from './live-call-observer';
 
@@ -215,16 +218,34 @@ interface SavedGroqSettings {
   };
 }
 
+// Call template for quick call setup
+interface CallTemplate {
+  id: string;
+  name: string;
+  goal: string | null;
+  context: string | null;
+  phone_number: string | null;
+}
+
 interface GroqCallProps {
   customAssistantName?: string;
   firstName?: string;
   groqSettings?: SavedGroqSettings | null;
   onSettingsSaved?: () => void;
+  templates?: CallTemplate[];
+  onTemplatesChange?: () => void;
 }
 
-export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron', groqSettings, onSettingsSaved }: GroqCallProps) {
+export function GroqCall({ customAssistantName = 'Ferguson', firstName = 'Aaron', groqSettings, onSettingsSaved, templates = [], onTemplatesChange }: GroqCallProps) {
   // Call state
   const [toNumber, setToNumber] = useState('');
+
+  // Template state
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('__new__');
+  const [showSaveTemplateDialog, setShowSaveTemplateDialog] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaveStatus, setSettingsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [loading, setLoading] = useState(false);
@@ -607,6 +628,88 @@ Examples:
     }
 
     return prompt;
+  };
+
+  // Template handlers
+  const handleTemplateSelect = (templateId: string) => {
+    setSelectedTemplateId(templateId);
+
+    if (templateId === '__new__') {
+      // Clear form when "New Call" is selected
+      setGoal('');
+      setAdditionalContext('');
+      setToNumber('');
+      return;
+    }
+
+    const template = templates.find(t => t.id === templateId);
+    if (template) {
+      setGoal(template.goal || '');
+      setAdditionalContext(template.context || '');
+      setToNumber(template.phone_number || '');
+    }
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!newTemplateName.trim()) return;
+
+    setSavingTemplate(true);
+    try {
+      const response = await fetch('/api/call-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newTemplateName.trim(),
+          goal: goal || null,
+          context: additionalContext || null,
+          phone_number: toNumber || null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save template');
+      }
+
+      const data = await response.json();
+      setShowSaveTemplateDialog(false);
+      setNewTemplateName('');
+      setSelectedTemplateId(data.template.id);
+      onTemplatesChange?.();
+    } catch (error: any) {
+      console.error('Error saving template:', error);
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (deletingTemplateId) return;
+
+    setDeletingTemplateId(templateId);
+    try {
+      const response = await fetch(`/api/call-templates/${templateId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete template');
+      }
+
+      // Clear selection if deleted template was selected
+      if (selectedTemplateId === templateId) {
+        setSelectedTemplateId('__new__');
+        setGoal('');
+        setAdditionalContext('');
+        setToNumber('');
+      }
+
+      onTemplatesChange?.();
+    } catch (error: any) {
+      console.error('Error deleting template:', error);
+    } finally {
+      setDeletingTemplateId(null);
+    }
   };
 
   const handleDelegateCall = async () => {
@@ -1028,6 +1131,61 @@ Examples:
   // Settings panel content
   const settingsContent = (
     <div className="space-y-5">
+      {/* Call Template Selector */}
+      <div className="space-y-2">
+        <Label htmlFor="template" className="flex items-center gap-2">
+          <FileText className="h-4 w-4" />
+          Call Template
+        </Label>
+        <div className="flex gap-2">
+          <Select value={selectedTemplateId} onValueChange={handleTemplateSelect}>
+            <SelectTrigger className="flex-1">
+              <SelectValue placeholder="Select a template or start fresh..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__new__">
+                <div className="flex items-center gap-2">
+                  <Plus className="h-4 w-4" />
+                  New Call (blank)
+                </div>
+              </SelectItem>
+              {templates.map((template) => (
+                <SelectItem key={template.id} value={template.id}>
+                  <div className="flex items-center justify-between w-full gap-2">
+                    <span>{template.name}</span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => setShowSaveTemplateDialog(true)}
+            title="Save as Template"
+          >
+            <Save className="h-4 w-4" />
+          </Button>
+          {selectedTemplateId && selectedTemplateId !== '__new__' && (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={(e) => handleDeleteTemplate(selectedTemplateId, e)}
+              disabled={deletingTemplateId === selectedTemplateId}
+              title="Delete Template"
+              className="text-destructive hover:text-destructive"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Save and reuse call configurations with templates
+        </p>
+      </div>
+
       {/* Goal */}
       <div className="space-y-2">
         <Label htmlFor="goal" className="flex items-center gap-2">
@@ -2866,6 +3024,43 @@ Examples:
                   sends to call recipient
                 </>
               )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Save Template Dialog */}
+      <Dialog open={showSaveTemplateDialog} onOpenChange={setShowSaveTemplateDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save as Template</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="templateName">Template Name</Label>
+              <Input
+                id="templateName"
+                value={newTemplateName}
+                onChange={(e) => setNewTemplateName(e.target.value)}
+                placeholder="e.g., Doctor's Office, Pizza Order"
+                maxLength={100}
+              />
+            </div>
+            <div className="text-sm text-muted-foreground space-y-1">
+              <p>This will save:</p>
+              <ul className="list-disc list-inside text-xs">
+                <li>Goal: {goal || '(empty)'}</li>
+                <li>Context: {additionalContext ? `${additionalContext.slice(0, 30)}...` : '(empty)'}</li>
+                <li>Phone: {toNumber || '(empty)'}</li>
+              </ul>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setShowSaveTemplateDialog(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveTemplate} disabled={!newTemplateName.trim() || savingTemplate}>
+                {savingTemplate ? 'Saving...' : 'Save Template'}
+              </Button>
             </div>
           </div>
         </DialogContent>

@@ -459,6 +459,8 @@ export default function DashboardPage() {
                 // Optionally refresh settings from server
                 checkAuth();
               }}
+              templates={callTemplates}
+              onTemplatesChange={loadCallTemplates}
             />
           </TabsContent>
 
