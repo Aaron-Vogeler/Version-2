@@ -55,12 +55,14 @@ export default function DashboardPage() {
   const [savingFirstName, setSavingFirstName] = useState(false);
   const [groqSettings, setGroqSettings] = useState<any>(null);
   const [delegateCallSettings, setDelegateCallSettings] = useState<any>(null);
+  const [callTemplates, setCallTemplates] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('delegate');
 
   // Initial load on mount
   useEffect(() => {
     checkAuth();
     loadDashboardData();
+    loadCallTemplates();
     loadAnalytics(true); // Force initial load
   }, []);
 
@@ -146,6 +148,18 @@ export default function DashboardPage() {
       }
     } catch (error) {
       console.error('Error loading analytics:', error);
+    }
+  };
+
+  const loadCallTemplates = async () => {
+    try {
+      const response = await fetch('/api/call-templates');
+      if (response.ok) {
+        const data = await response.json();
+        setCallTemplates(data.templates || []);
+      }
+    } catch (error) {
+      console.error('Error loading call templates:', error);
     }
   };
 
@@ -430,11 +444,8 @@ export default function DashboardPage() {
           <TabsContent value="delegate" className="animate-fade-in">
             <DelegateCall
               customAssistantName={customAssistantName || 'your AI assistant'}
-              delegateCallSettings={delegateCallSettings}
-              onSettingsSaved={() => {
-                // Refresh settings from server
-                checkAuth();
-              }}
+              templates={callTemplates}
+              onTemplatesChange={loadCallTemplates}
             />
           </TabsContent>
 
