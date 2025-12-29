@@ -2391,6 +2391,7 @@ wss.on("connection", async (ws) => {
           managedContext.userName = decoded.userName || null;
           managedContext.systemPrompt = decoded.systemPrompt || null;
           managedContext.rollingSummaryPrompt = decoded.rollingSummaryPrompt || null;
+          managedContext.geminiCachedPrompt = decoded.geminiCachedPrompt || null;
           managedContext.ttsVoiceId = decoded.ttsVoiceId || null;
           managedContext.model = decoded.model || null;
           managedContext.temperature = decoded.temperature ?? null;  // Use ?? to preserve 0

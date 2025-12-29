@@ -595,7 +595,8 @@ export async function generateAssistantReply(
           dynamicInput,
           onSpeakReady,
           context?.callId,  // Pass callId for latency tracking
-          temperatureToUse  // Pass temperature from dashboard
+          temperatureToUse,  // Pass temperature from dashboard
+          callContext?.geminiCachedPrompt  // Pass custom Gemini prompt if provided (bypasses cache)
         );
 
         const latencyMs = Date.now() - startTime;

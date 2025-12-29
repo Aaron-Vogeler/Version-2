@@ -35,6 +35,7 @@ export interface CallContext {
   userName?: string;
   systemPrompt?: string; // Custom system prompt passed from frontend
   rollingSummaryPrompt?: string; // Custom rolling summary prompt template passed from frontend
+  geminiCachedPrompt?: string; // Custom Gemini cached system prompt (for streaming, bypasses default cache)
   model?: string; // Model to use for this call (overrides config default)
   temperature?: number; // Temperature for LLM calls (overrides default)
   maxTokens?: number; // Max tokens for LLM calls (overrides default)

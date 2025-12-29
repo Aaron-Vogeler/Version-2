@@ -491,17 +491,25 @@ export type EarlyTtsCallback = (
  * @param onSpeakReady - Optional callback for early TTS (called when speak field is complete)
  * @param callId - Optional call ID for latency tracking
  * @param temperature - Optional temperature for generation (default 0.7)
+ * @param customSystemPrompt - Optional custom system prompt (bypasses caching if provided)
  * @returns The generated JSON response as a string
  */
 export async function generateStreamingWithCachedSystem(
   dynamicInput: string,
   onSpeakReady?: EarlyTtsCallback,
   callId?: string,
-  temperature?: number
+  temperature?: number,
+  customSystemPrompt?: string
 ): Promise<string> {
   const genai = getGeminiClient();
   if (!genai) {
     throw new Error("Gemini client not configured - GEMINI_API_KEY not set");
+  }
+
+  // If custom system prompt is provided, skip caching and use direct streaming
+  if (customSystemPrompt && customSystemPrompt.trim().length > 0) {
+    console.log("[GeminiCache] Using custom system prompt (bypassing cache)");
+    return await generateStreamingWithoutCache(genai, customSystemPrompt, dynamicInput, onSpeakReady, callId, temperature);
   }
 
   let retryCount = 0;

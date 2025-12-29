@@ -69,6 +69,7 @@ export default async function handler(
     const effectiveSystemPrompt = custom_system_prompt || savedGroqSettings?.customSystemPrompt;
     const effectiveRollingSummaryPrompt = rolling_summary_prompt || savedGroqSettings?.rollingSummaryPrompt;
     const effectiveTtsVoiceId = tts_voice_id || savedGroqSettings?.ttsVoiceId;
+    const effectiveGeminiCachedPrompt = savedGroqSettings?.geminiCachedPrompt;
     const effectiveModel = model || savedGroqSettings?.model;
     const effectiveTemperature = temperature ?? savedGroqSettings?.temperature;
     const effectiveMaxTokens = max_tokens ?? savedGroqSettings?.maxTokens;
@@ -146,6 +147,7 @@ export default async function handler(
         // Use effective values (merged from request and saved settings)
         systemPrompt: effectiveSystemPrompt,
         rollingSummaryPrompt: effectiveRollingSummaryPrompt,
+        geminiCachedPrompt: effectiveGeminiCachedPrompt,
         // TTS settings
         ttsVoiceId: effectiveTtsVoiceId,
         // Call control settings
