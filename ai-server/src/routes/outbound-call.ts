@@ -14,6 +14,7 @@ interface OutboundCallRequest {
   userName?: string;
   systemPrompt?: string;
   rollingSummaryPrompt?: string;
+  geminiCachedPrompt?: string; // Custom Gemini cached system prompt for streaming
   // TTS settings
   ttsVoiceId?: string; // Custom Telnyx TTS voice ID (e.g., "Telnyx.KokoroTTS.bm_george")
   // Call control settings
@@ -83,7 +84,7 @@ interface TelnyxCallResponse {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, ttsVoiceId, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationModel, humanDetectionClassificationPrompt, musicDetectionEnabled, musicDetectionWindowSize, musicDetectionMusicThreshold, musicDetectionSilenceThreshold, musicDetectionHysteresisMs, musicDetectionAuditLogging, musicDetectionUseTranscriptPatterns, diarizationEnabled, diarizationDebounceMs, diarizationMinConfidence, diarizationAuditLogging, model, temperature, maxTokens, topP, reasoning, stream, jsonMode, chunkFirstTurnByPunctuation, manualMode } = req.body as OutboundCallRequest;
+    const { goal, additionalContext, toNumber, userId, assistantName, userName, systemPrompt, rollingSummaryPrompt, geminiCachedPrompt, ttsVoiceId, ttsDebounceMs, bargeInCooldownMs, callerUtteranceFlushMs, holdCheckInIntervalMs, holdMaxCheckIns, ivrDebounceMs, ivrUtteranceFlushMs, ivrDtmfMinPauseMs, ivrDtmfDurationMs, ivrAutoDetectThreshold, ivrResponseTimeoutMs, ivrMaxDtmfRetries, ivrDisableBargeInGracePeriod, humanDetectionEnabled, humanDetectionUtteranceFlushMs, humanDetectionHumanWaitMs, humanDetectionIvrWaitMs, humanDetectionMinUtterances, humanDetectionHoldSilenceMs, humanDetectionHumanTurnsAfterHold, humanDetectionMaxUnsure, humanDetectionClassificationModel, humanDetectionClassificationPrompt, musicDetectionEnabled, musicDetectionWindowSize, musicDetectionMusicThreshold, musicDetectionSilenceThreshold, musicDetectionHysteresisMs, musicDetectionAuditLogging, musicDetectionUseTranscriptPatterns, diarizationEnabled, diarizationDebounceMs, diarizationMinConfidence, diarizationAuditLogging, model, temperature, maxTokens, topP, reasoning, stream, jsonMode, chunkFirstTurnByPunctuation, manualMode } = req.body as OutboundCallRequest;
 
     // Validate required fields
     if (!goal || !toNumber || !userId) {
@@ -101,7 +102,7 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    // Encode client state (goal + userId + assistantName + userName + systemPrompt + additionalContext + rollingSummaryPrompt + call control settings + IVR settings + human detection settings + model + LLM params) in base64
+    // Encode client state (goal + userId + assistantName + userName + systemPrompt + additionalContext + rollingSummaryPrompt + geminiCachedPrompt + call control settings + IVR settings + human detection settings + model + LLM params) in base64
     const clientStatePayload = JSON.stringify({
       goal,
       additionalContext: additionalContext || null,
@@ -110,6 +111,7 @@ router.post("/", async (req: Request, res: Response) => {
       userName: userName || null,
       systemPrompt: systemPrompt,
       rollingSummaryPrompt: rollingSummaryPrompt || null,
+      geminiCachedPrompt: geminiCachedPrompt || null,
       // TTS settings
       ttsVoiceId: ttsVoiceId || null,
       // Call control settings

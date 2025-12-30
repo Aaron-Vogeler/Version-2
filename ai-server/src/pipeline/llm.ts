@@ -591,11 +591,18 @@ export async function generateAssistantReply(
       console.log(`[LLM] 📥 Input:\n${dynamicInput}`);
 
       try {
+        // Use main system prompt for Gemini streaming (bypasses caching for testing)
+        const customPrompt = context?.systemPrompt;
+        if (customPrompt) {
+          console.log(`[LLM] 📜 Using main system prompt for Gemini streaming (${customPrompt.length} chars)`);
+        }
+
         const response = await generateStreamingWithCachedSystem(
           dynamicInput,
           onSpeakReady,
           context?.callId,  // Pass callId for latency tracking
-          temperatureToUse  // Pass temperature from dashboard
+          temperatureToUse,  // Pass temperature from dashboard
+          customPrompt  // Pass main system prompt (bypasses cache for testing)
         );
 
         const latencyMs = Date.now() - startTime;

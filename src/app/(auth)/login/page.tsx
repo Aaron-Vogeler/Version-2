@@ -17,18 +17,66 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 
 const greatVibes = Great_Vibes({ weight: '400', subsets: ['latin'] });
 
+// TODO: Set to false for production
+const SKIP_BIRD_ANIMATION = true;
+const AUTO_LOGIN_ENABLED = true;
+const AUTO_LOGIN_EMAIL = 'aaronmvogeler@gmail.com';
+const AUTO_LOGIN_PASSWORD = 'Testing#1';
+
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState(AUTO_LOGIN_ENABLED ? AUTO_LOGIN_EMAIL : '');
+  const [password, setPassword] = useState(AUTO_LOGIN_ENABLED ? AUTO_LOGIN_PASSWORD : '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loginSuccess, setLoginSuccess] = useState(false);
   const birdRef = useRef<HTMLDivElement>(null);
 
+  // Auto-login on mount if enabled
+  useEffect(() => {
+    if (AUTO_LOGIN_ENABLED && email && password && !loading && !loginSuccess) {
+      // Small delay to let the page render first
+      const timer = setTimeout(() => {
+        handleAutoLogin();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  const handleAutoLogin = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await signIn('credentials', {
+        email: AUTO_LOGIN_EMAIL,
+        password: AUTO_LOGIN_PASSWORD,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        setError('Auto-login failed: Invalid credentials');
+        return;
+      }
+
+      if (result?.ok) {
+        if (SKIP_BIRD_ANIMATION) {
+          router.push('/dashboard');
+          router.refresh();
+        } else {
+          setLoginSuccess(true);
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'Auto-login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Handle redirect after animation completes
   useEffect(() => {
-    if (loginSuccess) {
+    if (loginSuccess && !SKIP_BIRD_ANIMATION) {
       // Pre-fetch dashboard for instant transition
       router.prefetch('/dashboard');
 
@@ -61,8 +109,13 @@ export default function LoginPage() {
       }
 
       if (result?.ok) {
-        // Trigger the login success animation
-        setLoginSuccess(true);
+        if (SKIP_BIRD_ANIMATION) {
+          router.push('/dashboard');
+          router.refresh();
+        } else {
+          // Trigger the login success animation
+          setLoginSuccess(true);
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Failed to login');

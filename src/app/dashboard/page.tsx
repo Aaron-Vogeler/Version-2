@@ -54,12 +54,15 @@ export default function DashboardPage() {
   const [firstName, setFirstName] = useState('');
   const [savingFirstName, setSavingFirstName] = useState(false);
   const [groqSettings, setGroqSettings] = useState<any>(null);
+  const [delegateCallSettings, setDelegateCallSettings] = useState<any>(null);
+  const [callTemplates, setCallTemplates] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('delegate');
 
   // Initial load on mount
   useEffect(() => {
     checkAuth();
     loadDashboardData();
+    loadCallTemplates();
     loadAnalytics(true); // Force initial load
   }, []);
 
@@ -99,6 +102,10 @@ export default function DashboardPage() {
       // Set groq settings from user profile
       if (data.user.groq_settings) {
         setGroqSettings(data.user.groq_settings);
+      }
+      // Set delegate call settings from user profile
+      if (data.user.delegate_call_settings) {
+        setDelegateCallSettings(data.user.delegate_call_settings);
       }
     } else {
       // Not authenticated, redirect to login page
@@ -141,6 +148,18 @@ export default function DashboardPage() {
       }
     } catch (error) {
       console.error('Error loading analytics:', error);
+    }
+  };
+
+  const loadCallTemplates = async () => {
+    try {
+      const response = await fetch('/api/call-templates');
+      if (response.ok) {
+        const data = await response.json();
+        setCallTemplates(data.templates || []);
+      }
+    } catch (error) {
+      console.error('Error loading call templates:', error);
     }
   };
 
@@ -423,7 +442,11 @@ export default function DashboardPage() {
 
           {/* Delegate A Call Tab */}
           <TabsContent value="delegate" className="animate-fade-in">
-            <DelegateCall customAssistantName={customAssistantName || 'your AI assistant'} />
+            <DelegateCall
+              customAssistantName={customAssistantName || 'your AI assistant'}
+              templates={callTemplates}
+              onTemplatesChange={loadCallTemplates}
+            />
           </TabsContent>
 
           {/* Groq Call Tab */}
@@ -436,6 +459,8 @@ export default function DashboardPage() {
                 // Optionally refresh settings from server
                 checkAuth();
               }}
+              templates={callTemplates}
+              onTemplatesChange={loadCallTemplates}
             />
           </TabsContent>
 
