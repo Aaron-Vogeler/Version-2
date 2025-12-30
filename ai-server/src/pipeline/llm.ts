@@ -39,6 +39,15 @@ if (config.gemini.apiKey) {
   gemini = new GoogleGenerativeAI(config.gemini.apiKey);
 }
 
+// Create DeepInfra client (lazy initialized when API key is available)
+let deepinfra: OpenAI | null = null;
+if (config.deepinfra.apiKey) {
+  deepinfra = new OpenAI({
+    apiKey: config.deepinfra.apiKey,
+    baseURL: config.deepinfra.baseUrl,
+  });
+}
+
 /**
  * Check if a model is a Gemini model (requires streaming support)
  */
@@ -51,6 +60,13 @@ function isGeminiModel(model: string): boolean {
  */
 function isGrokModel(model: string): boolean {
   return model.includes('grok');
+}
+
+/**
+ * Check if a model is a DeepInfra model (Mistral, etc.)
+ */
+function isDeepInfraModel(model: string): boolean {
+  return model.includes('mistralai/') || model.includes('deepinfra/');
 }
 
 /**
@@ -649,6 +665,26 @@ export async function generateAssistantReply(
       startTime,
       onSpeakReady
     );
+  } else if (isDeepInfraModel(modelToUse) && deepinfra) {
+    // Route DeepInfra Mistral models to DeepInfra API
+    console.log(`[LLM] 🔮 Using DeepInfra for Mistral model: ${modelToUse}`);
+    return await generateWithOpenAICompatible(
+      deepinfra,
+      modelToUse,
+      messages,
+      temperatureToUse,
+      maxTokensToUse,
+      topPToUse,
+      reasoningToUse,
+      jsonModeToUse,
+      context,
+      userText,
+      systemPrompt,
+      rollingSummary,
+      recentTurnsCount,
+      startTime,
+      "deepinfra"
+    );
   } else if (isGrokModel(modelToUse) && xai) {
     // Route Grok models to xAI API
     console.log(`[LLM] 🚀 Using xAI for Grok model: ${modelToUse}`);
@@ -666,7 +702,8 @@ export async function generateAssistantReply(
       systemPrompt,
       rollingSummary,
       recentTurnsCount,
-      startTime
+      startTime,
+      "xai"
     );
   } else {
     // Default to Groq
@@ -684,13 +721,14 @@ export async function generateAssistantReply(
       systemPrompt,
       rollingSummary,
       recentTurnsCount,
-      startTime
+      startTime,
+      "groq"
     );
   }
 }
 
 /**
- * Generate response using OpenAI-compatible API (Groq, xAI, etc.)
+ * Generate response using OpenAI-compatible API (Groq, xAI, DeepInfra, etc.)
  */
 async function generateWithOpenAICompatible(
   client: OpenAI,
@@ -706,7 +744,8 @@ async function generateWithOpenAICompatible(
   systemPrompt: string,
   rollingSummary: string | undefined,
   recentTurnsCount: number,
-  startTime: number
+  startTime: number,
+  provider: "groq" | "xai" | "deepinfra" = "groq"
 ): Promise<string> {
   // Build API request parameters
   const apiParams: any = {
@@ -717,8 +756,8 @@ async function generateWithOpenAICompatible(
     top_p: topP,
   };
 
-  // Add reasoning_effort if model supports it (exclude Grok models)
-  const supportsReasoning = (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) && !isGrokModel(modelToUse);
+  // Add reasoning_effort if model supports it (exclude Grok and DeepInfra models)
+  const supportsReasoning = (modelToUse.includes('gpt-oss') || modelToUse.includes('reasoning')) && provider === "groq";
   if (supportsReasoning) {
     apiParams.reasoning_effort = reasoningEffort;
   }
@@ -728,12 +767,23 @@ async function generateWithOpenAICompatible(
     apiParams.response_format = { type: 'json_object' };
   }
 
+  // Log the complete API request for debugging
+  console.log(`[LLM] 📤 API Request to ${provider.toUpperCase()}:`);
+  console.log(`[LLM] 📤 Model: ${modelToUse}`);
+  console.log(`[LLM] 📤 Messages (${messages.length} total):`);
+  messages.forEach((msg, i) => {
+    const preview = msg.content.length > 200 ? msg.content.substring(0, 200) + '...' : msg.content;
+    console.log(`[LLM]   [${i}] ${msg.role}: ${preview}`);
+  });
+  console.log(`[LLM] 📤 Full request JSON:`);
+  console.log(JSON.stringify(apiParams, null, 2));
+
   const response = await client.chat.completions.create(apiParams);
   const latencyMs = Date.now() - startTime;
 
   const assistantResponse = response.choices[0]?.message?.content || "";
 
-  // Extract token usage - xAI provides detailed usage including cache info
+  // Extract token usage
   const usage = response.usage;
   const promptTokens = usage?.prompt_tokens || 0;
   const completionTokens = usage?.completion_tokens || 0;
@@ -743,14 +793,11 @@ async function generateWithOpenAICompatible(
   const usageDetails = (usage as any)?.prompt_tokens_details;
   const cachedTokens = usageDetails?.cached_tokens || 0;
 
-  // Determine if this is xAI/Grok for detailed logging
-  const isXai = isGrokModel(modelToUse);
-
-  // Log detailed token usage for Grok models
-  if (isXai && usage) {
+  // Log detailed token usage
+  if (usage) {
     console.log(
-      `[LLM] 🤖 Grok usage: prompt=${promptTokens}, completion=${completionTokens}, ` +
-      `total=${totalTokens}, cached=${cachedTokens}`
+      `[LLM] 📊 ${provider.toUpperCase()} usage: prompt=${promptTokens}, completion=${completionTokens}, ` +
+      `total=${totalTokens}${cachedTokens > 0 ? `, cached=${cachedTokens}` : ''}`
     );
   }
 
@@ -778,13 +825,19 @@ async function generateWithOpenAICompatible(
 
     // Log usage cost
     if (usage) {
-      const cost = isXai
-        ? calculateXaiCost(promptTokens, completionTokens, modelToUse, cachedTokens)
-        : calculateGroqCost(promptTokens, completionTokens, modelToUse);
+      let cost: number;
+      if (provider === "xai") {
+        cost = calculateXaiCost(promptTokens, completionTokens, modelToUse, cachedTokens);
+      } else if (provider === "deepinfra") {
+        // DeepInfra Mistral pricing (approximate): $0.10/M input, $0.10/M output
+        cost = (promptTokens * 0.0001 + completionTokens * 0.0001) / 1000;
+      } else {
+        cost = calculateGroqCost(promptTokens, completionTokens, modelToUse);
+      }
 
       insertUsageCostLog({
         call_id: context.callId,
-        provider: isXai ? "xai" : "groq",
+        provider: provider,
         service_type: "llm",
         model: modelToUse,
         prompt_tokens: promptTokens,

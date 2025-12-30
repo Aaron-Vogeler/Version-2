@@ -18,11 +18,22 @@ const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const XAI_API_KEY = process.env.XAI_API_KEY;
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
 
+// DeepInfra API configuration (for Mistral models)
+const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY;
+const DEEPINFRA_API_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
+
 /**
  * Check if a model is a Grok/xAI model
  */
 function isGrokModel(model: string): boolean {
   return model.includes('grok');
+}
+
+/**
+ * Check if a model is a DeepInfra model
+ */
+function isDeepInfraModel(model: string): boolean {
+  return model.includes('mistralai/') || model.includes('deepinfra/');
 }
 
 // Available models for selection (Groq + Gemini + Grok)
@@ -40,6 +51,10 @@ const GROQ_MODELS = [
 
   // Grok models (xAI)
   { id: 'grok-4-1-fast-non-reasoning', name: '🚀 Grok 4.1 Fast', description: 'xAI Grok 4.1 - Fast non-reasoning model' },
+
+  // DeepInfra Mistral models
+  { id: 'mistralai/Mistral-Nemo-Instruct-2407', name: '🔮 Mistral Nemo 12B', description: 'DeepInfra Mistral Nemo 12B Instruct - Fast and capable' },
+  { id: 'mistralai/Mistral-Small-24B-Instruct-2501', name: '🔮 Mistral Small 24B', description: 'DeepInfra Mistral Small 24B Instruct - Balanced performance' },
 
   // Gemini models (with streaming support)
   { id: 'models/gemini-flash-lite-latest', name: '⚡ Gemini Flash Lite (Streaming)', description: 'Google Gemini Flash Lite - Fastest with streaming TTS' },
@@ -228,11 +243,28 @@ async function callLLMAPI(
 
   // Route to appropriate API based on model
   const useXAI = isGrokModel(model);
-  const apiUrl = useXAI ? XAI_API_URL : GROQ_API_URL;
-  const apiKey = useXAI ? XAI_API_KEY : GROQ_API_KEY;
+  const useDeepInfra = isDeepInfraModel(model);
+
+  let apiUrl: string;
+  let apiKey: string | undefined;
+  let providerName: string;
+
+  if (useDeepInfra) {
+    apiUrl = DEEPINFRA_API_URL;
+    apiKey = DEEPINFRA_API_KEY;
+    providerName = 'DeepInfra';
+  } else if (useXAI) {
+    apiUrl = XAI_API_URL;
+    apiKey = XAI_API_KEY;
+    providerName = 'xAI';
+  } else {
+    apiUrl = GROQ_API_URL;
+    apiKey = GROQ_API_KEY;
+    providerName = 'Groq';
+  }
 
   if (!apiKey) {
-    throw new Error(useXAI ? 'XAI_API_KEY not configured' : 'GROQ_API_KEY not configured');
+    throw new Error(`${providerName} API key not configured`);
   }
 
   const response = await fetch(apiUrl, {
@@ -254,8 +286,7 @@ async function callLLMAPI(
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    const provider = useXAI ? 'xAI' : 'Groq';
-    throw new Error(errorData.error?.message || `${provider} API error: ${response.status}`);
+    throw new Error(errorData.error?.message || `${providerName} API error: ${response.status}`);
   }
 
   const data: GroqResponse = await response.json();
