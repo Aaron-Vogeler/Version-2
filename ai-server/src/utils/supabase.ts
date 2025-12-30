@@ -511,7 +511,7 @@ export async function insertLlmLog(
  */
 export interface UsageCostLog {
   call_id: string;
-  provider: "deepgram" | "groq" | "xai" | "gemini" | "openai" | "telnyx";
+  provider: "deepgram" | "groq" | "xai" | "gemini" | "openai" | "telnyx" | "deepinfra";
   service_type: "stt" | "llm" | "tts" | "telephony";
   model?: string;
   // For LLM providers
