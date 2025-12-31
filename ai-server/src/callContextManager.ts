@@ -6,10 +6,51 @@
  * No cross-call memory is persisted.
  */
 import config from "./config";
+import { randomUUID } from "crypto";
 import type { HumanDetectionState, ReceiverState } from "./pipeline/humanDetection";
 import { initializeHumanDetectionState } from "./pipeline/humanDetection";
 import type { MusicDetectionState, EnergyFloorConfig } from "./pipeline/energy-floor";
 import { EnergyFloorTracker } from "./pipeline/energy-floor";
+
+// ============================================================================
+// GROK CALL STATS - Accumulated token/cost tracking per call
+// ============================================================================
+
+/**
+ * Accumulated stats for Grok calls within a single phone call
+ */
+export interface GrokCallAccumulatedStats {
+  // Token counts
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalTokens: number;
+  totalCachedTokens: number;
+
+  // Cost tracking
+  totalCostUsd: number;
+  costSavedFromCaching: number;
+
+  // Call counts
+  grokCallCount: number;
+  cacheHitCount: number; // Number of calls with cache hits
+
+  // Timing
+  totalLatencyMs: number;
+  avgLatencyMs: number;
+  minLatencyMs: number;
+  maxLatencyMs: number;
+
+  // Model breakdown (model -> stats)
+  byModel: Record<string, {
+    callCount: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedTokens: number;
+    costUsd: number;
+    latencyMs: number;
+  }>;
+}
 
 /**
  * Represents a single turn in the conversation.
@@ -206,6 +247,14 @@ export interface CallContext {
   diarizationMinConfidence?: number;
   /** Per-call audit logging for diarization */
   diarizationAuditLogging?: boolean;
+
+  // ============================================================================
+  // GROK API OPTIMIZATION - x-grok-conv-id for caching & call stats
+  // ============================================================================
+  /** UUID4 conversation ID for x-grok-conv-id header (improves cache hit rate) */
+  grokConversationId?: string;
+  /** Accumulated stats for all Grok calls during this phone call */
+  grokCallStats?: GrokCallAccumulatedStats;
 }
 
 /**
@@ -266,7 +315,26 @@ export function getOrCreateContext(
       musicConfidence: 0,
       // Diarization state (speaker change detection)
       speakerChangeCount: 0,
+      // Grok API optimization - generate unique conversation ID for caching
+      grokConversationId: randomUUID(),
+      // Grok call stats accumulator
+      grokCallStats: {
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalTokens: 0,
+        totalCachedTokens: 0,
+        totalCostUsd: 0,
+        costSavedFromCaching: 0,
+        grokCallCount: 0,
+        cacheHitCount: 0,
+        totalLatencyMs: 0,
+        avgLatencyMs: 0,
+        minLatencyMs: Infinity,
+        maxLatencyMs: 0,
+        byModel: {},
+      },
     });
+    console.log(`[CONTEXT] Created new context for ${callId.slice(-8)} with grokConversationId: ${callContextStore.get(callId)!.grokConversationId}`);
   }
   return callContextStore.get(callId)!;
 }
@@ -420,6 +488,9 @@ export function getContext(callId: string): CallContext | undefined {
 export function clearContext(callId: string): void {
   const context = callContextStore.get(callId);
   if (context) {
+    // Log Grok end-of-call summary BEFORE clearing
+    logGrokEndOfCallSummary(callId);
+
     // Clean up timers
     if (context.ttsDebounceTimer) {
       clearTimeout(context.ttsDebounceTimer);
@@ -536,6 +607,198 @@ export function formatTurnsAsMessages(
       content: `${speakerLabel}${turn.text}`,
     };
   });
+}
+
+// ============================================================================
+// GROK CALL STATS FUNCTIONS
+// ============================================================================
+
+/**
+ * Accumulate stats from a single Grok API call into the call's running totals.
+ * Called after each Grok call completes.
+ */
+export function accumulateGrokCallStats(
+  callId: string,
+  model: string,
+  promptTokens: number,
+  completionTokens: number,
+  cachedTokens: number,
+  costUsd: number,
+  latencyMs: number
+): void {
+  const context = getContext(callId);
+  if (!context || !context.grokCallStats) {
+    console.warn(`[GROK-STATS] Cannot accumulate stats - context not found for ${callId.slice(-8)}`);
+    return;
+  }
+
+  const stats = context.grokCallStats;
+
+  // Update totals
+  stats.totalPromptTokens += promptTokens;
+  stats.totalCompletionTokens += completionTokens;
+  stats.totalTokens += promptTokens + completionTokens;
+  stats.totalCachedTokens += cachedTokens;
+  stats.totalCostUsd += costUsd;
+  stats.grokCallCount += 1;
+
+  // Track cache hits
+  if (cachedTokens > 0) {
+    stats.cacheHitCount += 1;
+    // Calculate cost saved: cached tokens are 75% cheaper
+    // Full price would be (cachedTokens / 1M) * inputPrice
+    // Cached price is (cachedTokens / 1M) * inputPrice * 0.25
+    // Savings = full - cached = (cachedTokens / 1M) * inputPrice * 0.75
+    const inputPricePerM = 2.0; // Default Grok pricing
+    const savings = (cachedTokens / 1_000_000) * inputPricePerM * 0.75;
+    stats.costSavedFromCaching += savings;
+  }
+
+  // Update latency stats
+  stats.totalLatencyMs += latencyMs;
+  stats.avgLatencyMs = stats.totalLatencyMs / stats.grokCallCount;
+  if (latencyMs < stats.minLatencyMs) stats.minLatencyMs = latencyMs;
+  if (latencyMs > stats.maxLatencyMs) stats.maxLatencyMs = latencyMs;
+
+  // Update per-model breakdown
+  if (!stats.byModel[model]) {
+    stats.byModel[model] = {
+      callCount: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cachedTokens: 0,
+      costUsd: 0,
+      latencyMs: 0,
+    };
+  }
+  const modelStats = stats.byModel[model];
+  modelStats.callCount += 1;
+  modelStats.promptTokens += promptTokens;
+  modelStats.completionTokens += completionTokens;
+  modelStats.totalTokens += promptTokens + completionTokens;
+  modelStats.cachedTokens += cachedTokens;
+  modelStats.costUsd += costUsd;
+  modelStats.latencyMs += latencyMs;
+
+  // Log running total
+  console.log(
+    `[GROK-STATS] 📊 Call ${stats.grokCallCount} | Running Total: ${stats.totalTokens.toLocaleString()} tokens, ` +
+    `$${stats.totalCostUsd.toFixed(6)} | Cached: ${stats.totalCachedTokens.toLocaleString()} (${stats.cacheHitCount} hits)`
+  );
+}
+
+/**
+ * Log comprehensive end-of-call summary for all Grok usage.
+ * Called when clearContext is invoked (call ends).
+ */
+export function logGrokEndOfCallSummary(callId: string): void {
+  const context = getContext(callId);
+  if (!context || !context.grokCallStats || context.grokCallStats.grokCallCount === 0) {
+    return; // No Grok calls made during this call
+  }
+
+  const stats = context.grokCallStats;
+  const callIdShort = callId.slice(-8);
+
+  console.log("\n" + "█".repeat(80));
+  console.log(`[GROK-GRANT] 🏁 END OF CALL SUMMARY - Call ID: ...${callIdShort}`);
+  console.log(`[GROK-GRANT] 📅 ${new Date().toISOString()}`);
+  console.log(`[GROK-GRANT] 🔑 Conversation ID: ${context.grokConversationId}`);
+  console.log("█".repeat(80));
+
+  // -------------------------------------------------------------------------
+  // OVERALL TOTALS
+  // -------------------------------------------------------------------------
+  console.log("\n" + "─".repeat(60));
+  console.log("[GROK-GRANT] 📊 OVERALL TOTALS");
+  console.log("─".repeat(60));
+  console.log(`[GROK-GRANT] 📞 Total Grok API Calls: ${stats.grokCallCount}`);
+  console.log(`[GROK-GRANT] 🔢 Total Tokens Used: ${stats.totalTokens.toLocaleString()}`);
+  console.log(`[GROK-GRANT]    ➡️  Prompt Tokens: ${stats.totalPromptTokens.toLocaleString()}`);
+  console.log(`[GROK-GRANT]    ⬅️  Completion Tokens: ${stats.totalCompletionTokens.toLocaleString()}`);
+
+  // -------------------------------------------------------------------------
+  // CACHING STATS
+  // -------------------------------------------------------------------------
+  console.log("\n" + "─".repeat(60));
+  console.log("[GROK-GRANT] 💾 CACHING PERFORMANCE");
+  console.log("─".repeat(60));
+  const cacheHitRate = stats.grokCallCount > 0
+    ? (stats.cacheHitCount / stats.grokCallCount * 100).toFixed(1)
+    : "0.0";
+  const tokenCacheRate = stats.totalPromptTokens > 0
+    ? (stats.totalCachedTokens / stats.totalPromptTokens * 100).toFixed(1)
+    : "0.0";
+  console.log(`[GROK-GRANT] 💾 Cached Tokens: ${stats.totalCachedTokens.toLocaleString()}`);
+  console.log(`[GROK-GRANT] 📈 Cache Hit Rate: ${cacheHitRate}% of calls (${stats.cacheHitCount}/${stats.grokCallCount})`);
+  console.log(`[GROK-GRANT] 📈 Token Cache Rate: ${tokenCacheRate}% of prompt tokens`);
+  console.log(`[GROK-GRANT] 💵 Cost Saved from Caching: $${stats.costSavedFromCaching.toFixed(6)}`);
+
+  // -------------------------------------------------------------------------
+  // COST BREAKDOWN
+  // -------------------------------------------------------------------------
+  console.log("\n" + "─".repeat(60));
+  console.log("[GROK-GRANT] 💰 COST BREAKDOWN");
+  console.log("─".repeat(60));
+  console.log(`[GROK-GRANT] 💵 Total Cost: $${stats.totalCostUsd.toFixed(6)}`);
+  const avgCostPerCall = stats.grokCallCount > 0
+    ? (stats.totalCostUsd / stats.grokCallCount).toFixed(6)
+    : "0.000000";
+  console.log(`[GROK-GRANT] 📊 Avg Cost Per Call: $${avgCostPerCall}`);
+  const costPerThousandTokens = stats.totalTokens > 0
+    ? (stats.totalCostUsd / (stats.totalTokens / 1000)).toFixed(6)
+    : "0.000000";
+  console.log(`[GROK-GRANT] 📊 Cost Per 1K Tokens: $${costPerThousandTokens}`);
+
+  // What we would have paid without caching
+  const wouldHavePaid = stats.totalCostUsd + stats.costSavedFromCaching;
+  const savingsPercent = wouldHavePaid > 0
+    ? (stats.costSavedFromCaching / wouldHavePaid * 100).toFixed(1)
+    : "0.0";
+  console.log(`[GROK-GRANT] 💸 Would Have Paid (no cache): $${wouldHavePaid.toFixed(6)}`);
+  console.log(`[GROK-GRANT] 🎉 Total Savings: $${stats.costSavedFromCaching.toFixed(6)} (${savingsPercent}%)`);
+
+  // -------------------------------------------------------------------------
+  // PERFORMANCE STATS
+  // -------------------------------------------------------------------------
+  console.log("\n" + "─".repeat(60));
+  console.log("[GROK-GRANT] ⚡ PERFORMANCE STATS");
+  console.log("─".repeat(60));
+  console.log(`[GROK-GRANT] ⏱️  Total Latency: ${stats.totalLatencyMs.toLocaleString()}ms`);
+  console.log(`[GROK-GRANT] 📊 Avg Latency: ${stats.avgLatencyMs.toFixed(0)}ms`);
+  console.log(`[GROK-GRANT] ⚡ Min Latency: ${stats.minLatencyMs === Infinity ? 'N/A' : stats.minLatencyMs + 'ms'}`);
+  console.log(`[GROK-GRANT] 🐌 Max Latency: ${stats.maxLatencyMs}ms`);
+  const avgTokensPerSecond = stats.totalLatencyMs > 0
+    ? (stats.totalCompletionTokens / (stats.totalLatencyMs / 1000)).toFixed(1)
+    : "0.0";
+  console.log(`[GROK-GRANT] 🚀 Avg Output Speed: ${avgTokensPerSecond} tokens/sec`);
+
+  // -------------------------------------------------------------------------
+  // PER-MODEL BREAKDOWN
+  // -------------------------------------------------------------------------
+  const modelNames = Object.keys(stats.byModel);
+  if (modelNames.length > 0) {
+    console.log("\n" + "─".repeat(60));
+    console.log("[GROK-GRANT] 🤖 PER-MODEL BREAKDOWN");
+    console.log("─".repeat(60));
+    for (const modelName of modelNames) {
+      const m = stats.byModel[modelName];
+      console.log(`\n[GROK-GRANT] 📌 ${modelName}:`);
+      console.log(`[GROK-GRANT]    📞 Calls: ${m.callCount}`);
+      console.log(`[GROK-GRANT]    🔢 Tokens: ${m.totalTokens.toLocaleString()} (prompt: ${m.promptTokens.toLocaleString()}, completion: ${m.completionTokens.toLocaleString()})`);
+      console.log(`[GROK-GRANT]    💾 Cached: ${m.cachedTokens.toLocaleString()}`);
+      console.log(`[GROK-GRANT]    💵 Cost: $${m.costUsd.toFixed(6)}`);
+      console.log(`[GROK-GRANT]    ⏱️  Avg Latency: ${(m.latencyMs / m.callCount).toFixed(0)}ms`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // FINAL SUMMARY BOX
+  // -------------------------------------------------------------------------
+  console.log("\n" + "█".repeat(80));
+  console.log(`[GROK-GRANT] 📋 FINAL SUMMARY: ${stats.grokCallCount} calls | ${stats.totalTokens.toLocaleString()} tokens | $${stats.totalCostUsd.toFixed(4)} total | $${stats.costSavedFromCaching.toFixed(4)} saved`);
+  console.log("█".repeat(80) + "\n");
 }
 
 export { defaultConfig as DEFAULT_CONFIG };

@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
+import { accumulateGrokCallStats } from "../callContextManager";
 import { insertLlmLog, insertUsageCostLog, calculateXaiCost, calculateGroqCost } from "../utils/supabase";
 import {
   buildClassificationPrompt,
@@ -1061,11 +1062,21 @@ async function generateWithOpenAICompatible(
   // =========================================================================
   // PRE-CALL GROK LOGGING: Log extensive input details before API call
   // =========================================================================
+  // Get grokConversationId for x-grok-conv-id header (improves cache hit rate)
+  let grokConversationId: string | undefined;
+  if (provider === "xai" && context?.callId) {
+    const callContext = contextMgr.getContext(context.callId);
+    grokConversationId = callContext?.grokConversationId;
+  }
+
   if (provider === "xai") {
     const isGrok41Fast = modelToUse.includes("grok-4") && (modelToUse.includes("fast") || !modelToUse.includes("reasoning"));
     console.log("\n" + "~".repeat(80));
     console.log(`[GROK-GRANT] 📤 PRE-CALL: Sending request to xAI (${modelToUse})`);
     console.log(`[GROK-GRANT] 🏷️  Model Type: ${isGrok41Fast ? "GROK 4.1 FAST (NON-REASONING)" : modelToUse}`);
+    if (grokConversationId) {
+      console.log(`[GROK-GRANT] 🔑 x-grok-conv-id: ${grokConversationId}`);
+    }
     console.log(`[GROK-GRANT] 📊 Request Parameters:`);
     console.log(`[GROK-GRANT]    🌡️  Temperature: ${temperature}`);
     console.log(`[GROK-GRANT]    📏 Max Tokens: ${maxTokens}`);
@@ -1088,7 +1099,16 @@ async function generateWithOpenAICompatible(
     console.log("~".repeat(80) + "\n");
   }
 
-  const response = await client.chat.completions.create(apiParams);
+  // Build request options with x-grok-conv-id header for xAI (improves cache hit rate)
+  const requestOptions: any = {};
+  if (provider === "xai" && grokConversationId) {
+    requestOptions.headers = {
+      "x-grok-conv-id": grokConversationId,
+    };
+    console.log(`[GROK-GRANT] 🔑 Sending x-grok-conv-id header: ${grokConversationId}`);
+  }
+
+  const response = await client.chat.completions.create(apiParams, requestOptions);
   const latencyMs = Date.now() - startTime;
 
   const assistantResponse = response.choices[0]?.message?.content || "";
@@ -1153,6 +1173,19 @@ async function generateWithOpenAICompatible(
       let cost: number;
       if (provider === "xai") {
         cost = calculateXaiCost(promptTokens, completionTokens, modelToUse, cachedTokens);
+
+        // =====================================================================
+        // ACCUMULATE GROK STATS for end-of-call summary
+        // =====================================================================
+        accumulateGrokCallStats(
+          context.callId,
+          modelToUse,
+          promptTokens,
+          completionTokens,
+          cachedTokens,
+          cost,
+          latencyMs
+        );
       } else if (provider === "deepinfra") {
         // DeepInfra Mistral pricing (approximate): $0.10/M input, $0.10/M output
         cost = (promptTokens * 0.0001 + completionTokens * 0.0001) / 1000;
