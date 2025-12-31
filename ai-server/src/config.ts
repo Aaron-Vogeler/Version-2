@@ -84,6 +84,11 @@ const config = {
     baseUrl: getEnv("XAI_BASE_URL", "https://api.x.ai/v1"),
   },
 
+  deepinfra: {
+    apiKey: getEnv("DEEPINFRA_API_KEY", ""), // Optional - only needed if using DeepInfra Mistral models
+    baseUrl: getEnv("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"),
+  },
+
   telnyx: {
     apiKey: requireEnv("TELNYX_API_KEY"),
     sipConnectionId: requireEnv("TELNYX_SIP_CONNECTION_ID"),

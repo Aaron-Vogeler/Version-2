@@ -837,10 +837,25 @@ async function generateStreamingWithoutCache(
   // Initialize latency tracker for non-cached stream
   const latencyTracker = new LatencyTracker(MODEL_NAME, false, callId);
 
+  // Log the complete API request for debugging
+  const fullPrompt = `${systemPrompt}\n\n${dynamicInput}`;
+  console.log(`[GeminiCache] 📤 API Request to GEMINI:`);
+  console.log(`[GeminiCache] 📤 Model: ${MODEL_NAME}`);
+  console.log(`[GeminiCache] 📤 System prompt length: ${systemPrompt.length} chars`);
+  console.log(`[GeminiCache] 📤 Dynamic input length: ${dynamicInput.length} chars`);
+  console.log(`[GeminiCache] 📤 Full request JSON:`);
+  console.log(JSON.stringify({
+    model: MODEL_NAME,
+    systemPrompt: systemPrompt,
+    dynamicInput: dynamicInput,
+    temperature: temperatureToUse,
+    responseMimeType: "application/json"
+  }, null, 2));
+
   const response = await genai.models.generateContentStream({
     model: MODEL_NAME,
     contents: [
-      createUserContent([createPartFromText(`${systemPrompt}\n\n${dynamicInput}`)]),
+      createUserContent([createPartFromText(fullPrompt)]),
     ],
     config: {
       responseMimeType: "application/json",
