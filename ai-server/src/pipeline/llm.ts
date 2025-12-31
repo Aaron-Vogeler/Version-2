@@ -530,8 +530,9 @@ export async function generateRollingSummary(
     ];
 
     const startTime = Date.now();
-    // Use model from context if available, otherwise fall back to config
-    const modelToUse = context.model || config.groq.model;
+    // Rolling summary ALWAYS uses Groq client, so use a Groq-compatible model
+    // Don't use context.model which might be a Grok model
+    const modelToUse = config.groq.model;
     const response = await groq.chat.completions.create({
       model: modelToUse,
       messages: summaryMessages,
