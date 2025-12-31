@@ -586,27 +586,12 @@ export function formatTurnsForSummary(turns: Turn[]): string {
 }
 
 /**
- * Normalize transcript text for consistent formatting (improves cache hits).
- * - Trims leading/trailing whitespace
- * - Collapses multiple spaces to single space
- * - Normalizes line endings
- * - Lowercases for consistency (transcripts are typically lowercase anyway)
- */
-function normalizeTranscriptText(text: string): string {
-  if (!text) return "";
-  return text
-    .trim()                           // Remove leading/trailing whitespace
-    .replace(/\s+/g, " ")             // Collapse multiple spaces/newlines to single space
-    .toLowerCase();                    // Consistent casing (transcripts are usually lowercase)
-}
-
-/**
  * Format recent turns as a message history for the LLM prompt.
  * Maps speakers to chat roles (caller/ivr -> user, assistant -> assistant).
  * Uses [RECEIVER] label since the AI assistant is making an outbound call to them.
  *
- * IMPORTANT: Text is normalized for consistent formatting to improve xAI cache hits.
- * The prefix (system + early turns) should remain stable for cache to work.
+ * IMPORTANT: Messages are append-only - never reorder or modify existing messages.
+ * This is critical for xAI prompt caching (prefix matching).
  */
 export function formatTurnsAsMessages(
   turns: Turn[]
@@ -620,16 +605,9 @@ export function formatTurnsAsMessages(
       turn.speaker === "assistant"
         ? ""
         : "[RECEIVER] ";
-
-    // Normalize caller transcripts for consistent formatting (helps with prompt caching)
-    // Only normalize caller/ivr text (from STT), preserve assistant responses as-is
-    const text = turn.speaker === "assistant"
-      ? turn.text  // Keep assistant responses exactly as generated
-      : normalizeTranscriptText(turn.text);  // Normalize STT transcripts
-
     return {
       role,
-      content: `${speakerLabel}${text}`,
+      content: `${speakerLabel}${turn.text}`,
     };
   });
 }
