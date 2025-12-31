@@ -848,13 +848,16 @@ export async function generateAssistantReply(
   let rollingSummary: string | undefined;
   let recentTurnsCount = 0;
 
-  // Add context: recent turns first, then rolling summary at the END
+  // Add context: recent turns first, then ALL historical summaries at the END
   // This ordering is critical for xAI prompt caching - the prefix (system + early turns)
-  // should remain stable for cache hits. Rolling summary changes, so it goes LAST.
+  // should remain stable for cache hits.
+  //
+  // APPEND-ONLY BEHAVIOR: Summaries are added to history when generated and never
+  // moved or modified. This ensures stable message ordering for prompt caching.
   if (context?.callId) {
     const contextData = contextMgr.getContext(context.callId);
 
-    // Get rolling summary (will be added at the end, not here)
+    // Get rolling summary for logging purposes
     if (contextData?.rollingSummary) {
       rollingSummary = contextData.rollingSummary;
     }
@@ -865,14 +868,13 @@ export async function generateAssistantReply(
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
 
-    // Add rolling summary at the END (after turns) to not break prefix caching
-    // The summary changes frequently, so placing it last preserves cache hits
-    // on the system prompt + early turns prefix
-    if (rollingSummary) {
-      messages.push({
-        role: "user",
-        content: `CALL CONTEXT SUMMARY (for reference):\n${rollingSummary}`,
-      });
+    // Add ALL historical summaries at the END (append-only, never moved)
+    // Each summary stays in the position it was added - never reordered or modified
+    const summaryHistory = contextMgr.getSummaryHistory(context.callId);
+    if (summaryHistory.length > 0) {
+      const summaryMessages = contextMgr.formatSummaryHistoryAsMessages(summaryHistory);
+      messages.push(...summaryMessages);
+      console.log(`[LLM] 📋 Added ${summaryHistory.length} historical summaries to message context`);
     }
   } else {
     // No context available - add raw userText as fallback
