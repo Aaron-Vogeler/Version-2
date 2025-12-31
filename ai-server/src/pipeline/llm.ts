@@ -848,22 +848,32 @@ export async function generateAssistantReply(
   let rollingSummary: string | undefined;
   let recentTurnsCount = 0;
 
-  // Add rolling summary if available and non-empty
+  // Add context: recent turns first, then rolling summary at the END
+  // This ordering is critical for xAI prompt caching - the prefix (system + early turns)
+  // should remain stable for cache hits. Rolling summary changes, so it goes LAST.
   if (context?.callId) {
     const contextData = contextMgr.getContext(context.callId);
+
+    // Get rolling summary (will be added at the end, not here)
     if (contextData?.rollingSummary) {
       rollingSummary = contextData.rollingSummary;
-      messages.push({
-        role: "user",
-        content: `CALL CONTEXT SUMMARY:\n${contextData.rollingSummary}`,
-      });
     }
 
-    // Add recent turns from the sliding window
+    // Add recent turns from the sliding window FIRST (more stable for caching)
     const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
     recentTurnsCount = recentTurns.length;
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
+
+    // Add rolling summary at the END (after turns) to not break prefix caching
+    // The summary changes frequently, so placing it last preserves cache hits
+    // on the system prompt + early turns prefix
+    if (rollingSummary) {
+      messages.push({
+        role: "user",
+        content: `CALL CONTEXT SUMMARY (for reference):\n${rollingSummary}`,
+      });
+    }
   } else {
     // No context available - add raw userText as fallback
     messages.push({ role: "user", content: userText });
