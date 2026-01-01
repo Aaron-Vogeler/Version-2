@@ -212,7 +212,7 @@ const config = {
   // =============================================================================
   diarization: {
     // Enable Deepgram diarization for speaker change detection
-    enabled: getEnv("DIARIZATION_ENABLED", "true") === "true",
+    enabled: getEnv("DIARIZATION_ENABLED", "false") === "true",
     // Minimum time between speaker change events (ms) - prevents false positives from brief fluctuations
     debounceMs: getEnvInt("DIARIZATION_DEBOUNCE_MS", 2000),
     // Minimum confidence (0-1) for speaker change to trigger reclassification
