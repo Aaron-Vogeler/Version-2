@@ -6,10 +6,51 @@
  * No cross-call memory is persisted.
  */
 import config from "./config";
+import { randomUUID } from "crypto";
 import type { HumanDetectionState, ReceiverState } from "./pipeline/humanDetection";
 import { initializeHumanDetectionState } from "./pipeline/humanDetection";
 import type { MusicDetectionState, EnergyFloorConfig } from "./pipeline/energy-floor";
 import { EnergyFloorTracker } from "./pipeline/energy-floor";
+
+// ============================================================================
+// GROK CALL STATS - Accumulated token/cost tracking per call
+// ============================================================================
+
+/**
+ * Accumulated stats for Grok calls within a single phone call
+ */
+export interface GrokCallAccumulatedStats {
+  // Token counts
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalTokens: number;
+  totalCachedTokens: number;
+
+  // Cost tracking
+  totalCostUsd: number;
+  costSavedFromCaching: number;
+
+  // Call counts
+  grokCallCount: number;
+  cacheHitCount: number; // Number of calls with cache hits
+
+  // Timing
+  totalLatencyMs: number;
+  avgLatencyMs: number;
+  minLatencyMs: number;
+  maxLatencyMs: number;
+
+  // Model breakdown (model -> stats)
+  byModel: Record<string, {
+    callCount: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedTokens: number;
+    costUsd: number;
+    latencyMs: number;
+  }>;
+}
 
 /**
  * Represents a single turn in the conversation.
@@ -18,6 +59,17 @@ export interface Turn {
   speaker: "caller" | "agent" | "assistant" | "ivr";
   text: string;
   timestamp: string; // ISO timestamp
+}
+
+/**
+ * Represents a historical rolling summary snapshot.
+ * Used for append-only message history - summaries are added at the end
+ * and never moved or modified once placed.
+ */
+export interface SummaryHistoryEntry {
+  summary: string;
+  addedAtTurnIndex: number; // Turn index when this summary was generated
+  createdAt: string; // ISO timestamp
 }
 
 /**
@@ -206,6 +258,23 @@ export interface CallContext {
   diarizationMinConfidence?: number;
   /** Per-call audit logging for diarization */
   diarizationAuditLogging?: boolean;
+
+  // ============================================================================
+  // GROK API OPTIMIZATION - x-grok-conv-id for caching & call stats
+  // ============================================================================
+  /** UUID4 conversation ID for x-grok-conv-id header (improves cache hit rate) */
+  grokConversationId?: string;
+  /** Accumulated stats for all Grok calls during this phone call */
+  grokCallStats?: GrokCallAccumulatedStats;
+
+  // ============================================================================
+  // APPEND-ONLY SUMMARY HISTORY (for stable message ordering / cache hits)
+  // ============================================================================
+  /**
+   * History of rolling summaries - each summary is appended when generated
+   * and never moved or modified. This enables stable message prefixes for caching.
+   */
+  summaryHistory?: SummaryHistoryEntry[];
 }
 
 /**
@@ -266,7 +335,28 @@ export function getOrCreateContext(
       musicConfidence: 0,
       // Diarization state (speaker change detection)
       speakerChangeCount: 0,
+      // Grok API optimization - generate unique conversation ID for caching
+      grokConversationId: randomUUID(),
+      // Grok call stats accumulator
+      grokCallStats: {
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalTokens: 0,
+        totalCachedTokens: 0,
+        totalCostUsd: 0,
+        costSavedFromCaching: 0,
+        grokCallCount: 0,
+        cacheHitCount: 0,
+        totalLatencyMs: 0,
+        avgLatencyMs: 0,
+        minLatencyMs: Infinity,
+        maxLatencyMs: 0,
+        byModel: {},
+      },
+      // Append-only summary history for stable message ordering
+      summaryHistory: [],
     });
+    console.log(`[CONTEXT] Created new context for ${callId.slice(-8)} with grokConversationId: ${callContextStore.get(callId)!.grokConversationId}`);
   }
   return callContextStore.get(callId)!;
 }
@@ -364,6 +454,9 @@ export function appendTurn(
 /**
  * Update the rolling summary after a new batch of turns.
  * Call this after generating a new summary from the LLM.
+ *
+ * APPEND-ONLY BEHAVIOR: Each new summary is added to summaryHistory and never
+ * moved or modified. This enables stable message prefixes for prompt caching.
  */
 export function updateSummary(
   callId: string,
@@ -371,8 +464,22 @@ export function updateSummary(
   newLastSummaryUpdateTurnIndex: number
 ): void {
   const context = getOrCreateContext(callId);
+
+  // Update current rolling summary (for backwards compatibility)
   context.rollingSummary = newSummary;
   context.lastSummaryUpdateTurnIndex = newLastSummaryUpdateTurnIndex;
+
+  // APPEND-ONLY: Add to summary history - summaries are never moved or removed
+  if (!context.summaryHistory) {
+    context.summaryHistory = [];
+  }
+  context.summaryHistory.push({
+    summary: newSummary,
+    addedAtTurnIndex: newLastSummaryUpdateTurnIndex,
+    createdAt: new Date().toISOString(),
+  });
+
+  console.log(`[CONTEXT] Summary #${context.summaryHistory.length} added to history at turn ${newLastSummaryUpdateTurnIndex}`);
 }
 
 /**
@@ -420,6 +527,9 @@ export function getContext(callId: string): CallContext | undefined {
 export function clearContext(callId: string): void {
   const context = callContextStore.get(callId);
   if (context) {
+    // Log Grok end-of-call summary BEFORE clearing
+    logGrokEndOfCallSummary(callId);
+
     // Clean up timers
     if (context.ttsDebounceTimer) {
       clearTimeout(context.ttsDebounceTimer);
@@ -518,6 +628,9 @@ export function formatTurnsForSummary(turns: Turn[]): string {
  * Format recent turns as a message history for the LLM prompt.
  * Maps speakers to chat roles (caller/ivr -> user, assistant -> assistant).
  * Uses [RECEIVER] label since the AI assistant is making an outbound call to them.
+ *
+ * IMPORTANT: Messages are append-only - never reorder or modify existing messages.
+ * This is critical for xAI prompt caching (prefix matching).
  */
 export function formatTurnsAsMessages(
   turns: Turn[]
@@ -536,6 +649,257 @@ export function formatTurnsAsMessages(
       content: `${speakerLabel}${turn.text}`,
     };
   });
+}
+
+/**
+ * Get the summary history for a call.
+ * Returns all historical summaries in the order they were added (append-only).
+ */
+export function getSummaryHistory(callId: string): SummaryHistoryEntry[] {
+  const context = getContext(callId);
+  return context?.summaryHistory || [];
+}
+
+/**
+ * Format summary history as messages for the LLM prompt.
+ * Each historical summary becomes a user message with context label.
+ *
+ * IMPORTANT: Summaries are returned in the order they were added and should
+ * be appended to the message list WITHOUT reordering existing content.
+ */
+export function formatSummaryHistoryAsMessages(
+  summaryHistory: SummaryHistoryEntry[]
+): Array<{ role: "user"; content: string }> {
+  return summaryHistory.map((entry, index) => ({
+    role: "user" as const,
+    content: `[CALL SUMMARY #${index + 1}]\n${entry.summary}`,
+  }));
+}
+
+// ============================================================================
+// GROK CALL STATS FUNCTIONS
+// ============================================================================
+
+/**
+ * Accumulate stats from a single Grok API call into the call's running totals.
+ * Called after each Grok call completes.
+ */
+export function accumulateGrokCallStats(
+  callId: string,
+  model: string,
+  promptTokens: number,
+  completionTokens: number,
+  cachedTokens: number,
+  costUsd: number,
+  latencyMs: number
+): void {
+  const context = getContext(callId);
+  if (!context || !context.grokCallStats) {
+    console.warn(`[GROK-STATS] Cannot accumulate stats - context not found for ${callId.slice(-8)}`);
+    return;
+  }
+
+  const stats = context.grokCallStats;
+
+  // Update totals
+  stats.totalPromptTokens += promptTokens;
+  stats.totalCompletionTokens += completionTokens;
+  stats.totalTokens += promptTokens + completionTokens;
+  stats.totalCachedTokens += cachedTokens;
+  stats.totalCostUsd += costUsd;
+  stats.grokCallCount += 1;
+
+  // Track cache hits
+  if (cachedTokens > 0) {
+    stats.cacheHitCount += 1;
+    // Calculate cost saved: cached tokens are 75% cheaper
+    // Full price would be (cachedTokens / 1M) * inputPrice
+    // Cached price is (cachedTokens / 1M) * inputPrice * 0.25
+    // Savings = full - cached = (cachedTokens / 1M) * inputPrice * 0.75
+    const inputPricePerM = 2.0; // Default Grok pricing
+    const savings = (cachedTokens / 1_000_000) * inputPricePerM * 0.75;
+    stats.costSavedFromCaching += savings;
+  }
+
+  // Update latency stats
+  stats.totalLatencyMs += latencyMs;
+  stats.avgLatencyMs = stats.totalLatencyMs / stats.grokCallCount;
+  if (latencyMs < stats.minLatencyMs) stats.minLatencyMs = latencyMs;
+  if (latencyMs > stats.maxLatencyMs) stats.maxLatencyMs = latencyMs;
+
+  // Update per-model breakdown
+  if (!stats.byModel[model]) {
+    stats.byModel[model] = {
+      callCount: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cachedTokens: 0,
+      costUsd: 0,
+      latencyMs: 0,
+    };
+  }
+  const modelStats = stats.byModel[model];
+  modelStats.callCount += 1;
+  modelStats.promptTokens += promptTokens;
+  modelStats.completionTokens += completionTokens;
+  modelStats.totalTokens += promptTokens + completionTokens;
+  modelStats.cachedTokens += cachedTokens;
+  modelStats.costUsd += costUsd;
+  modelStats.latencyMs += latencyMs;
+
+  // Log running total
+  console.log(
+    `[GROK-STATS] 📊 Call ${stats.grokCallCount} | Running Total: ${stats.totalTokens.toLocaleString()} tokens, ` +
+    `$${stats.totalCostUsd.toFixed(6)} | Cached: ${stats.totalCachedTokens.toLocaleString()} (${stats.cacheHitCount} hits)`
+  );
+}
+
+/**
+ * Log comprehensive end-of-call summary for all Grok usage.
+ * Called when clearContext is invoked (call ends).
+ *
+ * Includes: call duration, token breakdown with costs, caching stats,
+ * performance metrics, and per-model breakdown.
+ */
+export function logGrokEndOfCallSummary(callId: string): void {
+  const context = getContext(callId);
+  if (!context || !context.grokCallStats || context.grokCallStats.grokCallCount === 0) {
+    return; // No Grok calls made during this call
+  }
+
+  const stats = context.grokCallStats;
+  const callIdShort = callId.slice(-8);
+  const endTime = new Date();
+
+  // Calculate call duration
+  let callDurationMs = 0;
+  let callDurationStr = "N/A";
+  if (context.initiatedAt) {
+    const startTime = new Date(context.initiatedAt);
+    callDurationMs = endTime.getTime() - startTime.getTime();
+    const durationSecs = Math.floor(callDurationMs / 1000);
+    const mins = Math.floor(durationSecs / 60);
+    const secs = durationSecs % 60;
+    callDurationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+  }
+
+  // Calculate input/output costs separately (using Grok 4.1 fast pricing: $2/1M input, $10/1M output)
+  const INPUT_PRICE_PER_M = 2.0;
+  const OUTPUT_PRICE_PER_M = 10.0;
+  const CACHED_DISCOUNT = 0.75; // 75% discount for cached tokens
+
+  const uncachedPromptTokens = stats.totalPromptTokens - stats.totalCachedTokens;
+  const inputCostFull = (uncachedPromptTokens / 1_000_000) * INPUT_PRICE_PER_M;
+  const inputCostCached = (stats.totalCachedTokens / 1_000_000) * INPUT_PRICE_PER_M * (1 - CACHED_DISCOUNT);
+  const totalInputCost = inputCostFull + inputCostCached;
+  const outputCost = (stats.totalCompletionTokens / 1_000_000) * OUTPUT_PRICE_PER_M;
+
+  // Calculate tokens per minute
+  const tokensPerMin = callDurationMs > 0
+    ? Math.round((stats.totalTokens / callDurationMs) * 60000)
+    : 0;
+  const promptTokensPerMin = callDurationMs > 0
+    ? Math.round((stats.totalPromptTokens / callDurationMs) * 60000)
+    : 0;
+  const completionTokensPerMin = callDurationMs > 0
+    ? Math.round((stats.totalCompletionTokens / callDurationMs) * 60000)
+    : 0;
+
+  console.log("\n");
+  console.log("╔════════════════════════════════════════════════════════════════════════════════╗");
+  console.log("║              GROK GRANT CALL - END OF CALL TOKEN/COST SUMMARY                  ║");
+  console.log("╠════════════════════════════════════════════════════════════════════════════════╣");
+  console.log(`║  Call ID: ...${callIdShort.padEnd(12)} │ Conv ID: ${(context.grokConversationId || "N/A").slice(0, 8)}...              ║`);
+  console.log(`║  Duration: ${callDurationStr.padEnd(10)}       │ Ended: ${endTime.toISOString().slice(11, 19)} UTC                 ║`);
+  console.log("╠════════════════════════════════════════════════════════════════════════════════╣");
+
+  // TOKEN BREAKDOWN TABLE
+  console.log("║                              TOKEN BREAKDOWN                                   ║");
+  console.log("╟────────────────────────────────────────────────────────────────────────────────╢");
+  console.log("║  Category          │    Tokens    │  Cost ($)  │  $/1K Tokens  │  Tokens/Min  ║");
+  console.log("╟────────────────────┼──────────────┼────────────┼───────────────┼──────────────╢");
+
+  const formatRow = (label: string, tokens: number, cost: number, perMin: number): string => {
+    const tokensStr = tokens.toLocaleString().padStart(10);
+    const costStr = cost.toFixed(6).padStart(10);
+    const per1kStr = tokens > 0 ? ((cost / tokens) * 1000).toFixed(4).padStart(11) : "N/A".padStart(11);
+    const perMinStr = perMin.toLocaleString().padStart(10);
+    return `║  ${label.padEnd(17)} │ ${tokensStr} │ ${costStr} │ ${per1kStr}   │ ${perMinStr} ║`;
+  };
+
+  console.log(formatRow("Prompt (Input)", stats.totalPromptTokens, totalInputCost, promptTokensPerMin));
+  console.log(formatRow("  - Uncached", uncachedPromptTokens, inputCostFull, 0));
+  console.log(formatRow("  - Cached", stats.totalCachedTokens, inputCostCached, 0));
+  console.log(formatRow("Completion (Out)", stats.totalCompletionTokens, outputCost, completionTokensPerMin));
+  console.log("╟────────────────────┼──────────────┼────────────┼───────────────┼──────────────╢");
+  console.log(formatRow("TOTAL", stats.totalTokens, stats.totalCostUsd, tokensPerMin));
+  console.log("╠════════════════════════════════════════════════════════════════════════════════╣");
+
+  // CACHING PERFORMANCE
+  console.log("║                            CACHING PERFORMANCE                                 ║");
+  console.log("╟────────────────────────────────────────────────────────────────────────────────╢");
+  const cacheHitRate = stats.grokCallCount > 0
+    ? (stats.cacheHitCount / stats.grokCallCount * 100).toFixed(1)
+    : "0.0";
+  const tokenCacheRate = stats.totalPromptTokens > 0
+    ? (stats.totalCachedTokens / stats.totalPromptTokens * 100).toFixed(1)
+    : "0.0";
+  const wouldHavePaid = stats.totalCostUsd + stats.costSavedFromCaching;
+  const savingsPercent = wouldHavePaid > 0
+    ? (stats.costSavedFromCaching / wouldHavePaid * 100).toFixed(1)
+    : "0.0";
+
+  console.log(`║  Cache Hit Rate:    ${cacheHitRate.padStart(6)}% of calls (${stats.cacheHitCount}/${stats.grokCallCount})                               ║`);
+  console.log(`║  Token Cache Rate:  ${tokenCacheRate.padStart(6)}% of prompt tokens cached                            ║`);
+  console.log(`║  Cost Without Cache: $${wouldHavePaid.toFixed(6).padStart(10)}                                          ║`);
+  console.log(`║  Cost With Cache:    $${stats.totalCostUsd.toFixed(6).padStart(10)}                                          ║`);
+  console.log(`║  SAVINGS:            $${stats.costSavedFromCaching.toFixed(6).padStart(10)} (${savingsPercent}%)                                 ║`);
+  console.log("╠════════════════════════════════════════════════════════════════════════════════╣");
+
+  // API CALL STATS
+  console.log("║                              API CALL STATS                                    ║");
+  console.log("╟────────────────────────────────────────────────────────────────────────────────╢");
+  console.log(`║  Total API Calls:   ${stats.grokCallCount.toString().padStart(6)}                                                    ║`);
+  console.log(`║  Total Latency:     ${stats.totalLatencyMs.toLocaleString().padStart(6)}ms                                                ║`);
+  console.log(`║  Avg Latency:       ${stats.avgLatencyMs.toFixed(0).padStart(6)}ms                                                ║`);
+  console.log(`║  Min Latency:       ${(stats.minLatencyMs === Infinity ? 'N/A' : stats.minLatencyMs + 'ms').padStart(6)}                                                ║`);
+  console.log(`║  Max Latency:       ${(stats.maxLatencyMs + 'ms').padStart(6)}                                                ║`);
+  const avgTokensPerSecond = stats.totalLatencyMs > 0
+    ? (stats.totalCompletionTokens / (stats.totalLatencyMs / 1000)).toFixed(1)
+    : "0.0";
+  console.log(`║  Avg Output Speed:  ${avgTokensPerSecond.padStart(6)} tokens/sec                                       ║`);
+
+  // SUMMARY HISTORY
+  const summaryCount = context.summaryHistory?.length || 0;
+  if (summaryCount > 0) {
+    console.log("╠════════════════════════════════════════════════════════════════════════════════╣");
+    console.log("║                            ROLLING SUMMARIES                                   ║");
+    console.log("╟────────────────────────────────────────────────────────────────────────────────╢");
+    console.log(`║  Summaries Generated: ${summaryCount.toString().padStart(4)}                                                     ║`);
+    console.log(`║  Turn Count:          ${context.turns.length.toString().padStart(4)}                                                     ║`);
+  }
+
+  // PER-MODEL BREAKDOWN
+  const modelNames = Object.keys(stats.byModel);
+  if (modelNames.length > 0) {
+    console.log("╠════════════════════════════════════════════════════════════════════════════════╣");
+    console.log("║                            PER-MODEL BREAKDOWN                                 ║");
+    console.log("╟────────────────────────────────────────────────────────────────────────────────╢");
+    for (const modelName of modelNames) {
+      const m = stats.byModel[modelName];
+      const modelShort = modelName.length > 30 ? modelName.slice(0, 27) + "..." : modelName;
+      console.log(`║  ${modelShort.padEnd(30)}                                             ║`);
+      console.log(`║    Calls: ${m.callCount.toString().padStart(4)} │ Tokens: ${m.totalTokens.toLocaleString().padStart(8)} │ Cost: $${m.costUsd.toFixed(4).padStart(8)} │ Latency: ${(m.latencyMs / m.callCount).toFixed(0).padStart(5)}ms  ║`);
+    }
+  }
+
+  console.log("╠════════════════════════════════════════════════════════════════════════════════╣");
+  console.log("║                               FINAL TOTALS                                     ║");
+  console.log("╟────────────────────────────────────────────────────────────────────────────────╢");
+  console.log(`║   ${stats.grokCallCount} API calls │ ${stats.totalTokens.toLocaleString()} tokens │ $${stats.totalCostUsd.toFixed(4)} spent │ $${stats.costSavedFromCaching.toFixed(4)} saved     ║`);
+  console.log("╚════════════════════════════════════════════════════════════════════════════════╝");
+  console.log("\n");
 }
 
 export { defaultConfig as DEFAULT_CONFIG };

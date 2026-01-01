@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import config from "../config";
 import * as contextMgr from "../callContextManager";
+import { accumulateGrokCallStats } from "../callContextManager";
 import { insertLlmLog, insertUsageCostLog, calculateXaiCost, calculateGroqCost } from "../utils/supabase";
 import {
   buildClassificationPrompt,
@@ -17,6 +18,286 @@ import {
   type EarlyTtsCallback as CacheEarlyTtsCallback,
 } from "../lib/geminiCache";
 import { LatencyTracker } from "../lib/latencyLogger";
+
+// ============================================================================
+// GROK GRANT CALL LOGGING - Extensive logging for fly.io visibility
+// ============================================================================
+
+/**
+ * Detailed message breakdown for logging
+ */
+interface MessageStats {
+  index: number;
+  role: string;
+  charCount: number;
+  wordCount: number;
+  estimatedTokens: number;
+  preview: string;
+}
+
+/**
+ * Comprehensive call statistics for logging
+ */
+interface GrokCallStats {
+  // Input stats
+  totalInputChars: number;
+  totalInputWords: number;
+  estimatedInputTokens: number;
+  messageCount: number;
+  messageBreakdown: MessageStats[];
+
+  // Output stats
+  outputChars: number;
+  outputWords: number;
+  estimatedOutputTokens: number;
+
+  // Actual token usage from API
+  actualPromptTokens: number;
+  actualCompletionTokens: number;
+  actualTotalTokens: number;
+
+  // Prompt caching stats
+  cachedTokens: number;
+  cacheHitRate: number; // percentage
+  tokensSaved: number;
+
+  // Timing
+  latencyMs: number;
+  tokensPerSecond: number;
+}
+
+/**
+ * Estimate token count from text (rough approximation: ~4 chars per token for English)
+ */
+function estimateTokenCount(text: string): number {
+  if (!text) return 0;
+  // More accurate estimation: words + punctuation + whitespace handling
+  const words = text.split(/\s+/).filter(w => w.length > 0).length;
+  const chars = text.length;
+  // Average of word-based (1.3 tokens/word) and char-based (4 chars/token)
+  return Math.ceil((words * 1.3 + chars / 4) / 2);
+}
+
+/**
+ * Count words in text
+ */
+function countWords(text: string): number {
+  if (!text) return 0;
+  return text.split(/\s+/).filter(w => w.length > 0).length;
+}
+
+/**
+ * Generate a preview of text (first N chars with ellipsis)
+ */
+function textPreview(text: string, maxLength: number = 100): string {
+  if (!text) return "(empty)";
+  if (text.length <= maxLength) return text.replace(/\n/g, "\\n");
+  return text.substring(0, maxLength).replace(/\n/g, "\\n") + "...";
+}
+
+/**
+ * Log extensive details for a Grok grant call
+ * Provides per-message breakdown and call totals for fly.io visibility
+ */
+function logGrokGrantCallDetails(
+  model: string,
+  messages: Array<{ role: string; content: string }>,
+  response: string,
+  usage: any,
+  latencyMs: number,
+  context?: { callId?: string; goal?: string }
+): GrokCallStats {
+  const callId = context?.callId ? `...${context.callId.slice(-8)}` : "no-call-id";
+  const isGrok41Fast = model.includes("grok-4") && (model.includes("fast") || !model.includes("reasoning"));
+
+  console.log("\n" + "=".repeat(80));
+  console.log(`[GROK-GRANT] 🚀 GROK GRANT CALL LOG - ${new Date().toISOString()}`);
+  console.log(`[GROK-GRANT] 📞 Call ID: ${callId}`);
+  console.log(`[GROK-GRANT] 🤖 Model: ${model}${isGrok41Fast ? " (FAST NON-REASONING)" : ""}`);
+  if (context?.goal) {
+    console.log(`[GROK-GRANT] 🎯 Goal: ${textPreview(context.goal, 200)}`);
+  }
+  console.log("=".repeat(80));
+
+  // -------------------------------------------------------------------------
+  // PER-MESSAGE BREAKDOWN
+  // -------------------------------------------------------------------------
+  console.log("\n" + "-".repeat(40));
+  console.log("[GROK-GRANT] 📨 INPUT MESSAGES BREAKDOWN");
+  console.log("-".repeat(40));
+
+  let totalInputChars = 0;
+  let totalInputWords = 0;
+  let estimatedInputTokens = 0;
+  const messageBreakdown: MessageStats[] = [];
+
+  messages.forEach((msg, idx) => {
+    const chars = msg.content.length;
+    const words = countWords(msg.content);
+    const estTokens = estimateTokenCount(msg.content);
+
+    totalInputChars += chars;
+    totalInputWords += words;
+    estimatedInputTokens += estTokens;
+
+    const stats: MessageStats = {
+      index: idx,
+      role: msg.role,
+      charCount: chars,
+      wordCount: words,
+      estimatedTokens: estTokens,
+      preview: textPreview(msg.content, 150)
+    };
+    messageBreakdown.push(stats);
+
+    // Log each message with role-specific emoji
+    const roleEmoji = msg.role === "system" ? "⚙️" : msg.role === "user" ? "👤" : "🤖";
+    console.log(`\n[GROK-GRANT] ${roleEmoji} Message [${idx}] - ${msg.role.toUpperCase()}`);
+    console.log(`[GROK-GRANT]    📏 Characters: ${chars.toLocaleString()}`);
+    console.log(`[GROK-GRANT]    📝 Words: ${words.toLocaleString()}`);
+    console.log(`[GROK-GRANT]    🔢 Est. Tokens: ${estTokens.toLocaleString()}`);
+    console.log(`[GROK-GRANT]    📄 Preview: ${stats.preview}`);
+
+    // For system prompt, log additional details
+    if (msg.role === "system") {
+      console.log(`[GROK-GRANT]    📋 Full System Prompt Length: ${chars.toLocaleString()} chars`);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // INPUT TOTALS
+  // -------------------------------------------------------------------------
+  console.log("\n" + "-".repeat(40));
+  console.log("[GROK-GRANT] 📊 INPUT TOTALS");
+  console.log("-".repeat(40));
+  console.log(`[GROK-GRANT] 📨 Total Messages: ${messages.length}`);
+  console.log(`[GROK-GRANT] 📏 Total Input Characters: ${totalInputChars.toLocaleString()}`);
+  console.log(`[GROK-GRANT] 📝 Total Input Words: ${totalInputWords.toLocaleString()}`);
+  console.log(`[GROK-GRANT] 🔢 Estimated Input Tokens: ${estimatedInputTokens.toLocaleString()}`);
+
+  // -------------------------------------------------------------------------
+  // OUTPUT DETAILS
+  // -------------------------------------------------------------------------
+  console.log("\n" + "-".repeat(40));
+  console.log("[GROK-GRANT] 📤 OUTPUT DETAILS");
+  console.log("-".repeat(40));
+
+  const outputChars = response.length;
+  const outputWords = countWords(response);
+  const estimatedOutputTokens = estimateTokenCount(response);
+
+  console.log(`[GROK-GRANT] 📏 Output Characters: ${outputChars.toLocaleString()}`);
+  console.log(`[GROK-GRANT] 📝 Output Words: ${outputWords.toLocaleString()}`);
+  console.log(`[GROK-GRANT] 🔢 Estimated Output Tokens: ${estimatedOutputTokens.toLocaleString()}`);
+  console.log(`[GROK-GRANT] 📄 Output Preview: ${textPreview(response, 300)}`);
+
+  // -------------------------------------------------------------------------
+  // ACTUAL TOKEN USAGE FROM API
+  // -------------------------------------------------------------------------
+  console.log("\n" + "-".repeat(40));
+  console.log("[GROK-GRANT] 🔢 ACTUAL TOKEN USAGE (FROM API)");
+  console.log("-".repeat(40));
+
+  const actualPromptTokens = usage?.prompt_tokens || 0;
+  const actualCompletionTokens = usage?.completion_tokens || 0;
+  const actualTotalTokens = usage?.total_tokens || 0;
+
+  console.log(`[GROK-GRANT] ➡️  Prompt Tokens: ${actualPromptTokens.toLocaleString()}`);
+  console.log(`[GROK-GRANT] ⬅️  Completion Tokens: ${actualCompletionTokens.toLocaleString()}`);
+  console.log(`[GROK-GRANT] 📊 Total Tokens: ${actualTotalTokens.toLocaleString()}`);
+
+  // Token estimation accuracy
+  if (actualPromptTokens > 0) {
+    const estimationAccuracy = ((estimatedInputTokens / actualPromptTokens) * 100).toFixed(1);
+    console.log(`[GROK-GRANT] 📐 Estimation Accuracy: ${estimationAccuracy}% (estimated/actual)`);
+  }
+
+  // -------------------------------------------------------------------------
+  // PROMPT CACHING STATS
+  // -------------------------------------------------------------------------
+  console.log("\n" + "-".repeat(40));
+  console.log("[GROK-GRANT] 💾 PROMPT CACHING STATS");
+  console.log("-".repeat(40));
+
+  const usageDetails = usage?.prompt_tokens_details;
+  const cachedTokens = usageDetails?.cached_tokens || 0;
+  const cacheHitRate = actualPromptTokens > 0 ? (cachedTokens / actualPromptTokens) * 100 : 0;
+  const tokensSaved = cachedTokens; // Cached tokens don't count against full input pricing
+
+  if (cachedTokens > 0) {
+    console.log(`[GROK-GRANT] ✅ CACHE HIT DETECTED!`);
+    console.log(`[GROK-GRANT] 💾 Cached Tokens: ${cachedTokens.toLocaleString()}`);
+    console.log(`[GROK-GRANT] 📈 Cache Hit Rate: ${cacheHitRate.toFixed(1)}%`);
+    console.log(`[GROK-GRANT] 💰 Tokens Saved (75% discount): ${tokensSaved.toLocaleString()}`);
+
+    // Calculate estimated cost savings
+    // Grok pricing: ~$2/1M input tokens, cached at 25% = $0.50/1M
+    const fullCost = (tokensSaved / 1_000_000) * 2.0;
+    const cachedCost = (tokensSaved / 1_000_000) * 0.5;
+    const savings = fullCost - cachedCost;
+    console.log(`[GROK-GRANT] 💵 Estimated Savings: $${savings.toFixed(6)} (from $${fullCost.toFixed(6)} to $${cachedCost.toFixed(6)})`);
+  } else {
+    console.log(`[GROK-GRANT] ❌ No cache hit - all tokens processed fresh`);
+    console.log(`[GROK-GRANT] 💡 Tip: Repeated calls with same system prompt may enable caching`);
+  }
+
+  // Log full usage details if available
+  if (usageDetails) {
+    console.log(`[GROK-GRANT] 📋 Full Usage Details: ${JSON.stringify(usageDetails)}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // PERFORMANCE METRICS
+  // -------------------------------------------------------------------------
+  console.log("\n" + "-".repeat(40));
+  console.log("[GROK-GRANT] ⚡ PERFORMANCE METRICS");
+  console.log("-".repeat(40));
+
+  const tokensPerSecond = latencyMs > 0 ? (actualCompletionTokens / (latencyMs / 1000)) : 0;
+
+  console.log(`[GROK-GRANT] ⏱️  Latency: ${latencyMs.toLocaleString()}ms`);
+  console.log(`[GROK-GRANT] 🚀 Output Speed: ${tokensPerSecond.toFixed(1)} tokens/sec`);
+  console.log(`[GROK-GRANT] 📊 Chars/Second: ${(outputChars / (latencyMs / 1000)).toFixed(1)}`);
+
+  // Time breakdown estimation
+  const estimatedNetworkTime = 50; // ms estimate
+  const estimatedProcessingTime = latencyMs - estimatedNetworkTime;
+  console.log(`[GROK-GRANT] 🌐 Est. Network Overhead: ~${estimatedNetworkTime}ms`);
+  console.log(`[GROK-GRANT] 🧠 Est. Model Processing: ~${estimatedProcessingTime}ms`);
+
+  // -------------------------------------------------------------------------
+  // CALL SUMMARY
+  // -------------------------------------------------------------------------
+  console.log("\n" + "=".repeat(80));
+  console.log("[GROK-GRANT] 📋 CALL SUMMARY");
+  console.log("=".repeat(80));
+  console.log(`[GROK-GRANT] 🤖 Model: ${model}`);
+  console.log(`[GROK-GRANT] 📨 Messages: ${messages.length} | Input: ${actualPromptTokens.toLocaleString()} tokens`);
+  console.log(`[GROK-GRANT] 📤 Output: ${actualCompletionTokens.toLocaleString()} tokens (${outputChars.toLocaleString()} chars)`);
+  console.log(`[GROK-GRANT] 💾 Cached: ${cachedTokens.toLocaleString()} tokens (${cacheHitRate.toFixed(1)}% hit rate)`);
+  console.log(`[GROK-GRANT] ⏱️  Latency: ${latencyMs}ms | Speed: ${tokensPerSecond.toFixed(1)} tok/s`);
+  console.log("=".repeat(80) + "\n");
+
+  // Return stats for potential further use
+  return {
+    totalInputChars,
+    totalInputWords,
+    estimatedInputTokens,
+    messageCount: messages.length,
+    messageBreakdown,
+    outputChars,
+    outputWords,
+    estimatedOutputTokens,
+    actualPromptTokens,
+    actualCompletionTokens,
+    actualTotalTokens,
+    cachedTokens,
+    cacheHitRate,
+    tokensSaved,
+    latencyMs,
+    tokensPerSecond
+  };
+}
 
 // Create Groq client configured with API key and base URL
 const groq = new OpenAI({
@@ -249,8 +530,9 @@ export async function generateRollingSummary(
     ];
 
     const startTime = Date.now();
-    // Use model from context if available, otherwise fall back to config
-    const modelToUse = context.model || config.groq.model;
+    // Rolling summary ALWAYS uses Groq client, so use a Groq-compatible model
+    // Don't use context.model which might be a Grok model
+    const modelToUse = config.groq.model;
     const response = await groq.chat.completions.create({
       model: modelToUse,
       messages: summaryMessages,
@@ -566,22 +848,34 @@ export async function generateAssistantReply(
   let rollingSummary: string | undefined;
   let recentTurnsCount = 0;
 
-  // Add rolling summary if available and non-empty
+  // Add context: recent turns first, then ALL historical summaries at the END
+  // This ordering is critical for xAI prompt caching - the prefix (system + early turns)
+  // should remain stable for cache hits.
+  //
+  // APPEND-ONLY BEHAVIOR: Summaries are added to history when generated and never
+  // moved or modified. This ensures stable message ordering for prompt caching.
   if (context?.callId) {
     const contextData = contextMgr.getContext(context.callId);
+
+    // Get rolling summary for logging purposes
     if (contextData?.rollingSummary) {
       rollingSummary = contextData.rollingSummary;
-      messages.push({
-        role: "user",
-        content: `CALL CONTEXT SUMMARY:\n${contextData.rollingSummary}`,
-      });
     }
 
-    // Add recent turns from the sliding window
+    // Add recent turns from the sliding window FIRST (more stable for caching)
     const recentTurns = contextMgr.getRecentTurns(context.callId, 12);
     recentTurnsCount = recentTurns.length;
     const recentMessages = contextMgr.formatTurnsAsMessages(recentTurns);
     messages.push(...recentMessages);
+
+    // Add ALL historical summaries at the END (append-only, never moved)
+    // Each summary stays in the position it was added - never reordered or modified
+    const summaryHistory = contextMgr.getSummaryHistory(context.callId);
+    if (summaryHistory.length > 0) {
+      const summaryMessages = contextMgr.formatSummaryHistoryAsMessages(summaryHistory);
+      messages.push(...summaryMessages);
+      console.log(`[LLM] 📋 Added ${summaryHistory.length} historical summaries to message context`);
+    }
   } else {
     // No context available - add raw userText as fallback
     messages.push({ role: "user", content: userText });
@@ -778,7 +1072,56 @@ async function generateWithOpenAICompatible(
   console.log(`[LLM] 📤 Full request JSON:`);
   console.log(JSON.stringify(apiParams, null, 2));
 
-  const response = await client.chat.completions.create(apiParams);
+  // =========================================================================
+  // PRE-CALL GROK LOGGING: Log extensive input details before API call
+  // =========================================================================
+  // Get grokConversationId for x-grok-conv-id header (improves cache hit rate)
+  let grokConversationId: string | undefined;
+  if (provider === "xai" && context?.callId) {
+    const callContext = contextMgr.getContext(context.callId);
+    grokConversationId = callContext?.grokConversationId;
+  }
+
+  if (provider === "xai") {
+    const isGrok41Fast = modelToUse.includes("grok-4") && (modelToUse.includes("fast") || !modelToUse.includes("reasoning"));
+    console.log("\n" + "~".repeat(80));
+    console.log(`[GROK-GRANT] 📤 PRE-CALL: Sending request to xAI (${modelToUse})`);
+    console.log(`[GROK-GRANT] 🏷️  Model Type: ${isGrok41Fast ? "GROK 4.1 FAST (NON-REASONING)" : modelToUse}`);
+    if (grokConversationId) {
+      console.log(`[GROK-GRANT] 🔑 x-grok-conv-id: ${grokConversationId}`);
+    }
+    console.log(`[GROK-GRANT] 📊 Request Parameters:`);
+    console.log(`[GROK-GRANT]    🌡️  Temperature: ${temperature}`);
+    console.log(`[GROK-GRANT]    📏 Max Tokens: ${maxTokens}`);
+    console.log(`[GROK-GRANT]    🎯 Top P: ${topP}`);
+    console.log(`[GROK-GRANT]    📦 JSON Mode: ${jsonMode}`);
+    console.log(`[GROK-GRANT] 📨 Message Count: ${messages.length}`);
+
+    // Calculate total input size
+    let totalChars = 0;
+    let totalWords = 0;
+    messages.forEach((msg) => {
+      totalChars += msg.content.length;
+      totalWords += msg.content.split(/\s+/).filter(w => w.length > 0).length;
+    });
+    const estimatedTokens = Math.ceil((totalWords * 1.3 + totalChars / 4) / 2);
+
+    console.log(`[GROK-GRANT] 📏 Total Input: ${totalChars.toLocaleString()} chars, ${totalWords.toLocaleString()} words`);
+    console.log(`[GROK-GRANT] 🔢 Estimated Input Tokens: ~${estimatedTokens.toLocaleString()}`);
+    console.log(`[GROK-GRANT] ⏳ Sending request to xAI API...`);
+    console.log("~".repeat(80) + "\n");
+  }
+
+  // Build request options with x-grok-conv-id header for xAI (improves cache hit rate)
+  const requestOptions: any = {};
+  if (provider === "xai" && grokConversationId) {
+    requestOptions.headers = {
+      "x-grok-conv-id": grokConversationId,
+    };
+    console.log(`[GROK-GRANT] 🔑 Sending x-grok-conv-id header: ${grokConversationId}`);
+  }
+
+  const response = await client.chat.completions.create(apiParams, requestOptions);
   const latencyMs = Date.now() - startTime;
 
   const assistantResponse = response.choices[0]?.message?.content || "";
@@ -798,6 +1141,21 @@ async function generateWithOpenAICompatible(
     console.log(
       `[LLM] 📊 ${provider.toUpperCase()} usage: prompt=${promptTokens}, completion=${completionTokens}, ` +
       `total=${totalTokens}${cachedTokens > 0 ? `, cached=${cachedTokens}` : ''}`
+    );
+  }
+
+  // =========================================================================
+  // EXTENSIVE GROK GRANT CALL LOGGING (for fly.io visibility)
+  // Log detailed per-message breakdown and call totals for Grok models
+  // =========================================================================
+  if (provider === "xai") {
+    logGrokGrantCallDetails(
+      modelToUse,
+      messages,
+      assistantResponse,
+      usage,
+      latencyMs,
+      { callId: context?.callId, goal: context?.goal }
     );
   }
 
@@ -828,6 +1186,19 @@ async function generateWithOpenAICompatible(
       let cost: number;
       if (provider === "xai") {
         cost = calculateXaiCost(promptTokens, completionTokens, modelToUse, cachedTokens);
+
+        // =====================================================================
+        // ACCUMULATE GROK STATS for end-of-call summary
+        // =====================================================================
+        accumulateGrokCallStats(
+          context.callId,
+          modelToUse,
+          promptTokens,
+          completionTokens,
+          cachedTokens,
+          cost,
+          latencyMs
+        );
       } else if (provider === "deepinfra") {
         // DeepInfra Mistral pricing (approximate): $0.10/M input, $0.10/M output
         cost = (promptTokens * 0.0001 + completionTokens * 0.0001) / 1000;

@@ -543,8 +543,15 @@ export const DEEPGRAM_PRICING = {
 /**
  * xAI (Grok) pricing per 1M tokens (as of Dec 2024)
  * See: https://docs.x.ai/docs/models#models-and-pricing
+ * Grok 4.1 Fast (non-reasoning) pricing estimates based on xAI tier structure
  */
-export const XAI_PRICING = {
+export const XAI_PRICING: Record<string, { input: number; output: number }> = {
+  // Grok 4.x models (fast/non-reasoning variants)
+  "grok-4-1-fast": { input: 2.00, output: 10.00 },
+  "grok-4-1-fast-non-reasoning": { input: 2.00, output: 10.00 },
+  "grok-4.1-fast": { input: 2.00, output: 10.00 },
+  "grok-4.1-fast-non-reasoning": { input: 2.00, output: 10.00 },
+  // Grok 2.x models
   "grok-beta": { input: 5.00, output: 15.00 }, // $5/1M input, $15/1M output
   "grok-2-latest": { input: 2.00, output: 10.00 }, // $2/1M input, $10/1M output
   "grok-2": { input: 2.00, output: 10.00 },
@@ -591,7 +598,7 @@ export function calculateXaiCost(
   model: string,
   cachedTokens: number = 0
 ): number {
-  const pricing = XAI_PRICING[model as keyof typeof XAI_PRICING] || XAI_PRICING.default;
+  const pricing = XAI_PRICING[model] || XAI_PRICING.default;
   // Cached tokens are typically billed at 25% of input rate (0 for xAI currently)
   const effectiveInputTokens = promptTokens - cachedTokens;
   const inputCost = (effectiveInputTokens / 1_000_000) * pricing.input;
