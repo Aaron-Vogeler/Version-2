@@ -921,17 +921,21 @@ export function setTelnyxTelephonyCost(
   if (context) {
     context.telnyxTelephonyCost = costUsd;
     context.telnyxBilledSeconds = billedSeconds;
-    console.log(`[TELNYX-COST] 📞 Telephony cost set: $${costUsd?.toFixed(6) || 'N/A'}, ${billedSeconds}s billed`);
+    const costStr = typeof costUsd === 'number' && !isNaN(costUsd) ? `$${costUsd.toFixed(6)}` : 'N/A';
+    console.log(`[TELNYX-COST] 📞 Telephony cost set: ${costStr}, ${billedSeconds}s billed`);
     return;
   }
 
   // Context already cleared - check the ended calls cache
   const cachedData = endedCallsCache.get(callId);
   if (cachedData && !cachedData.summaryLogged) {
-    console.log(`[TELNYX-COST] 📞 Received telephony cost after call ended: $${costUsd?.toFixed(6) || 'N/A'}, ${billedSeconds}s billed`);
+    // Ensure we have valid numbers
+    const costNum = typeof costUsd === 'number' && !isNaN(costUsd) ? costUsd : 0;
+    const billedNum = typeof billedSeconds === 'number' && !isNaN(billedSeconds) ? billedSeconds : 0;
+    console.log(`[TELNYX-COST] 📞 Received telephony cost after call ended: $${costNum.toFixed(6)}, ${billedNum}s billed`);
 
     // Log the comprehensive summary with the telephony cost
-    logEndOfCallCostSummaryFromCache(callId, cachedData, costUsd, billedSeconds);
+    logEndOfCallCostSummaryFromCache(callId, cachedData, costNum, billedNum);
 
     // Mark as logged and clean up
     cachedData.summaryLogged = true;

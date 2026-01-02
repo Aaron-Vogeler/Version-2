@@ -1553,8 +1553,11 @@ app.post("/webhooks/telnyx", async (req, res) => {
       console.log("💰 Call cost received:", totalCost, currency);
 
       // Update CallContext with telephony cost (for end-of-call summary)
+      // Convert to numbers in case webhook payload sends strings
       if (currency === "USD" && totalCost !== null) {
-        contextMgr.setTelnyxTelephonyCost(callControlId, totalCost, billedSeconds || 0);
+        const costNum = typeof totalCost === 'string' ? parseFloat(totalCost) : totalCost;
+        const billedNum = typeof billedSeconds === 'string' ? parseFloat(billedSeconds) : (billedSeconds || 0);
+        contextMgr.setTelnyxTelephonyCost(callControlId, costNum, billedNum);
       }
 
       // Log to Supabase
