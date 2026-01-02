@@ -39,9 +39,22 @@ console.log = (...args: any[]) => {
     originalConsoleLog(...args);
     return;
   }
-  // Only show LLM-related logs
+  // Only show important logs (LLM, streaming, cost summaries)
   const firstArg = String(args[0] || "");
-  if (firstArg.startsWith("[LLM]") || firstArg.startsWith("[STREAM]") || firstArg.startsWith("[GeminiCache]")) {
+  if (
+    firstArg.startsWith("[LLM]") ||
+    firstArg.startsWith("[STREAM]") ||
+    firstArg.startsWith("[GeminiCache]") ||
+    firstArg.startsWith("[COST]") ||
+    firstArg.startsWith("[GROK-STATS]") ||
+    firstArg.startsWith("[TTS-STATS]") ||
+    firstArg.startsWith("[TELNYX-COST]") ||
+    firstArg.startsWith("╔") ||  // Cost summary box characters
+    firstArg.startsWith("║") ||
+    firstArg.startsWith("╟") ||
+    firstArg.startsWith("╠") ||
+    firstArg.startsWith("╚")
+  ) {
     originalConsoleLog(...args);
   }
   // Everything else is filtered out
