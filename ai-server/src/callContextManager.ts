@@ -567,15 +567,14 @@ export function getContextByCallControlId(callControlId: string): CallContext | 
 
 /**
  * Clear a CallContext (call cleanup).
+ * NOTE: logCallCostSummary is called from cleanupCallState in index.ts
+ * BEFORE deepgramStartedAt is cleared, to ensure duration data is available.
  */
 export function clearContext(callId: string): void {
   const context = callContextStore.get(callId);
   if (context) {
     // Log Grok end-of-call summary BEFORE clearing
     logGrokEndOfCallSummary(callId);
-
-    // Log comprehensive cost summary BEFORE clearing
-    logCallCostSummary(callId);
 
     // Clean up timers
     if (context.ttsDebounceTimer) {

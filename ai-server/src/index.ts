@@ -1164,6 +1164,12 @@ function cleanupCallState(callContext: CallContext): void {
       });
     }
 
+    // Log comprehensive cost summary BEFORE clearing deepgramStartedAt
+    // (must be done here while duration info is still available)
+    if (callContext.callId) {
+      contextMgr.logCallCostSummary(callContext.callId);
+    }
+
     try {
       // Try to send CloseStream if the SDK requires it
       if (typeof callContext.deepgramSocket.finish === "function") {
