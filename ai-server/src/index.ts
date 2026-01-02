@@ -39,9 +39,22 @@ console.log = (...args: any[]) => {
     originalConsoleLog(...args);
     return;
   }
-  // Only show LLM-related logs
+  // Only show important logs (LLM, streaming, cost summaries)
   const firstArg = String(args[0] || "");
-  if (firstArg.startsWith("[LLM]") || firstArg.startsWith("[STREAM]") || firstArg.startsWith("[GeminiCache]")) {
+  if (
+    firstArg.startsWith("[LLM]") ||
+    firstArg.startsWith("[STREAM]") ||
+    firstArg.startsWith("[GeminiCache]") ||
+    firstArg.startsWith("[COST]") ||
+    firstArg.startsWith("[GROK-STATS]") ||
+    firstArg.startsWith("[TTS-STATS]") ||
+    firstArg.startsWith("[TELNYX-COST]") ||
+    firstArg.startsWith("╔") ||  // Cost summary box characters
+    firstArg.startsWith("║") ||
+    firstArg.startsWith("╟") ||
+    firstArg.startsWith("╠") ||
+    firstArg.startsWith("╚")
+  ) {
     originalConsoleLog(...args);
   }
   // Everything else is filtered out
@@ -945,6 +958,11 @@ async function sendTtsResponse(
       await synthesizeSpeech(aiText, callContext.callControlId, callContext.ttsVoiceId);
     }
 
+    // Track TTS stats for cost summary (track total characters regardless of chunking)
+    if (callContext.callId) {
+      contextMgr.accumulateTtsStats(callContext.callId, aiText.length);
+    }
+
     // Log what TTS will actually speak (only logged after successful TTS API call)
     console.log("🤖 AI (speaking):", aiText);
 
@@ -1144,6 +1162,12 @@ function cleanupCallState(callContext: CallContext): void {
       }).catch((err) => {
         console.error("[DEEPGRAM] Failed to log STT cost:", err);
       });
+    }
+
+    // Log comprehensive cost summary BEFORE clearing deepgramStartedAt
+    // (must be done here while duration info is still available)
+    if (callContext.callId) {
+      contextMgr.logCallCostSummary(callContext.callId);
     }
 
     try {
@@ -1555,6 +1579,14 @@ app.post("/webhooks/telnyx", async (req, res) => {
         cost_usd: currency === "USD" ? totalCost : null,
         duration_sec: billedSeconds,
       }).catch((err) => console.error("[Supabase] Error logging cost:", err));
+    }
+
+    // Store telephony cost in CallContext for end-of-call summary
+    if (callControlId && totalCost && currency === "USD") {
+      const ctx = contextMgr.getContextByCallControlId(callControlId);
+      if (ctx && ctx.callId) {
+        contextMgr.setTelnyxTelephonyCost(ctx.callId, totalCost);
+      }
     }
   }
 

@@ -541,23 +541,27 @@ export const DEEPGRAM_PRICING = {
 };
 
 /**
- * xAI (Grok) pricing per 1M tokens (as of Dec 2024)
- * See: https://docs.x.ai/docs/models#models-and-pricing
- * Grok 4.1 Fast (non-reasoning) pricing estimates based on xAI tier structure
+ * xAI (Grok) pricing per 1M tokens (as of Jan 2025)
+ * See: https://docs.x.ai/docs/models/grok-4-1-fast-reasoning
+ *
+ * Grok 4.1 Fast (Non-Reasoning):
+ *   - Input: $0.20 / 1M tokens
+ *   - Output: $0.50 / 1M tokens
+ *   - Cached input: $0.05 / 1M tokens (75% discount)
  */
-export const XAI_PRICING: Record<string, { input: number; output: number }> = {
-  // Grok 4.x models (fast/non-reasoning variants)
-  "grok-4-1-fast": { input: 2.00, output: 10.00 },
-  "grok-4-1-fast-non-reasoning": { input: 2.00, output: 10.00 },
-  "grok-4.1-fast": { input: 2.00, output: 10.00 },
-  "grok-4.1-fast-non-reasoning": { input: 2.00, output: 10.00 },
-  // Grok 2.x models
-  "grok-beta": { input: 5.00, output: 15.00 }, // $5/1M input, $15/1M output
-  "grok-2-latest": { input: 2.00, output: 10.00 }, // $2/1M input, $10/1M output
+export const XAI_PRICING: Record<string, { input: number; output: number; cached?: number }> = {
+  // Grok 4.1 Fast (Non-Reasoning) - current production model
+  "grok-4-1-fast": { input: 0.20, output: 0.50, cached: 0.05 },
+  "grok-4-1-fast-non-reasoning": { input: 0.20, output: 0.50, cached: 0.05 },
+  "grok-4.1-fast": { input: 0.20, output: 0.50, cached: 0.05 },
+  "grok-4.1-fast-non-reasoning": { input: 0.20, output: 0.50, cached: 0.05 },
+  // Grok 2.x models (legacy pricing)
+  "grok-beta": { input: 5.00, output: 15.00 },
+  "grok-2-latest": { input: 2.00, output: 10.00 },
   "grok-2": { input: 2.00, output: 10.00 },
   "grok-2-1212": { input: 2.00, output: 10.00 },
   "grok-vision-beta": { input: 5.00, output: 15.00 },
-  default: { input: 2.00, output: 10.00 },
+  default: { input: 0.20, output: 0.50, cached: 0.05 },
 };
 
 /**
@@ -571,6 +575,85 @@ export const GROQ_PRICING: Record<string, { input: number; output: number }> = {
   "gemma2-9b-it": { input: 0.20, output: 0.20 },
   default: { input: 0.05, output: 0.08 },
 };
+
+/**
+ * Fly.io server pricing (as of Jan 2025)
+ * See: https://fly.io/docs/about/pricing/
+ *
+ * shared-cpu-1x with 1GB RAM: ~$5.70/month = $0.0079/hour = $0.0000022/second
+ * (256MB base ~$1.94/month + ~$3.76 for extra 768MB RAM)
+ */
+export const FLYIO_PRICING = {
+  perSecond: 0.0000022, // ~$0.0079/hour for shared-cpu-1x with 1GB RAM
+  perMinute: 0.000132,  // ~$0.0079/hour
+  perHour: 0.0079,      // shared-cpu-1x with 1GB RAM
+};
+
+/**
+ * Telnyx TTS pricing (as of Jan 2025)
+ * See: https://telnyx.com/pricing/text-to-speech
+ *
+ * Voice tiers:
+ *   - Telnyx TTS (basic): $0.000003/character
+ *   - Standard TTS (Amazon Polly): $0.000006/character
+ *   - Telnyx HD Voices: $0.000012/character
+ *   - Neural Voices (Amazon Polly): $0.000024/character
+ *
+ * Using Telnyx TTS (KokoroTTS) basic rate
+ */
+export const TELNYX_TTS_PRICING = {
+  perCharacter: 0.000003,       // $0.000003/character (Telnyx TTS basic)
+  per100Characters: 0.0003,     // $0.03 per 100 characters
+  per1000Characters: 0.003,     // $3.00 per 1M characters
+  // Alternative tiers for reference
+  hdPerCharacter: 0.000012,     // Telnyx HD Voices
+  neuralPerCharacter: 0.000024, // Neural Voices (Amazon Polly)
+};
+
+/**
+ * Telnyx Telephony pricing (as of Jan 2025)
+ * Outbound calling rates vary by destination
+ * US Local: ~$0.007/min outbound
+ * US Toll-Free: ~$0.01/min outbound
+ * These are fallback estimates - actual cost comes from call.cost webhook
+ */
+export const TELNYX_TELEPHONY_PRICING = {
+  usLocalPerMinute: 0.007,    // US local numbers
+  usTollFreePerMinute: 0.01,  // US toll-free numbers
+  defaultPerMinute: 0.01,     // Conservative default
+};
+
+/**
+ * Calculate Fly.io server cost based on call duration
+ * @param durationSec - Call duration in seconds
+ * @returns Cost in USD
+ */
+export function calculateFlyioCost(durationSec: number): number {
+  return durationSec * FLYIO_PRICING.perSecond;
+}
+
+/**
+ * Calculate Telnyx TTS cost based on characters spoken
+ * @param characterCount - Total characters synthesized
+ * @returns Cost in USD
+ */
+export function calculateTelnyxTtsCost(characterCount: number): number {
+  return characterCount * TELNYX_TTS_PRICING.perCharacter;
+}
+
+/**
+ * Calculate Telnyx Telephony cost based on duration (fallback if no webhook cost)
+ * @param durationSec - Call duration in seconds
+ * @param isTollFree - Whether the call is to a toll-free number
+ * @returns Cost in USD
+ */
+export function calculateTelnyxTelephonyCost(durationSec: number, isTollFree: boolean = false): number {
+  const durationMin = durationSec / 60;
+  const ratePerMin = isTollFree
+    ? TELNYX_TELEPHONY_PRICING.usTollFreePerMinute
+    : TELNYX_TELEPHONY_PRICING.defaultPerMinute;
+  return durationMin * ratePerMin;
+}
 
 /**
  * Calculate DeepGram cost based on audio duration
@@ -589,7 +672,7 @@ export function calculateDeepgramCost(durationSec: number, model: string = "nova
  * @param promptTokens - Number of input tokens
  * @param completionTokens - Number of output tokens
  * @param model - Grok model
- * @param cachedTokens - Optional cached tokens (billed at reduced rate)
+ * @param cachedTokens - Optional cached tokens (billed at $0.05/1M for Grok 4.1 Fast)
  * @returns Cost in USD
  */
 export function calculateXaiCost(
@@ -599,10 +682,11 @@ export function calculateXaiCost(
   cachedTokens: number = 0
 ): number {
   const pricing = XAI_PRICING[model] || XAI_PRICING.default;
-  // Cached tokens are typically billed at 25% of input rate (0 for xAI currently)
+  // Grok 4.1 Fast: Input $0.20/1M, Output $0.50/1M, Cached $0.05/1M
   const effectiveInputTokens = promptTokens - cachedTokens;
   const inputCost = (effectiveInputTokens / 1_000_000) * pricing.input;
-  const cachedCost = (cachedTokens / 1_000_000) * (pricing.input * 0.25); // 25% rate for cached
+  const cachedPrice = pricing.cached ?? (pricing.input * 0.25); // Use explicit cached price or 25% fallback
+  const cachedCost = (cachedTokens / 1_000_000) * cachedPrice;
   const outputCost = (completionTokens / 1_000_000) * pricing.output;
   return inputCost + cachedCost + outputCost;
 }
