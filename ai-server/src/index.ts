@@ -1524,6 +1524,15 @@ app.post("/webhooks/telnyx", async (req, res) => {
   } else if (eventType === "call.hangup" || eventType === "streaming.stopped") {
     console.log("📞 Call ended:", eventType);
 
+    // Clean up call state and cache cost data for summary
+    if (callControlId) {
+      const ctx = contextMgr.getContext(callControlId);
+      if (ctx) {
+        console.log(`🧹 Cleaning up call state for hangup (callControlId: ${callControlId})`);
+        cleanupCallState(ctx as CallContext);
+      }
+    }
+
     // Log call completion to Supabase
     if (callControlId && isSupabaseConfigured()) {
       const endedAt = new Date().toISOString();
@@ -1543,9 +1552,6 @@ app.post("/webhooks/telnyx", async (req, res) => {
         duration_sec: durationSeconds,
       }).catch((err) => console.error("[Supabase] Error logging hangup:", err));
     }
-
-    // Note: We don't have access to callContext here, but we mark the call
-    // as inactive via the WebSocket close event. Cleanup happens there.
   } else if (eventType === "call.cost") {
     // Log call cost/billing to Supabase
     const billedSeconds =
