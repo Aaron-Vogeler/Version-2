@@ -332,6 +332,34 @@ const defaultConfig: ContextConfig = {
 // In-memory store: Map of callId -> CallContext
 const callContextStore = new Map<string, CallContext>();
 
+// Temporary store for ended calls awaiting cost webhook (TTL: 60 seconds)
+// Stores essential data needed for end-of-call summary after context is cleared
+interface EndedCallData {
+  callId: string;
+  initiatedAt?: string;
+  grokCallStats?: GrokCallAccumulatedStats;
+  ttsStats?: TtsAccumulatedStats;
+  deepgramDurationSec?: number;
+  endedAt: number; // Date.now() when call ended
+  summaryLogged: boolean; // Whether summary was already logged
+}
+const endedCallsCache = new Map<string, EndedCallData>();
+
+// Clean up old entries from endedCallsCache (runs every 60 seconds)
+const ENDED_CALL_CACHE_TTL_MS = 60000; // 60 seconds
+setInterval(() => {
+  const now = Date.now();
+  for (const [callId, data] of endedCallsCache.entries()) {
+    if (now - data.endedAt > ENDED_CALL_CACHE_TTL_MS) {
+      // Log summary if we never received cost webhook
+      if (!data.summaryLogged) {
+        logEndOfCallCostSummaryFromCache(callId, data);
+      }
+      endedCallsCache.delete(callId);
+    }
+  }
+}, 30000); // Check every 30 seconds
+
 /**
  * Get or create a CallContext for a given call ID.
  */
@@ -563,11 +591,27 @@ export function getContext(callId: string): CallContext | undefined {
 export function clearContext(callId: string): void {
   const context = callContextStore.get(callId);
   if (context) {
-    // Log comprehensive end-of-call cost summary BEFORE clearing
-    // This includes: Fly.io, Telnyx telephony, Deepgram STT, Grok LLM, Telnyx TTS
-    logEndOfCallCostSummary(callId);
+    // Calculate Deepgram duration before clearing
+    let deepgramDurationSec: number | undefined;
+    if (context.deepgramStartedAt) {
+      deepgramDurationSec = (Date.now() - context.deepgramStartedAt) / 1000;
+    }
 
-    // Also log detailed Grok breakdown for token analysis
+    // Save essential data to cache for when call.cost webhook arrives
+    // The comprehensive cost summary will be logged when we receive the telephony cost
+    endedCallsCache.set(callId, {
+      callId,
+      initiatedAt: context.initiatedAt,
+      grokCallStats: context.grokCallStats,
+      ttsStats: context.ttsStats,
+      deepgramDurationSec,
+      endedAt: Date.now(),
+      summaryLogged: false,
+    });
+
+    console.log(`[COST] 📋 Call ended, awaiting telephony cost webhook (call: ...${callId.slice(-8)})`);
+
+    // Log detailed Grok breakdown immediately (this is just token analysis)
     logGrokEndOfCallSummary(callId);
 
     // Clean up timers
@@ -864,20 +908,39 @@ export function accumulateTtsStats(
 
 /**
  * Set Telnyx telephony cost from webhook (call.cost event).
+ * If context still exists, updates it. Otherwise, checks the ended calls cache
+ * and logs the comprehensive cost summary.
  */
 export function setTelnyxTelephonyCost(
   callId: string,
   costUsd: number,
   billedSeconds: number
 ): void {
+  // First try to update the active context
   const context = getContext(callId);
-  if (!context) {
-    console.warn(`[TELNYX-COST] Cannot set cost - context not found for ${callId.slice(-8)}`);
+  if (context) {
+    context.telnyxTelephonyCost = costUsd;
+    context.telnyxBilledSeconds = billedSeconds;
+    console.log(`[TELNYX-COST] 📞 Telephony cost set: $${costUsd?.toFixed(6) || 'N/A'}, ${billedSeconds}s billed`);
     return;
   }
-  context.telnyxTelephonyCost = costUsd;
-  context.telnyxBilledSeconds = billedSeconds;
-  console.log(`[TELNYX-COST] 📞 Telephony cost set: $${costUsd?.toFixed(6) || 'N/A'}, ${billedSeconds}s billed`);
+
+  // Context already cleared - check the ended calls cache
+  const cachedData = endedCallsCache.get(callId);
+  if (cachedData && !cachedData.summaryLogged) {
+    console.log(`[TELNYX-COST] 📞 Received telephony cost after call ended: $${costUsd?.toFixed(6) || 'N/A'}, ${billedSeconds}s billed`);
+
+    // Log the comprehensive summary with the telephony cost
+    logEndOfCallCostSummaryFromCache(callId, cachedData, costUsd, billedSeconds);
+
+    // Mark as logged and clean up
+    cachedData.summaryLogged = true;
+    endedCallsCache.delete(callId);
+    return;
+  }
+
+  // Neither context nor cache found
+  console.warn(`[TELNYX-COST] Cannot set cost - no context or cache for ${callId.slice(-8)}`);
 }
 
 /**
@@ -1129,6 +1192,169 @@ export function logEndOfCallCostSummary(callId: string, deepgramDurationSec?: nu
     "Telnyx Telephony",
     telnyxTelephonyCost,
     telnyxBilledSec > 0 ? `${telnyxBilledSec}s billed` : "N/A (pending)",
+    "Per-minute billing"
+  ));
+
+  // 3. Deepgram STT
+  console.log(formatCostRow(
+    "Deepgram STT",
+    deepgramCost,
+    `${sttDurationSec.toFixed(1)}s audio`,
+    `$${DEEPGRAM_PRICING.default.toFixed(4)}/min`
+  ));
+
+  // 4. Grok LLM
+  console.log(formatCostRow(
+    "Grok LLM (xAI)",
+    grokCost,
+    grokTokens > 0 ? `${grokTokens.toLocaleString()} tokens` : "No calls",
+    grokCalls > 0 ? `${grokCalls} API calls` : "N/A"
+  ));
+
+  // 5. Telnyx TTS
+  console.log(formatCostRow(
+    "Telnyx TTS",
+    ttsCost,
+    ttsChars > 0 ? `${ttsChars.toLocaleString()} chars` : "No TTS",
+    `$${TELNYX_TTS_PRICING.pricePerThousandChars}/1K chars`
+  ));
+
+  console.log("╟──────────────────────┼──────────────┼──────────────────────────┼─────────────────────────╢");
+
+  // TOTALS ROW
+  const totalStr = `$${totalCost.toFixed(6)}`.padStart(12);
+  console.log(`║  TOTAL               │ ${totalStr} │                          │                         ║`);
+
+  // SAVINGS (if any)
+  if (totalSavings > 0) {
+    const savingsStr = `$${totalSavings.toFixed(6)}`.padStart(12);
+    console.log(`║  Cache Savings       │ ${savingsStr} │ From Grok prompt caching │                         ║`);
+  }
+
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════════╣");
+
+  // PERCENTAGE BREAKDOWN
+  console.log("║                                  COST DISTRIBUTION                                       ║");
+  console.log("╟──────────────────────────────────────────────────────────────────────────────────────────╢");
+
+  const calcPercent = (cost: number): string => {
+    if (totalCost === 0) return "0.0%";
+    return `${((cost / totalCost) * 100).toFixed(1)}%`;
+  };
+
+  const formatBarRow = (service: string, cost: number): string => {
+    const percent = totalCost > 0 ? (cost / totalCost) * 100 : 0;
+    const barLength = Math.round(percent / 2); // Max 50 chars for 100%
+    const bar = "█".repeat(barLength) + "░".repeat(50 - barLength);
+    return `║  ${service.padEnd(17)} ${calcPercent(cost).padStart(6)} ${bar}  ║`;
+  };
+
+  console.log(formatBarRow("Fly.io", flyioCost));
+  console.log(formatBarRow("Telephony", telnyxTelephonyCost));
+  console.log(formatBarRow("Deepgram STT", deepgramCost));
+  console.log(formatBarRow("Grok LLM", grokCost));
+  console.log(formatBarRow("Telnyx TTS", ttsCost));
+
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════════╣");
+  console.log("║                                    QUICK STATS                                           ║");
+  console.log("╟──────────────────────────────────────────────────────────────────────────────────────────╢");
+
+  // Cost per minute
+  const costPerMin = callDurationSec > 0 ? (totalCost / (callDurationSec / 60)) : 0;
+  console.log(`║  Cost per minute:     $${costPerMin.toFixed(4).padStart(10)}                                                      ║`);
+  console.log(`║  Total call cost:     $${totalCost.toFixed(6).padStart(10)}                                                      ║`);
+  if (totalSavings > 0) {
+    const effectiveCost = totalCost - totalSavings;
+    console.log(`║  Effective cost:      $${effectiveCost.toFixed(6).padStart(10)} (after cache savings)                              ║`);
+  }
+
+  console.log("╚══════════════════════════════════════════════════════════════════════════════════════════╝");
+  console.log("\n");
+}
+
+/**
+ * Log comprehensive end-of-call cost summary from cached data.
+ * Used when call.cost webhook arrives after context is cleared.
+ */
+function logEndOfCallCostSummaryFromCache(
+  callId: string,
+  cachedData: EndedCallData,
+  telnyxTelephonyCost: number = 0,
+  telnyxBilledSeconds: number = 0
+): void {
+  const callIdShort = callId.slice(-8);
+  const endTime = new Date();
+
+  // Calculate call duration from cached data
+  let callDurationMs = 0;
+  let callDurationSec = 0;
+  let callDurationStr = "N/A";
+  if (cachedData.initiatedAt) {
+    const startTime = new Date(cachedData.initiatedAt);
+    callDurationMs = cachedData.endedAt - startTime.getTime();
+    callDurationSec = callDurationMs / 1000;
+    const mins = Math.floor(callDurationSec / 60);
+    const secs = Math.floor(callDurationSec % 60);
+    callDurationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+  }
+
+  // Calculate all costs
+  // 1. Fly.io compute cost (based on call duration)
+  const flyioCost = calculateFlyioCost(callDurationSec);
+
+  // 2. Telnyx telephony cost (from webhook parameter)
+
+  // 3. Deepgram STT cost
+  const sttDurationSec = cachedData.deepgramDurationSec || callDurationSec;
+  const deepgramCost = calculateDeepgramCost(sttDurationSec, config.deepgram?.model || "nova-2");
+
+  // 4. Grok LLM cost (from cached stats)
+  const grokStats = cachedData.grokCallStats;
+  const grokCost = grokStats?.totalCostUsd || 0;
+  const grokTokens = grokStats?.totalTokens || 0;
+  const grokCalls = grokStats?.grokCallCount || 0;
+  const grokSavings = grokStats?.costSavedFromCaching || 0;
+
+  // 5. Telnyx TTS cost (from cached stats)
+  const ttsStats = cachedData.ttsStats;
+  const ttsCost = ttsStats?.estimatedCostUsd || 0;
+  const ttsChars = ttsStats?.totalCharacters || 0;
+
+  // Calculate totals
+  const totalCost = flyioCost + telnyxTelephonyCost + deepgramCost + grokCost + ttsCost;
+  const totalSavings = grokSavings;
+
+  console.log("\n");
+  console.log("╔══════════════════════════════════════════════════════════════════════════════════════════╗");
+  console.log("║                        END OF CALL - COMPREHENSIVE COST SUMMARY                          ║");
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════════╣");
+  console.log(`║  Call ID: ...${callIdShort.padEnd(12)} │ Duration: ${callDurationStr.padEnd(10)} │ Ended: ${endTime.toISOString().slice(11, 19)} UTC       ║`);
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════════╣");
+
+  // COST BREAKDOWN TABLE
+  console.log("║                                    COST BREAKDOWN                                        ║");
+  console.log("╟──────────────────────────────────────────────────────────────────────────────────────────╢");
+  console.log("║  Service             │   Cost ($)   │   Usage                  │  Rate                   ║");
+  console.log("╟──────────────────────┼──────────────┼──────────────────────────┼─────────────────────────╢");
+
+  const formatCostRow = (service: string, cost: number, usage: string, rate: string): string => {
+    const costStr = `$${cost.toFixed(6)}`.padStart(12);
+    return `║  ${service.padEnd(19)} │ ${costStr} │ ${usage.padEnd(24)} │ ${rate.padEnd(23)} ║`;
+  };
+
+  // 1. Fly.io Server
+  console.log(formatCostRow(
+    "Fly.io Server",
+    flyioCost,
+    `${callDurationSec.toFixed(1)}s compute`,
+    `$${FLYIO_PRICING.sharedCpu1xWith1GbPerHour.toFixed(4)}/hr`
+  ));
+
+  // 2. Telnyx Telephony
+  console.log(formatCostRow(
+    "Telnyx Telephony",
+    telnyxTelephonyCost,
+    telnyxBilledSeconds > 0 ? `${telnyxBilledSeconds}s billed` : "N/A",
     "Per-minute billing"
   ));
 
