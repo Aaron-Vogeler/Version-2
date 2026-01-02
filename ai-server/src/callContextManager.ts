@@ -992,10 +992,13 @@ export function calculateCallCostBreakdown(callId: string): CallCostBreakdown | 
   let callDurationSec = 0;
   let callDurationStr = "N/A";
 
-  // Calculate call duration
-  if (context.initiatedAt) {
-    const startTime = new Date(context.initiatedAt).getTime();
-    const durationMs = endTime - startTime;
+  // Calculate call duration - try initiatedAt first, fallback to deepgramStartedAt
+  const startTimeMs = context.initiatedAt
+    ? new Date(context.initiatedAt).getTime()
+    : context.deepgramStartedAt;
+
+  if (startTimeMs) {
+    const durationMs = endTime - startTimeMs;
     callDurationSec = durationMs / 1000;
     const mins = Math.floor(callDurationSec / 60);
     const secs = Math.floor(callDurationSec % 60);
