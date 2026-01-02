@@ -573,6 +573,73 @@ export const GROQ_PRICING: Record<string, { input: number; output: number }> = {
 };
 
 /**
+ * Fly.io server pricing (as of Jan 2025)
+ * shared-cpu-1x with 256MB RAM: ~$1.94/month = $0.00269/hour = $0.00000075/second
+ * We use a slightly higher estimate to account for network egress and other usage
+ */
+export const FLYIO_PRICING = {
+  perSecond: 0.0000018, // ~$0.0065/hour for shared-cpu-1x (conservative estimate)
+  perMinute: 0.000108,  // ~$0.0065/hour
+  perHour: 0.0065,      // shared-cpu-1x with 256MB
+};
+
+/**
+ * Telnyx TTS pricing (KokoroTTS, as of Jan 2025)
+ * Standard TTS: ~$0.0025 per 100 characters = $0.000025/character
+ * Neural/Premium voices may cost more
+ */
+export const TELNYX_TTS_PRICING = {
+  perCharacter: 0.000025, // $0.0025 per 100 characters
+  per100Characters: 0.0025,
+  per1000Characters: 0.025,
+};
+
+/**
+ * Telnyx Telephony pricing (as of Jan 2025)
+ * Outbound calling rates vary by destination
+ * US Local: ~$0.007/min outbound
+ * US Toll-Free: ~$0.01/min outbound
+ * These are fallback estimates - actual cost comes from call.cost webhook
+ */
+export const TELNYX_TELEPHONY_PRICING = {
+  usLocalPerMinute: 0.007,    // US local numbers
+  usTollFreePerMinute: 0.01,  // US toll-free numbers
+  defaultPerMinute: 0.01,     // Conservative default
+};
+
+/**
+ * Calculate Fly.io server cost based on call duration
+ * @param durationSec - Call duration in seconds
+ * @returns Cost in USD
+ */
+export function calculateFlyioCost(durationSec: number): number {
+  return durationSec * FLYIO_PRICING.perSecond;
+}
+
+/**
+ * Calculate Telnyx TTS cost based on characters spoken
+ * @param characterCount - Total characters synthesized
+ * @returns Cost in USD
+ */
+export function calculateTelnyxTtsCost(characterCount: number): number {
+  return characterCount * TELNYX_TTS_PRICING.perCharacter;
+}
+
+/**
+ * Calculate Telnyx Telephony cost based on duration (fallback if no webhook cost)
+ * @param durationSec - Call duration in seconds
+ * @param isTollFree - Whether the call is to a toll-free number
+ * @returns Cost in USD
+ */
+export function calculateTelnyxTelephonyCost(durationSec: number, isTollFree: boolean = false): number {
+  const durationMin = durationSec / 60;
+  const ratePerMin = isTollFree
+    ? TELNYX_TELEPHONY_PRICING.usTollFreePerMinute
+    : TELNYX_TELEPHONY_PRICING.defaultPerMinute;
+  return durationMin * ratePerMin;
+}
+
+/**
  * Calculate DeepGram cost based on audio duration
  * @param durationSec - Audio duration in seconds
  * @param model - DeepGram model (defaults to nova-2)
