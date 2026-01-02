@@ -589,16 +589,30 @@ export function getContext(callId: string): CallContext | undefined {
  * Clear a CallContext (call cleanup).
  */
 export function clearContext(callId: string): void {
+  console.log(`\n${"🔴".repeat(20)}`);
+  console.log(`[CLEAR-CONTEXT] ⚡ clearContext called for: ${callId}`);
+  console.log(`[CLEAR-CONTEXT] ⚡ callId last 8 chars: ...${callId.slice(-8)}`);
+
   const context = callContextStore.get(callId);
+  console.log(`[CLEAR-CONTEXT] ⚡ Context found: ${!!context}`);
+
   if (context) {
+    console.log(`[CLEAR-CONTEXT] ⚡ Context has grokCallStats: ${!!context.grokCallStats}`);
+    console.log(`[CLEAR-CONTEXT] ⚡ Grok call count: ${context.grokCallStats?.grokCallCount || 0}`);
+    console.log(`[CLEAR-CONTEXT] ⚡ Context has ttsStats: ${!!context.ttsStats}`);
+    console.log(`[CLEAR-CONTEXT] ⚡ TTS utterances: ${context.ttsStats?.totalUtterances || 0}`);
+
     // Calculate Deepgram duration before clearing
     let deepgramDurationSec: number | undefined;
     if (context.deepgramStartedAt) {
       deepgramDurationSec = (Date.now() - context.deepgramStartedAt) / 1000;
     }
+    console.log(`[CLEAR-CONTEXT] ⚡ Deepgram duration: ${deepgramDurationSec?.toFixed(2) || 'N/A'}s`);
 
     // LOG THE COST SUMMARY IMMEDIATELY - don't wait for webhook
+    console.log(`[CLEAR-CONTEXT] ⚡ About to call logEndOfCallCostSummary...`);
     logEndOfCallCostSummary(callId, deepgramDurationSec);
+    console.log(`[CLEAR-CONTEXT] ⚡ logEndOfCallCostSummary completed`);
 
     // Also save to cache in case call.cost webhook arrives later (for updating)
     endedCallsCache.set(callId, {
@@ -1110,10 +1124,14 @@ export function logGrokEndOfCallSummary(callId: string): void {
  * 5. Telnyx TTS (characters)
  */
 export function logEndOfCallCostSummary(callId: string, deepgramDurationSec?: number): void {
+  console.log(`[COST-SUMMARY] 🎯 logEndOfCallCostSummary called for: ...${callId.slice(-8)}`);
+
   const context = getContext(callId);
   if (!context) {
+    console.log(`[COST-SUMMARY] ❌ No context found - returning early`);
     return;
   }
+  console.log(`[COST-SUMMARY] ✅ Context found`);
 
   const callIdShort = callId.slice(-8);
   const endTime = new Date();
@@ -1130,6 +1148,7 @@ export function logEndOfCallCostSummary(callId: string, deepgramDurationSec?: nu
     const secs = Math.floor(callDurationSec % 60);
     callDurationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   }
+  console.log(`[COST-SUMMARY] ⏱️ Call duration: ${callDurationStr}`);
 
   // Calculate all costs
   // 1. Fly.io compute cost (based on call duration)
@@ -1153,6 +1172,9 @@ export function logEndOfCallCostSummary(callId: string, deepgramDurationSec?: nu
   // 5. Telnyx TTS cost (from accumulated stats)
   const ttsStats = context.ttsStats;
   const ttsCost = ttsStats?.estimatedCostUsd || 0;
+
+  console.log(`[COST-SUMMARY] 💰 Costs: Fly=$${flyioCost.toFixed(6)}, Tel=$${telnyxTelephonyCost.toFixed(6)}, DG=$${deepgramCost.toFixed(6)}, Grok=$${grokCost.toFixed(6)}, TTS=$${ttsCost.toFixed(6)}`);
+  console.log(`[COST-SUMMARY] 📊 Stats: grokCalls=${grokCalls}, ttsUtterances=${ttsStats?.totalUtterances || 0}`);
   const ttsChars = ttsStats?.totalCharacters || 0;
   const ttsUtterances = ttsStats?.totalUtterances || 0;
 
@@ -1160,9 +1182,10 @@ export function logEndOfCallCostSummary(callId: string, deepgramDurationSec?: nu
   const totalCost = flyioCost + telnyxTelephonyCost + deepgramCost + grokCost + ttsCost;
   const totalSavings = grokSavings;
 
-  // Skip summary if no costs recorded
+  // Log summary even if costs are zero (for debugging)
+  console.log(`[COST-SUMMARY] 💵 Total cost: $${totalCost.toFixed(6)}`);
   if (totalCost === 0 && grokCalls === 0 && ttsUtterances === 0) {
-    return;
+    console.log(`[COST-SUMMARY] ⚠️ No costs recorded - but still showing summary for debugging`);
   }
 
   console.log("\n");

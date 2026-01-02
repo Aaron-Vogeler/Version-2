@@ -1169,9 +1169,16 @@ function cleanupCallState(callContext: CallContext): void {
   }
 
   // Clean up the CallContext from the context manager
+  console.log(`\n${"💀".repeat(20)}`);
+  console.log(`[CLEANUP] ⚡ About to clear CallContext`);
+  console.log(`[CLEANUP] ⚡ callContext.callId: ${callContext.callId || 'UNDEFINED'}`);
+  console.log(`[CLEANUP] ⚡ callContext.callControlId: ${callContext.callControlId || 'UNDEFINED'}`);
   if (callContext.callId) {
     console.log(`📋 Clearing CallContext for call ${callContext.callId}`);
     contextMgr.clearContext(callContext.callId);
+    console.log(`[CLEANUP] ✅ clearContext completed`);
+  } else {
+    console.log(`[CLEANUP] ❌ No callId - skipping clearContext!`);
   }
 
   // Clean up Redis state for multi-instance support
