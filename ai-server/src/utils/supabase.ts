@@ -578,24 +578,36 @@ export const GROQ_PRICING: Record<string, { input: number; output: number }> = {
 
 /**
  * Fly.io server pricing (as of Jan 2025)
- * shared-cpu-1x with 256MB RAM: ~$1.94/month = $0.00269/hour = $0.00000075/second
- * We use a slightly higher estimate to account for network egress and other usage
+ * See: https://fly.io/docs/about/pricing/
+ *
+ * shared-cpu-1x with 1GB RAM: ~$5.70/month = $0.0079/hour = $0.0000022/second
+ * (256MB base ~$1.94/month + ~$3.76 for extra 768MB RAM)
  */
 export const FLYIO_PRICING = {
-  perSecond: 0.0000018, // ~$0.0065/hour for shared-cpu-1x (conservative estimate)
-  perMinute: 0.000108,  // ~$0.0065/hour
-  perHour: 0.0065,      // shared-cpu-1x with 256MB
+  perSecond: 0.0000022, // ~$0.0079/hour for shared-cpu-1x with 1GB RAM
+  perMinute: 0.000132,  // ~$0.0079/hour
+  perHour: 0.0079,      // shared-cpu-1x with 1GB RAM
 };
 
 /**
- * Telnyx TTS pricing (KokoroTTS, as of Jan 2025)
- * Standard TTS: ~$0.0025 per 100 characters = $0.000025/character
- * Neural/Premium voices may cost more
+ * Telnyx TTS pricing (as of Jan 2025)
+ * See: https://telnyx.com/pricing/text-to-speech
+ *
+ * Voice tiers:
+ *   - Telnyx TTS (basic): $0.000003/character
+ *   - Standard TTS (Amazon Polly): $0.000006/character
+ *   - Telnyx HD Voices: $0.000012/character
+ *   - Neural Voices (Amazon Polly): $0.000024/character
+ *
+ * Using Telnyx TTS (KokoroTTS) basic rate
  */
 export const TELNYX_TTS_PRICING = {
-  perCharacter: 0.000025, // $0.0025 per 100 characters
-  per100Characters: 0.0025,
-  per1000Characters: 0.025,
+  perCharacter: 0.000003,       // $0.000003/character (Telnyx TTS basic)
+  per100Characters: 0.0003,     // $0.03 per 100 characters
+  per1000Characters: 0.003,     // $3.00 per 1M characters
+  // Alternative tiers for reference
+  hdPerCharacter: 0.000012,     // Telnyx HD Voices
+  neuralPerCharacter: 0.000024, // Neural Voices (Amazon Polly)
 };
 
 /**
