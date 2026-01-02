@@ -597,8 +597,10 @@ export function clearContext(callId: string): void {
       deepgramDurationSec = (Date.now() - context.deepgramStartedAt) / 1000;
     }
 
-    // Save essential data to cache for when call.cost webhook arrives
-    // The comprehensive cost summary will be logged when we receive the telephony cost
+    // LOG THE COST SUMMARY IMMEDIATELY - don't wait for webhook
+    logEndOfCallCostSummary(callId, deepgramDurationSec);
+
+    // Also save to cache in case call.cost webhook arrives later (for updating)
     endedCallsCache.set(callId, {
       callId,
       initiatedAt: context.initiatedAt,
@@ -606,12 +608,10 @@ export function clearContext(callId: string): void {
       ttsStats: context.ttsStats,
       deepgramDurationSec,
       endedAt: Date.now(),
-      summaryLogged: false,
+      summaryLogged: true, // Already logged above
     });
 
-    console.log(`[COST] 📋 Call ended, awaiting telephony cost webhook (call: ...${callId.slice(-8)})`);
-
-    // Log detailed Grok breakdown immediately (this is just token analysis)
+    // Log detailed Grok breakdown
     logGrokEndOfCallSummary(callId);
 
     // Clean up timers
