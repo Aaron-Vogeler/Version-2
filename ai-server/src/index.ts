@@ -787,6 +787,21 @@ async function scheduleTtsResponse(
       if (callContext.callControlId) {
         await sharedState.setPendingHangup(callContext.callControlId, true);
       }
+
+      // LOG THE COST SUMMARY NOW - before any webhooks that might hit a different machine
+      // This is the last moment we have guaranteed access to the context on THIS machine
+      console.log("\n" + "🏁".repeat(30));
+      console.log("[END-BEHAVIOR] 💰 Logging cost summary before call ends...");
+      if (callContext.callId) {
+        // Calculate Deepgram duration
+        let deepgramDurationSec: number | undefined;
+        if (callContext.deepgramStartedAt) {
+          deepgramDurationSec = (Date.now() - callContext.deepgramStartedAt) / 1000;
+        }
+        contextMgr.logEndOfCallCostSummary(callContext.callId, deepgramDurationSec);
+      } else {
+        console.log("[END-BEHAVIOR] ⚠️ No callId - cannot log cost summary");
+      }
     }
 
     // Check if we have text to speak
