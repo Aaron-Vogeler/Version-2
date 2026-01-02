@@ -795,6 +795,8 @@ async function scheduleTtsResponse(
       // If behavior is "end" with no text, hang up immediately
       if (behavior === "end" && callContext.callControlId) {
         console.log("📞 Ending call (no speech text, behavior='end')");
+        // Clean up call state BEFORE hangup so cost data is cached
+        cleanupCallState(callContext);
         try {
           await hangupCall(callContext.callControlId);
         } catch (hangupError) {
@@ -1474,6 +1476,8 @@ app.post("/webhooks/telnyx", async (req, res) => {
           console.log("📞 TTS completed - executing pending hangup (behavior='end' or 'Chow' detected)");
           ctx.pendingHangupAfterTts = false; // Clear local flag
           await sharedState.setPendingHangup(callControlId, false); // Clear Redis flag
+          // Clean up call state BEFORE hangup so cost data is cached
+          cleanupCallState(ctx as CallContext);
           try {
             await hangupCall(callControlId);
             console.log("✅ Call ended successfully after TTS completion");
@@ -1489,6 +1493,11 @@ app.post("/webhooks/telnyx", async (req, res) => {
         if (pendingHangup) {
           console.log("📞 TTS completed - executing pending hangup from Redis (behavior='end' or 'Chow' detected)");
           await sharedState.setPendingHangup(callControlId, false); // Clear Redis flag
+          // Try to clean up call state if context exists (for cost tracking)
+          const localCtx = contextMgr.getContext(callControlId);
+          if (localCtx) {
+            cleanupCallState(localCtx as CallContext);
+          }
           try {
             await hangupCall(callControlId);
             console.log("✅ Call ended successfully after TTS completion (via Redis)");
