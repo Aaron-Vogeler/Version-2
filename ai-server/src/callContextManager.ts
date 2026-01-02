@@ -759,12 +759,13 @@ export function accumulateGrokCallStats(
   // Track cache hits
   if (cachedTokens > 0) {
     stats.cacheHitCount += 1;
-    // Calculate cost saved: cached tokens are 75% cheaper
-    // Full price would be (cachedTokens / 1M) * inputPrice
-    // Cached price is (cachedTokens / 1M) * inputPrice * 0.25
-    // Savings = full - cached = (cachedTokens / 1M) * inputPrice * 0.75
-    const inputPricePerM = 2.0; // Default Grok pricing
-    const savings = (cachedTokens / 1_000_000) * inputPricePerM * 0.75;
+    // Calculate cost saved: cached tokens cost $0.05/1M instead of $0.20/1M
+    // Full price would be (cachedTokens / 1M) * $0.20
+    // Cached price is (cachedTokens / 1M) * $0.05
+    // Savings = full - cached = (cachedTokens / 1M) * ($0.20 - $0.05) = (cachedTokens / 1M) * $0.15
+    const inputPricePerM = 0.20;  // Grok 4.1 Fast input price
+    const cachedPricePerM = 0.05; // Grok 4.1 Fast cached price
+    const savings = (cachedTokens / 1_000_000) * (inputPricePerM - cachedPricePerM);
     stats.costSavedFromCaching += savings;
   }
 
@@ -831,14 +832,15 @@ export function logGrokEndOfCallSummary(callId: string): void {
     callDurationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   }
 
-  // Calculate input/output costs separately (using Grok 4.1 fast pricing: $2/1M input, $10/1M output)
-  const INPUT_PRICE_PER_M = 2.0;
-  const OUTPUT_PRICE_PER_M = 10.0;
-  const CACHED_DISCOUNT = 0.75; // 75% discount for cached tokens
+  // Calculate input/output costs separately
+  // Grok 4.1 Fast (Non-Reasoning) pricing: $0.20/1M input, $0.50/1M output, $0.05/1M cached
+  const INPUT_PRICE_PER_M = 0.20;
+  const OUTPUT_PRICE_PER_M = 0.50;
+  const CACHED_PRICE_PER_M = 0.05; // $0.05/1M for cached tokens
 
   const uncachedPromptTokens = stats.totalPromptTokens - stats.totalCachedTokens;
   const inputCostFull = (uncachedPromptTokens / 1_000_000) * INPUT_PRICE_PER_M;
-  const inputCostCached = (stats.totalCachedTokens / 1_000_000) * INPUT_PRICE_PER_M * (1 - CACHED_DISCOUNT);
+  const inputCostCached = (stats.totalCachedTokens / 1_000_000) * CACHED_PRICE_PER_M;
   const totalInputCost = inputCostFull + inputCostCached;
   const outputCost = (stats.totalCompletionTokens / 1_000_000) * OUTPUT_PRICE_PER_M;
 
