@@ -573,6 +573,38 @@ export const GROQ_PRICING: Record<string, { input: number; output: number }> = {
 };
 
 /**
+ * Telnyx TTS pricing (as of Jan 2025)
+ * See: https://telnyx.com/pricing/text-to-speech
+ * Pricing: $0.012 per 1,000 characters
+ * Average speaking rate: ~150 words/minute, ~5 chars/word = ~750 chars/minute
+ */
+export const TELNYX_TTS_PRICING = {
+  pricePerThousandChars: 0.012, // $0.012 per 1,000 characters
+  avgCharsPerWord: 5,
+  avgWordsPerMinute: 150, // Typical TTS speaking rate
+  avgCharsPerMinute: 750, // 150 words * 5 chars/word
+};
+
+/**
+ * Fly.io compute pricing (shared-cpu-1x with 1GB RAM)
+ * See: https://fly.io/docs/about/pricing/
+ * Pricing: $0.0038/hour for shared-cpu-1x, $0.00567/GB-hour for RAM
+ * Total: ~$0.00947/hour = $0.000158/minute for 1GB shared-cpu
+ */
+export const FLYIO_PRICING = {
+  // Shared CPU pricing ($/hour)
+  sharedCpu1x: 0.0038,
+  // RAM pricing ($/GB-hour)
+  ramPerGbHour: 0.00567,
+  // Pre-calculated: 1 shared-cpu + 1GB RAM per hour
+  sharedCpu1xWith1GbPerHour: 0.00947, // 0.0038 + 0.00567
+  // Per minute (for convenience)
+  sharedCpu1xWith1GbPerMinute: 0.000158, // 0.00947 / 60
+  // Per second (for precision)
+  sharedCpu1xWith1GbPerSecond: 0.0000026, // 0.00947 / 3600
+};
+
+/**
  * Calculate DeepGram cost based on audio duration
  * @param durationSec - Audio duration in seconds
  * @param model - DeepGram model (defaults to nova-2)
@@ -582,6 +614,36 @@ export function calculateDeepgramCost(durationSec: number, model: string = "nova
   const durationMin = durationSec / 60;
   const pricePerMin = DEEPGRAM_PRICING[model as keyof typeof DEEPGRAM_PRICING] || DEEPGRAM_PRICING.default;
   return durationMin * pricePerMin;
+}
+
+/**
+ * Calculate Telnyx TTS cost based on character count
+ * @param characterCount - Number of characters spoken
+ * @returns Cost in USD
+ */
+export function calculateTelnyxTtsCost(characterCount: number): number {
+  return (characterCount / 1000) * TELNYX_TTS_PRICING.pricePerThousandChars;
+}
+
+/**
+ * Estimate TTS audio duration from character count
+ * @param characterCount - Number of characters
+ * @returns Estimated duration in seconds
+ */
+export function estimateTtsDurationSec(characterCount: number): number {
+  // ~750 chars/minute = 12.5 chars/second
+  const charsPerSecond = TELNYX_TTS_PRICING.avgCharsPerMinute / 60;
+  return characterCount / charsPerSecond;
+}
+
+/**
+ * Calculate Fly.io compute cost based on call duration
+ * Uses shared-cpu-1x with 1GB RAM pricing
+ * @param durationSec - Call duration in seconds
+ * @returns Cost in USD
+ */
+export function calculateFlyioCost(durationSec: number): number {
+  return durationSec * FLYIO_PRICING.sharedCpu1xWith1GbPerSecond;
 }
 
 /**

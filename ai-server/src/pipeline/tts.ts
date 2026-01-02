@@ -1,5 +1,7 @@
 import axios from "axios";
 import config from "../config";
+import { accumulateTtsStats } from "../callContextManager";
+import { calculateTelnyxTtsCost } from "../utils/supabase";
 
 /**
  * Sends DTMF tones on an active Telnyx call.
@@ -129,11 +131,13 @@ export function splitAtFirstPunctuation(
  * @param aiText - The text to synthesize and speak
  * @param callControlId - The Telnyx call control ID
  * @param voiceId - Optional custom voice ID (overrides config default)
+ * @param callId - Optional call ID for cost tracking (from CallContext.callId)
  */
 export async function synthesizeSpeech(
   aiText: string,
   callControlId: string,
-  voiceId?: string
+  voiceId?: string,
+  callId?: string
 ): Promise<void> {
   const startTime = Date.now();
   const effectiveVoiceId = voiceId || config.telnyx.ttsVoiceId;
@@ -167,6 +171,12 @@ export async function synthesizeSpeech(
     console.log("[TTS] 🔊 Speak request submitted (audio will play asynchronously)");
     console.log("[TTS] ⏱️ Total API call time:", Date.now() - startTime, "ms");
     console.log("[TTS] ==========================================");
+
+    // Track TTS cost if callId provided
+    if (callId) {
+      const ttsCost = calculateTelnyxTtsCost(aiText.length);
+      accumulateTtsStats(callId, aiText, effectiveVoiceId, ttsCost);
+    }
   } catch (error) {
     console.error(`[TTS] ❌ TTS Error (callControlId: ${callControlId}):`, error);
     // Log detailed error response if available

@@ -932,17 +932,17 @@ async function sendTtsResponse(
       const [firstChunk, remainingText] = splitAtFirstPunctuation(aiText);
 
       // Send first chunk immediately
-      await synthesizeSpeech(firstChunk, callContext.callControlId, callContext.ttsVoiceId);
+      await synthesizeSpeech(firstChunk, callContext.callControlId, callContext.ttsVoiceId, callContext.callId);
 
       // If there's remaining text, queue it immediately (Telnyx will play it after first chunk)
       if (remainingText) {
         console.log(`[TTS] 📤 Queuing remaining text (${remainingText.length} chars)`);
-        await synthesizeSpeech(remainingText, callContext.callControlId, callContext.ttsVoiceId);
+        await synthesizeSpeech(remainingText, callContext.callControlId, callContext.ttsVoiceId, callContext.callId);
       }
     } else {
       // Send full text without chunking
       console.log(`[TTS] 📤 Sending full text without chunking (${aiText.length} chars)`);
-      await synthesizeSpeech(aiText, callContext.callControlId, callContext.ttsVoiceId);
+      await synthesizeSpeech(aiText, callContext.callControlId, callContext.ttsVoiceId, callContext.callId);
     }
 
     // Log what TTS will actually speak (only logged after successful TTS API call)
@@ -1549,12 +1549,21 @@ app.post("/webhooks/telnyx", async (req, res) => {
       null;
     const currency = payload.currency || "USD";
 
-    if (callControlId && isSupabaseConfigured()) {
+    if (callControlId) {
       console.log("💰 Call cost received:", totalCost, currency);
-      updateCall(callControlId, {
-        cost_usd: currency === "USD" ? totalCost : null,
-        duration_sec: billedSeconds,
-      }).catch((err) => console.error("[Supabase] Error logging cost:", err));
+
+      // Update CallContext with telephony cost (for end-of-call summary)
+      if (currency === "USD" && totalCost !== null) {
+        contextMgr.setTelnyxTelephonyCost(callControlId, totalCost, billedSeconds || 0);
+      }
+
+      // Log to Supabase
+      if (isSupabaseConfigured()) {
+        updateCall(callControlId, {
+          cost_usd: currency === "USD" ? totalCost : null,
+          duration_sec: billedSeconds,
+        }).catch((err) => console.error("[Supabase] Error logging cost:", err));
+      }
     }
   }
 
