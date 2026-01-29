@@ -138,6 +138,13 @@ export default async function handler(
       'Content-Type': 'application/json',
     };
 
+    // Add authorization header if WORKER_TOKEN is configured
+    // This allows the Fly.io server to authenticate internal requests
+    const workerToken = process.env.WORKER_TOKEN;
+    if (workerToken) {
+      headers['Authorization'] = `Bearer ${workerToken}`;
+    }
+
     const flyResponse = await fetch(flyUrl, {
       method: 'POST',
       headers,

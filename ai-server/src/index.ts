@@ -1302,9 +1302,42 @@ function decodeMulawG711(mulaw: number): number {
   return sign * sample;
 }
 
+/**
+ * Authentication middleware for protected endpoints
+ * Verifies WORKER_TOKEN if configured
+ */
+function authenticateWorkerRequest(req: any, res: any, next: any): void {
+  const workerToken = process.env.WORKER_TOKEN;
+
+  // If WORKER_TOKEN is not configured, allow all requests
+  if (!workerToken) {
+    next();
+    return;
+  }
+
+  // Check for Authorization header
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) {
+    return res.status(401).json({
+      status: "error",
+      message: "Missing Authorization header",
+    });
+  }
+
+  // Verify Bearer token
+  const [scheme, token] = authHeader.split(' ');
+  if (scheme !== 'Bearer' || token !== workerToken) {
+    return res.status(403).json({
+      status: "error",
+      message: "Invalid or expired authorization token",
+    });
+  }
+
+  next();
+}
 
 // OUTBOUND CALL ENDPOINT
-app.use("/api/outbound-call", outboundCallRouter);
+app.use("/api/outbound-call", authenticateWorkerRequest, outboundCallRouter);
 
 // Helper to decode client_state from Telnyx webhooks (matching Cloudflare pattern)
 function decodeClientState(encodedState: string | undefined): Record<string, any> {
