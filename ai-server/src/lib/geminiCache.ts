@@ -947,7 +947,8 @@ function debugLog(message: string): void {
  * Check if Gemini caching is available and configured.
  */
 export function isGeminiCacheConfigured(): boolean {
-  return !!(config.gemini.apiKey && config.supabase.url && config.supabase.serviceRoleKey);
+  // DISABLED: Gemini caching is disabled. Use simple system prompt instead.
+  return false;
 }
 
 /**
