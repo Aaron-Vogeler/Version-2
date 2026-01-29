@@ -343,7 +343,8 @@ async function performHoldCheckIn(
     // Speak the hang-up message and end the call
     callContext.pendingHangupAfterTts = true;
     if (callContext.callControlId) {
-      await sharedState.setPendingHangup(callContext.callControlId, true);
+      // Fire-and-forget Redis sync
+      sharedState.setPendingHangup(callContext.callControlId, true).catch(() => {});
     }
 
     // Append to conversation turns
@@ -796,9 +797,9 @@ async function scheduleTtsResponse(
     if (behavior === "end") {
       console.log("👋 Behavior='end' - will hang up after TTS completes");
       callContext.pendingHangupAfterTts = true;
-      // Sync to Redis for multi-instance support
+      // Sync to Redis for multi-instance support (fire-and-forget, don't block TTS)
       if (callContext.callControlId) {
-        await sharedState.setPendingHangup(callContext.callControlId, true);
+        sharedState.setPendingHangup(callContext.callControlId, true).catch(() => {});
       }
     }
 
@@ -831,24 +832,26 @@ async function scheduleTtsResponse(
       // To enable assistant logging: implement outbound Deepgram stream + insertTranscriptSegment() with speaker='assistant'.
       // Feature flag: ENABLE_OUTBOUND_STT (optional scaffolding only at this time).
 
-      // Check if we should update the rolling summary
-      try {
-        await maybeUpdateSummaryForCall(callContext.callId);
-      } catch (summaryError) {
-        console.warn(
-          "⚠️ Failed to update rolling summary:",
-          summaryError instanceof Error ? summaryError.message : summaryError
-        );
-        // Continue even if summary update fails
-      }
     }
 
     // Send to TTS only if we can still speak and seq is still valid
     // Use extracted speakText (not raw aiText) to send only speakable text to TTS
+    // IMPORTANT: TTS is sent FIRST, summary update happens in background after
     await sendTtsResponse(callContext, ws, speakText, expectedSeq);
 
     // Clear transcript after processing
     callContext.lastUserTranscript = "";
+
+    // Update rolling summary in background (fire-and-forget, don't block call loop)
+    // This was previously blocking TTS by making an additional LLM call
+    if (callContext.callId) {
+      maybeUpdateSummaryForCall(callContext.callId).catch((summaryError) => {
+        console.warn(
+          "⚠️ Failed to update rolling summary:",
+          summaryError instanceof Error ? summaryError.message : summaryError
+        );
+      });
+    }
   } catch (error) {
     console.error(
       "❌ Unexpected error in TTS response handler:",
@@ -914,8 +917,8 @@ async function sendTtsResponse(
   if (shouldHangup) {
     console.log("👋 Detected 'Chow' in AI response - will hangup after TTS completes");
     callContext.pendingHangupAfterTts = true;
-    // Sync to Redis for multi-instance support
-    await sharedState.setPendingHangup(callContext.callControlId, true);
+    // Sync to Redis for multi-instance support (fire-and-forget, don't block TTS)
+    sharedState.setPendingHangup(callContext.callControlId, true).catch(() => {});
   }
 
   try {
@@ -933,8 +936,8 @@ async function sendTtsResponse(
       callContext.accumulatedTurnText = [];
     }
 
-    // Sync TTS state to Redis for multi-instance support
-    await sharedState.markTtsSpeaking(callContext.callControlId, aiText);
+    // Sync TTS state to Redis for multi-instance support (fire-and-forget, don't block TTS)
+    sharedState.markTtsSpeaking(callContext.callControlId, aiText).catch(() => {});
 
     // Check if punctuation chunking is enabled (defaults to true for faster TTS)
     const useChunking = callContext.chunkFirstTurnByPunctuation !== false;
@@ -1967,9 +1970,9 @@ wss.on("connection", async (ws) => {
           // Mark as idle after stop
           callContext.ttsState = "idle";
 
-          // Sync barge-in state to Redis for multi-instance support
-          await sharedState.markTtsInterrupted(callContext.callControlId);
-          await sharedState.markTtsIdle(callContext.callControlId);
+          // Sync barge-in state to Redis for multi-instance support (fire-and-forget)
+          sharedState.markTtsInterrupted(callContext.callControlId).catch(() => {});
+          sharedState.markTtsIdle(callContext.callControlId).catch(() => {});
 
           // Flag that barge-in just occurred - DO NOT queue this partial for LLM
           bargeInJustOccurred = true;
