@@ -11,7 +11,7 @@ import { authOptions } from '@/../pages/api/auth/[...nextauth]';
 
 // Groq API configuration
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const DEFAULT_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+const DEFAULT_MODEL = process.env.GROQ_MODEL || 'gemini-2.5-flash-lite';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // xAI API configuration (for Grok models)
