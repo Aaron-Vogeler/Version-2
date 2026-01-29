@@ -18,8 +18,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 const greatVibes = Great_Vibes({ weight: '400', subsets: ['latin'] });
 
 // TODO: Set to false for production
-const SKIP_BIRD_ANIMATION = true;
-const AUTO_LOGIN_ENABLED = true;
+const SKIP_BIRD_ANIMATION = false;
+const AUTO_LOGIN_ENABLED = false;
 const AUTO_LOGIN_EMAIL = 'aaronmvogeler@gmail.com';
 const AUTO_LOGIN_PASSWORD = 'Testing#1';
 
