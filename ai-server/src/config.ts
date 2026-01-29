@@ -69,9 +69,9 @@ const config = {
 
   groq: {
     apiKey: requireEnv("GROQ_API_KEY"),
-    // Default to fast Llama model for sub-2s response times
-    // Use gemini-2.5-flash-lite for streaming mode (5+ seconds)
-    model: getEnv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    // Default to ultra-fast Llama Instant for sub-second response times
+    // Use llama-3.3-70b-versatile for higher quality or gemini-2.5-flash-lite for streaming
+    model: getEnv("GROQ_MODEL", "llama-3.1-8b-instant"),
   },
 
   gemini: {
@@ -109,26 +109,27 @@ const config = {
   // CALL CONTROL SETTINGS
   // =============================================================================
   // PERFORMANCE OPTIMIZATION SUMMARY:
-  // - LLM: Switched from Gemini (5+ seconds) to Llama (1-2 seconds) = 3-4x faster
-  // - TTS Debounce: 200ms (reduced from default)
-  // - Barge-in Grace: 150ms (reduced from 800ms)
-  // - Utterance Flush: 100ms (reduced from 300ms)
-  // - Max Tokens: 256 (reduced from 1024)
-  // - Summary Tokens: 150 (reduced from 300)
-  // Total call loop improvement: STT->LLM->TTS now ~2-3 seconds (was 6-8 seconds)
+  // - LLM: Ultra-fast Llama 3.1 8B Instant (sub-second response)
+  // - All timing thresholds: HARDCODED to 250ms for maximum speed
+  // - TTS Debounce: 250ms
+  // - Barge-in Grace: 250ms
+  // - Barge-in Cooldown: 250ms
+  // - Utterance Flush: 250ms
+  // Total call loop: Optimized for sub-2 second STT->LLM->TTS
   // =============================================================================
   callControl: {
-    // TTS debounce - milliseconds of silence before AI responds (lower = faster response)
-    // OPTIMIZED: 200ms for quick response, 0.5s silence is already detected
-    ttsDebounceMs: 200,
+    // TTS debounce - milliseconds of silence before AI responds
+    // HARDCODED: 250ms for fastest response
+    ttsDebounceMs: 250,
     // Barge-in cooldown - milliseconds between stop commands to prevent spam
-    bargeInCooldownMs: getEnvInt("BARGE_IN_COOLDOWN_MS", 300),
+    // HARDCODED: 250ms for fastest interruption
+    bargeInCooldownMs: 250,
     // Barge-in grace period - milliseconds after TTS starts before barge-in is enabled
-    // OPTIMIZED: 150ms (was 800ms) - faster caller interruption, still prevents echo
-    bargeInGracePeriodMs: 150,
+    // HARDCODED: 250ms for fastest caller interruption
+    bargeInGracePeriodMs: 250,
     // Caller utterance flush timeout - milliseconds to wait before flushing utterance
-    // OPTIMIZED: 100ms (was 300ms) - faster speech finalization
-    callerUtteranceFlushMs: 100,
+    // HARDCODED: 250ms for fastest speech finalization
+    callerUtteranceFlushMs: 250,
     // Hangup delay after "Chow" - milliseconds to wait for TTS before hangup
     hangupDelayMs: getEnvInt("HANGUP_DELAY_MS", 2000),
     // Hold check-in interval - milliseconds to wait before AI checks in while on hold
