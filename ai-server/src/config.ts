@@ -190,11 +190,11 @@ const config = {
   // =============================================================================
   humanDetection: {
     // Non-speech duration to trigger utterance flush (ms) - from VAD
-    utteranceFlushMs: getEnvInt("HUMAN_DETECTION_UTTERANCE_FLUSH_MS", 500),
-    // Wait time for human receiver before AI responds (ms) - shorter for natural conversation
-    humanWaitMs: getEnvInt("HUMAN_DETECTION_HUMAN_WAIT_MS", 1500),
-    // Wait time for IVR/unsure receiver before AI responds (ms) - longer to avoid interrupting
-    ivrWaitMs: getEnvInt("HUMAN_DETECTION_IVR_WAIT_MS", 3000),
+    utteranceFlushMs: 500,
+    // Wait time for human receiver before AI responds (ms) - HARDCODED 500ms for all situations
+    humanWaitMs: 500,
+    // Wait time for IVR/unsure receiver before AI responds (ms) - HARDCODED 500ms for all situations
+    ivrWaitMs: 500,
     // Minimum utterances needed before first classification attempt
     minUtterancesForCheck: getEnvInt("HUMAN_DETECTION_MIN_UTTERANCES", 1),
     // Extended silence threshold for hold detection (ms)
