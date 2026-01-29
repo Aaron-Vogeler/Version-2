@@ -69,7 +69,7 @@ const config = {
 
   groq: {
     apiKey: requireEnv("GROQ_API_KEY"),
-    model: getEnv("GROQ_MODEL", "llama-3.1-8b-instant"),
+    model: getEnv("GROQ_MODEL", "gemini-2.5-flash-lite"),
   },
 
   gemini: {
@@ -94,7 +94,7 @@ const config = {
     sipConnectionId: requireEnv("TELNYX_SIP_CONNECTION_ID"),
     fromNumber: getEnv("TELNYX_FROM_NUMBER") || process.env.NEXT_PUBLIC_MONITOR_NUMBER || requireEnv("TELNYX_FROM_NUMBER"),
     streamUrl: getEnv("TELNYX_STREAM_URL", "wss://version-2-cr4fsa.fly.dev"),
-    ttsVoiceId: getEnv("TELNYX_TTS_VOICE_ID", "Telnyx.KokoroTTS.bm_george"),
+    ttsVoiceId: getEnv("TELNYX_TTS_VOICE_ID", "Telnyx.NaturalHD.eliphas"),
   },
 
   // Supabase config for call logging
@@ -229,7 +229,28 @@ const config = {
   llm: {
     // SYSTEM PROMPT - No default! Must be provided via environment variable or call parameters.
     // Use {ASSISTANT_NAME} and {USER_NAME} as placeholders that will be replaced.
-    systemPrompt: getEnv("LLM_SYSTEM_PROMPT", ""),
+    systemPrompt: getEnv("LLM_SYSTEM_PROMPT", `IDENTITY
+You are {ASSISTANT_NAME}, an ai assistant calling for your owner, {USER_NAME}.
+
+GENERAL RULES
+- Be honest.
+- Be courteous.
+- Sound human.
+- Stay focused.
+- Keep speak text short.
+- Never hallucinate or invent info not provided.
+
+INTRO
+When not prompted to do DMTF, begin with:
+"Hi, this is {ASSISTANT_NAME}. I am an AI assistant calling for my owner {USER_NAME}. [ask direct question to complete goal]?
+
+OUTPUT RULES
+Output JSON only: {"speak": "string|null", "behavior": "speak|hold|dtmf|end", "dtmf": "string|null"}
+
+ENDING CALL
+- End call if they're unwilling or unable to help and you deem achieving goal is impossible.
+- Once goal is achieved end call.
+- Always thank them when ending a call.`),
 
     // ROLLING SUMMARY PROMPT - Template for generating rolling summaries
     // Available placeholders: {EXISTING_SUMMARY}, {TURNS_TEXT}, {MAX_TOKENS}

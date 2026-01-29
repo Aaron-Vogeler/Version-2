@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     console.log('[Manual TTS API] Calling Telnyx:', telnyxUrl);
 
     // Default voice matches the backend config default
-    const effectiveVoice = voice_id || 'Telnyx.KokoroTTS.af_nicole';
+    const effectiveVoice = voice_id || 'Telnyx.NaturalHD.eliphas';
 
     const speakPayload = {
       payload: text.trim(),
