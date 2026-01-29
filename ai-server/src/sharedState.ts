@@ -114,10 +114,7 @@ export async function getTtsState(callControlId: string): Promise<SyncedTtsState
     const data = await redis.get<SyncedTtsState>(getTtsStateKey(callControlId));
     return data;
   } catch (error) {
-    console.error(
-      "[SharedState] Error reading TTS state:",
-      error instanceof Error ? error.message : error
-    );
+    // Silently ignore errors - Redis is optional, fall back to single-instance mode
     return null;
   }
 }
@@ -148,10 +145,7 @@ export async function setTtsState(
     // Set with TTL
     await redis.setex(key, KEY_TTL_SECONDS, merged);
   } catch (error) {
-    console.error(
-      "[SharedState] Error writing TTS state:",
-      error instanceof Error ? error.message : error
-    );
+    // Silently ignore errors - Redis is optional, fall back to single-instance mode
   }
 }
 
@@ -246,10 +240,7 @@ export async function clearTtsState(callControlId: string): Promise<void> {
   try {
     await redis.del(getTtsStateKey(callControlId));
   } catch (error) {
-    console.error(
-      "[SharedState] Error clearing TTS state:",
-      error instanceof Error ? error.message : error
-    );
+    // Silently ignore errors - Redis is optional
   }
 }
 
@@ -314,10 +305,7 @@ export async function registerCallMachine(callControlId: string): Promise<void> 
     await redis.setex(key, KEY_TTL_SECONDS, FLY_MACHINE_ID);
     console.log(`[SharedState] ✅ Registered call ${callControlId.slice(-8)} on machine ${FLY_MACHINE_ID.slice(0, 8)}...`);
   } catch (error) {
-    console.error(
-      "[SharedState] Error registering call machine:",
-      error instanceof Error ? error.message : error
-    );
+    // Silently ignore errors - Redis is optional, fall back to single-instance mode
   }
 }
 
@@ -354,10 +342,7 @@ export async function clearCallMachine(callControlId: string): Promise<void> {
   try {
     await redis.del(getCallMachineKey(callControlId));
   } catch (error) {
-    console.error(
-      "[SharedState] Error clearing call machine:",
-      error instanceof Error ? error.message : error
-    );
+    // Silently ignore errors - Redis is optional
   }
 }
 
@@ -435,10 +420,7 @@ export async function getMusicState(callControlId: string): Promise<SyncedMusicS
     const data = await redis.get<SyncedMusicState>(getMusicStateKey(callControlId));
     return data;
   } catch (error) {
-    console.error(
-      "[SharedState] Error reading music state:",
-      error instanceof Error ? error.message : error
-    );
+    // Silently ignore errors - Redis is optional
     return null;
   }
 }
@@ -473,10 +455,7 @@ export async function setMusicState(
     // Set with TTL
     await redis.setex(key, KEY_TTL_SECONDS, merged);
   } catch (error) {
-    console.error(
-      "[SharedState] Error writing music state:",
-      error instanceof Error ? error.message : error
-    );
+    // Silently ignore errors - Redis is optional
   }
 }
 
@@ -515,10 +494,7 @@ export async function clearMusicState(callControlId: string): Promise<void> {
   try {
     await redis.del(getMusicStateKey(callControlId));
   } catch (error) {
-    console.error(
-      "[SharedState] Error clearing music state:",
-      error instanceof Error ? error.message : error
-    );
+    // Silently ignore errors - Redis is optional
   }
 }
 
