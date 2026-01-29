@@ -883,7 +883,8 @@ export async function generateAssistantReply(
 
   const startTime = Date.now();
   const temperatureToUse = callContext?.temperature ?? 0.7;
-  const maxTokensToUse = callContext?.maxTokens ?? 1024;
+  // OPTIMIZED: Default max_tokens reduced from 1024 to 256 for faster response generation
+  const maxTokensToUse = callContext?.maxTokens ?? 256;
   const topPToUse = callContext?.topP ?? 1.0;
   const reasoningToUse = callContext?.reasoning || 'medium';
   const jsonModeToUse = callContext?.jsonMode || false;

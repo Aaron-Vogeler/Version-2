@@ -108,14 +108,16 @@ const config = {
   // =============================================================================
   callControl: {
     // TTS debounce - milliseconds of silence before AI responds (lower = faster response)
-    ttsDebounceMs: getEnvInt("TTS_DEBOUNCE_MS", 500),
+    // OPTIMIZED: 200ms for quick response, 0.5s silence is already detected
+    ttsDebounceMs: 200,
     // Barge-in cooldown - milliseconds between stop commands to prevent spam
     bargeInCooldownMs: getEnvInt("BARGE_IN_COOLDOWN_MS", 300),
     // Barge-in grace period - milliseconds after TTS starts before barge-in is enabled
-    // This prevents echo from immediately cutting off the AI
-    bargeInGracePeriodMs: getEnvInt("BARGE_IN_GRACE_PERIOD_MS", 800),
+    // OPTIMIZED: 150ms (was 800ms) - faster caller interruption, still prevents echo
+    bargeInGracePeriodMs: 150,
     // Caller utterance flush timeout - milliseconds to wait before flushing utterance
-    callerUtteranceFlushMs: getEnvInt("CALLER_UTTERANCE_FLUSH_MS", 300),
+    // OPTIMIZED: 100ms (was 300ms) - faster speech finalization
+    callerUtteranceFlushMs: 100,
     // Hangup delay after "Chow" - milliseconds to wait for TTS before hangup
     hangupDelayMs: getEnvInt("HANGUP_DELAY_MS", 2000),
     // Hold check-in interval - milliseconds to wait before AI checks in while on hold
@@ -131,10 +133,11 @@ const config = {
   // =============================================================================
   ivr: {
     // IVR debounce - milliseconds of silence before responding to IVR (faster than human conversation)
-    // IVR menus typically have short pauses between options, so respond quickly
-    debounceMs: getEnvInt("IVR_DEBOUNCE_MS", 150),
+    // OPTIMIZED: 50ms (was 150ms) - respond quickly to IVR prompts
+    debounceMs: 50,
     // IVR utterance flush - how quickly to finalize what the IVR said
-    utteranceFlushMs: getEnvInt("IVR_UTTERANCE_FLUSH_MS", 200),
+    // OPTIMIZED: 50ms (was 200ms) - faster speech finalization for IVR
+    utteranceFlushMs: 50,
     // Minimum pause after sending DTMF before sending another (prevents double-presses)
     dtmfMinPauseMs: getEnvInt("IVR_DTMF_MIN_PAUSE_MS", 500),
     // DTMF tone duration in milliseconds
@@ -158,7 +161,8 @@ const config = {
     // Update rolling summary after this many new turns
     summaryUpdateIntervalTurns: getEnvInt("SUMMARY_UPDATE_INTERVAL_TURNS", 6),
     // Approximate max tokens for rolling summary
-    maxSummaryTokensHint: getEnvInt("MAX_SUMMARY_TOKENS_HINT", 300),
+    // OPTIMIZED: Reduced from 300 to 150 for faster summary generation
+    maxSummaryTokensHint: 150,
   },
 
   // =============================================================================
